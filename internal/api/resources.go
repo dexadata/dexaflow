@@ -330,42 +330,6 @@ func patchDagHandler(repo DagRepository) gin.HandlerFunc {
 	}
 }
 
-// deleteDagHandler implements DELETE /api/v2/dags/{dag_id}. By default (the UI
-// trash) it CLEARS the DAG's run history — deletes its runs, task instances, and
-// XCom while keeping the DAG registered — because a GitOps DAG does not reload on
-// its own, so destroying it would be surprising and lossy (ADR 0020). With
-// ?deregister=true it removes the DAG artifact entirely (cascade). Returns 204.
-func deleteDagHandler(repo DagRepository) gin.HandlerFunc {
-	return func(c *gin.Context) {
-		dagID := c.Param("dag_id")
-		var err error
-		if c.Query("deregister") == "true" {
-			err = repo.DeleteDag(c.Request.Context(), tenantOf(c), dagID)
-		} else {
-			err = repo.ClearDagHistory(c.Request.Context(), tenantOf(c), dagID)
-		}
-		if err != nil {
-			handleRepoError(c, err)
-			return
-		}
-		c.Status(http.StatusNoContent)
-	}
-}
-
-// deleteDagRunHandler implements DELETE /api/v2/dags/{dag_id}/dagRuns/{run_id},
-// mirroring Airflow: it removes a single run (task instances and XCom cascade)
-// and returns 204, or 404 when the run does not exist. The UI's "delete run"
-// action calls this; without the route it 404'd as "API route not found".
-func deleteDagRunHandler(repo DagRunRepository) gin.HandlerFunc {
-	return func(c *gin.Context) {
-		if err := repo.DeleteDagRun(c.Request.Context(), tenantOf(c), c.Param("dag_id"), c.Param("dag_run_id")); err != nil {
-			handleRepoError(c, err)
-			return
-		}
-		c.Status(http.StatusNoContent)
-	}
-}
-
 // parseDagRunFilter reads the list filters the Airflow UI sends for a DAG's
 // runs (#1928). Patterns are SQL LIKE expressions matched case-insensitively,
 // and the date bounds are RFC 3339; a bound that does not parse is the
@@ -1544,7 +1508,7 @@ func registerResources(r gin.IRouter, deps Dependencies) {
 		// Pause and unpause are run control (ADR 0067). A change that lets this
 		// route set more than is_paused must revisit its scope.
 		g.PATCH("/:dag_id", RequireScopedPermission("write", "dag", auth.ScopeRun), patchDagHandler(deps.Stores.Dags))
-		g.DELETE("/:dag_id", RequireUndeployPermission(deps.Issuers.DeployViaIssuer), deleteDagHandler(deps.Stores.Dags))
+		g.DELETE("/:dag_id", RequireUndeployPermission(deps.Issuers.DeployViaIssuer), deleteDagHandler(deps.Stores.Dags, deps.Stores.Audit))
 	}
 	if deps.Stores.DagRuns != nil {
 		g := r.Group("/api/v2/dags/:dag_id/dagRuns")
@@ -1552,7 +1516,7 @@ func registerResources(r gin.IRouter, deps Dependencies) {
 		g.POST("", RequireScopedPermission("execute", "dag", auth.ScopeRun), createDagRunHandler(deps.Stores.DagRuns, deps.Stores.Specs, deps.Stores.Audit))
 		g.GET("/:dag_run_id", RequirePermission("read", "dag_run"), getDagRunHandler(deps.Stores.DagRuns, deps.Stores.DagVersions))
 		g.PATCH("/:dag_run_id", RequireScopedPermission("write", "dag_run", auth.ScopeRun), patchDagRunHandler(deps.Stores.DagRuns, deps.Stores.Audit))
-		g.DELETE("/:dag_run_id", RequirePermission("write", "dag_run"), deleteDagRunHandler(deps.Stores.DagRuns))
+		g.DELETE("/:dag_run_id", RequirePermission("write", "dag_run"), deleteDagRunHandler(deps.Stores.DagRuns, deps.Stores.Audit))
 	}
 	if deps.Stores.Tasks != nil {
 		r.GET("/api/v2/dags/:dag_id/dagRuns/:dag_run_id/taskInstances",

@@ -146,6 +146,11 @@ stack_helm_args() { # <release> <namespace> <task namespace> <jwt secret> <boots
     # default and mints a self-signed CA with no cert-manager.
     --set "auth.agentTLS.enabled=true"
     --set "auth.agentTLS.autoGenerate=true"
+    # #1230: the chart's logs PVC (50 Gi, on by default, right for production)
+    # outlives a deleted cluster as an orphaned persistent disk, and nothing can
+    # tell ours from someone else's to reclaim it. An experiment needs no log
+    # that outlives its cluster, so the control plane logs to an emptyDir.
+    --set "logs.persistence.enabled=false"
     --wait --timeout "${STACK_HELM_TIMEOUT:-10m}")
   HELM_ARGS+=("$@")
   return 0
@@ -285,6 +290,13 @@ self_test() {
     *"migrations.image.tag=$STACK_SERVER_IMAGE_TAG"*)
       echo "  ok   the migration image is pinned to the same tag as the server image" ;;
     *) echo "  FAIL the migration image is not pinned to the server tag, so a source tree ahead of the release would migrate with a different image"; fail=1 ;;
+  esac
+
+  # #1230: every throwaway install used to leave a 50 GB disk behind.
+  case " ${HELM_ARGS[*]} " in
+    *"--set logs.persistence.enabled=false "*)
+      echo "  ok   the logs PVC is off, so a deleted cluster leaves no orphaned 50 GB disk" ;;
+    *) echo "  FAIL the logs PVC is on: each experiment cluster leaves a 50 GB persistent disk after it is deleted"; fail=1 ;;
   esac
 
   # --wait, or the runner starts measuring a control plane that is not up and

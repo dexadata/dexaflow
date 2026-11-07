@@ -20,13 +20,13 @@ import (
 func BenchmarkActiveRunProjection(b *testing.B) {
 	for _, n := range []int{20, 500} {
 		tasks := make([]domain.TaskSpec, n)
-		tis := make([]queries.TaskInstance, n)
+		tis := make([]planTaskInstance, n)
 		now := time.Now()
 		delay := 30
 		for i := range n {
 			id := fmt.Sprintf("task_%05d", i)
 			tasks[i] = domain.TaskSpec{TaskID: id, Type: "python", RetryDelaySeconds: &delay}
-			tis[i] = queries.TaskInstance{TaskID: id, State: "running", TryNumber: 1, MaxTries: 2,
+			tis[i] = planTaskInstance{TaskID: id, State: "running", TryNumber: 1, MaxTries: 2,
 				EndedAt: pgtype.Timestamptz{Time: now, Valid: i%3 == 0}}
 		}
 		spec := domain.DAGSpec{DagID: "bench", Tasks: tasks}
@@ -45,7 +45,7 @@ func BenchmarkActiveRunProjection(b *testing.B) {
 func TestProjectRunStateCarriesTheTaskInstances(t *testing.T) {
 	delay := 30
 	tasks := []domain.TaskSpec{{TaskID: "a", RetryDelaySeconds: &delay}, {TaskID: "b"}}
-	tis := []queries.TaskInstance{{TaskID: "a", State: "running", TryNumber: 1, MaxTries: 2}}
+	tis := []planTaskInstance{{TaskID: "a", State: "running", TryNumber: 1, MaxTries: 2}}
 	rs := projectRunState(queries.ListActiveDagRunsRow{DagRun: queries.DagRun{RunID: "r", State: "running"}},
 		domain.DAGSpec{DagID: "d", Tasks: tasks}, scheduler.NewTaskGraph(tasks), tis, time.Unix(0, 0))
 	if rs.DagID != "d" || rs.DisplayRunID != "r" || len(rs.Tasks) != 2 {

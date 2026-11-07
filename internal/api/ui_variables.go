@@ -139,7 +139,7 @@ func getVariableHandler(store VariableStore) gin.HandlerFunc {
 }
 
 // createVariableHandler implements POST /api/v2/variables.
-func createVariableHandler(store VariableStore) gin.HandlerFunc {
+func createVariableHandler(store VariableStore, audit ResourceAuditWriter) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		var body struct {
 			Key         string  `json:"key"`
@@ -169,6 +169,12 @@ func createVariableHandler(store VariableStore) gin.HandlerFunc {
 			handleRepoError(c, err)
 			return
 		}
+		action := "variable.update"
+		if isCreate {
+			action = "variable.create"
+		}
+		recordResourceAudit(c, audit, action, "variable", body.Key,
+			map[string]string{"fields": setFields(map[string]bool{"value": body.Value != nil, "description": body.Description != nil})})
 		dto, err := effectiveVariableDTO(c, store, body.Key)
 		if err != nil {
 			handleRepoError(c, err)
@@ -179,7 +185,7 @@ func createVariableHandler(store VariableStore) gin.HandlerFunc {
 }
 
 // updateVariableHandler implements PATCH /api/v2/variables/{variable_key}.
-func updateVariableHandler(store VariableStore) gin.HandlerFunc {
+func updateVariableHandler(store VariableStore, audit ResourceAuditWriter) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		key := c.Param("variable_key")
 		stored, gerr := store.GetVariable(c.Request.Context(), tenantOf(c), key)
@@ -200,6 +206,8 @@ func updateVariableHandler(store VariableStore) gin.HandlerFunc {
 			handleRepoError(c, err)
 			return
 		}
+		recordResourceAudit(c, audit, "variable.update", "variable", key,
+			map[string]string{"fields": setFields(map[string]bool{"value": body.Value != nil, "description": body.Description != nil})})
 		dto, err := effectiveVariableDTO(c, store, key)
 		if err != nil {
 			handleRepoError(c, err)
@@ -221,26 +229,28 @@ func effectiveVariableDTO(c *gin.Context, store VariableStore, key string) (vari
 }
 
 // deleteVariableHandler implements DELETE /api/v2/variables/{variable_key}.
-func deleteVariableHandler(store VariableStore) gin.HandlerFunc {
+func deleteVariableHandler(store VariableStore, audit ResourceAuditWriter) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if err := store.DeleteVariable(c.Request.Context(), tenantOf(c), c.Param("variable_key")); err != nil {
 			handleRepoError(c, err)
 			return
 		}
+		recordResourceAudit(c, audit, "variable.delete", "variable", c.Param("variable_key"), nil)
 		c.Status(http.StatusNoContent)
 	}
 }
 
 // registerUIVariables mounts the Admin Variables CRUD when a store is set;
-// otherwise the empty stub stands in so the Admin page still renders.
-func registerUIVariables(r gin.IRouter, store VariableStore) {
+// otherwise the empty stub stands in so the Admin page still renders. audit,
+// when set, records every accepted write (#2228).
+func registerUIVariables(r gin.IRouter, store VariableStore, audit ResourceAuditWriter) {
 	if store == nil {
 		r.GET("/api/v2/variables", apiEmptyCollection("variables"))
 		return
 	}
 	r.GET("/api/v2/variables", RequirePermission("read", "variable"), listVariablesHandler(store))
 	r.GET("/api/v2/variables/:variable_key", RequirePermission("read", "variable"), getVariableHandler(store))
-	r.POST("/api/v2/variables", RequirePermission("write", "variable"), createVariableHandler(store))
-	r.PATCH("/api/v2/variables/:variable_key", RequirePermission("write", "variable"), updateVariableHandler(store))
-	r.DELETE("/api/v2/variables/:variable_key", RequirePermission("write", "variable"), deleteVariableHandler(store))
+	r.POST("/api/v2/variables", RequirePermission("write", "variable"), createVariableHandler(store, audit))
+	r.PATCH("/api/v2/variables/:variable_key", RequirePermission("write", "variable"), updateVariableHandler(store, audit))
+	r.DELETE("/api/v2/variables/:variable_key", RequirePermission("write", "variable"), deleteVariableHandler(store, audit))
 }

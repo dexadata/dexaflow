@@ -1,9 +1,12 @@
 package storage
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"slices"
+	"sync/atomic"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -39,6 +42,9 @@ type SchedulerStore struct {
 	// amendment, part 2). Set only where a reconciler runs (Kubernetes); false
 	// (Lite) confirms each mark at mark time, which behaves exactly as before.
 	provisionalInfraMarks bool
+	// lastTickRows is how many task instance rows the previous ActiveRuns
+	// read, the size hint of the next one (#2325).
+	lastTickRows atomic.Int64
 }
 
 // poolBeginner is the slice of pgxpool.Pool the store uses to start the orphan
@@ -70,21 +76,29 @@ type taskMaps struct {
 	infraAttempts    map[string]int
 }
 
+// planTaskInstance is the part of a task instance row the scheduler tick reads
+// (#2325): the columns taskInstanceMaps projects, and the run it belongs to.
+type planTaskInstance = queries.ListTaskInstancePlanStateByRunsRow
+
 // taskInstanceMaps projects a run's task-instance rows into the per-task maps the
 // planner consumes.
-func taskInstanceMaps(tis []queries.TaskInstance) taskMaps {
+func taskInstanceMaps(tis []planTaskInstance) taskMaps {
 	n := len(tis)
+	// Every row sets states, tries and maxTries, so those are sized for the
+	// run. The others hold only the few tasks that carry the value (an end
+	// time, a reschedule, a dispatch backoff, an infra mark), and sizing them
+	// for every task as well was most of the projection's allocation (#2325).
 	m := taskMaps{
 		states:           make(map[string]domain.TaskState, n),
 		tries:            make(map[string]int, n),
 		maxTries:         make(map[string]int, n),
-		endedAt:          make(map[string]*time.Time, n),
-		rescheduleAt:     make(map[string]*time.Time, n),
-		dispatchAttempts: make(map[string]int, n),
-		nextDispatchAt:   make(map[string]*time.Time, n),
-		infraFailed:      make(map[string]bool, n),
-		infraProvisional: make(map[string]bool, n),
-		infraAttempts:    make(map[string]int, n),
+		endedAt:          map[string]*time.Time{},
+		rescheduleAt:     map[string]*time.Time{},
+		dispatchAttempts: map[string]int{},
+		nextDispatchAt:   map[string]*time.Time{},
+		infraFailed:      map[string]bool{},
+		infraProvisional: map[string]bool{},
+		infraAttempts:    map[string]int{},
 	}
 	for _, ti := range tis {
 		m.states[ti.TaskID] = domain.TaskState(ti.State)
@@ -136,10 +150,18 @@ func (s *SchedulerStore) ActiveRuns(ctx context.Context) ([]scheduler.RunState, 
 	if err != nil {
 		return nil, fmt.Errorf("listing active runs: %w", err)
 	}
-	tisByRun, err := s.taskInstancesByRun(ctx, rows)
+	// The previous tick's row count plus a sixteenth sizes this tick's read
+	// (#2325): the set of active task instances changes little tick to tick.
+	last := int(s.lastTickRows.Load())
+	tisByRun, err := s.taskInstancesByRun(ctx, rows, last+last/16)
 	if err != nil {
 		return nil, err
 	}
+	total := 0
+	for _, tis := range tisByRun {
+		total += len(tis)
+	}
+	s.lastTickRows.Store(int64(total))
 	out := make([]scheduler.RunState, 0, len(rows))
 	s.specs.beginTick()
 	for _, row := range rows {
@@ -165,7 +187,7 @@ func (s *SchedulerStore) ActiveRuns(ctx context.Context) ([]scheduler.RunState, 
 // work ActiveRuns repeats on every tick once the rows are loaded. The cached
 // spec is shared read-only, so its Tasks are copied before applyDefaultRetries
 // fills a run's retry defaults.
-func projectRunState(row queries.ListActiveDagRunsRow, cached domain.DAGSpec, graph *scheduler.TaskGraph, tis []queries.TaskInstance, now time.Time) scheduler.RunState {
+func projectRunState(row queries.ListActiveDagRunsRow, cached domain.DAGSpec, graph *scheduler.TaskGraph, tis []planTaskInstance, now time.Time) scheduler.RunState {
 	run := row.DagRun
 	spec := cached
 	spec.Tasks = make([]domain.TaskSpec, len(cached.Tasks))
@@ -211,25 +233,43 @@ func projectRunState(row queries.ListActiveDagRunsRow, cached domain.DAGSpec, gr
 	}
 }
 
-// taskInstancesByRun loads the task instances of every given run in one query
-// and groups them by run. One round trip per tick replaces the one-per-run reads
-// that made the tick's database cost grow with the number of active runs. The
-// query orders by (dag_run_id, task_id), so each run's slice keeps the task_id
-// order the per-run query returned. A run with no rows (not yet materialized)
-// is simply absent, which taskInstanceMaps reads as an empty run, as before.
-func (s *SchedulerStore) taskInstancesByRun(ctx context.Context, runs []queries.ListActiveDagRunsRow) (map[pgtype.UUID][]queries.TaskInstance, error) {
+// taskInstancesByRun loads the planning columns of the task instances of every
+// given run in one query and groups them by run. One round trip per tick
+// replaces the one-per-run reads that made the tick's database cost grow with
+// the number of active runs, and reading only the columns the projection uses
+// keeps the bytes moved per row small (#2325). The rows come in no particular
+// order (the projection builds maps, so none is needed), and grouping here
+// keeps each run's rows contiguous in one backing array. A run with no rows
+// (not yet materialized) is simply absent, which taskInstanceMaps reads as an
+// empty run, as before.
+//
+// sizeHint is how many rows the caller expects; the tick passes the previous
+// tick's count so the result is allocated once instead of grown.
+func (s *SchedulerStore) taskInstancesByRun(ctx context.Context, runs []queries.ListActiveDagRunsRow, sizeHint int) (map[pgtype.UUID][]planTaskInstance, error) {
 	if len(runs) == 0 {
-		return map[pgtype.UUID][]queries.TaskInstance{}, nil
+		return map[pgtype.UUID][]planTaskInstance{}, nil
 	}
 	ids := make([]pgtype.UUID, len(runs))
 	for i, run := range runs {
 		ids[i] = run.DagRun.ID
 	}
-	tis, err := s.q.ListTaskInstancesByRuns(ctx, ids)
+	tis, err := s.q.ListTaskInstancePlanStateByRunsSized(ctx, ids, sizeHint)
 	if err != nil {
 		return nil, fmt.Errorf("listing task instances: %w", err)
 	}
-	byRun := make(map[pgtype.UUID][]queries.TaskInstance, len(runs))
+	return groupByRun(tis, len(runs)), nil
+}
+
+// groupByRun splits rows by dag_run_id, whatever order they came in. It sorts
+// them by run in place (no copy of the rows), which costs the tick a few
+// milliseconds at 100k rows where the server-side sort spilled to disk, and
+// slices each run's contiguous rows out of the one backing array, capped so an
+// append on one run's slice never writes into the next run's rows.
+func groupByRun(tis []planTaskInstance, runs int) map[pgtype.UUID][]planTaskInstance {
+	slices.SortFunc(tis, func(a, b planTaskInstance) int {
+		return bytes.Compare(a.DagRunID.Bytes[:], b.DagRunID.Bytes[:])
+	})
+	byRun := make(map[pgtype.UUID][]planTaskInstance, runs)
 	for start := 0; start < len(tis); {
 		end := start + 1
 		for end < len(tis) && tis[end].DagRunID == tis[start].DagRunID {
@@ -238,7 +278,7 @@ func (s *SchedulerStore) taskInstancesByRun(ctx context.Context, runs []queries.
 		byRun[tis[start].DagRunID] = tis[start:end:end]
 		start = end
 	}
-	return byRun, nil
+	return byRun
 }
 
 // SetWarmExecution records the operator's warm-pool config so ActiveWarmTargets
@@ -306,7 +346,7 @@ func waitsForUnpause(row queries.ListActiveDagRunsRow) bool {
 }
 
 // hasLiveTask reports whether any of the task instances is queued or running.
-func hasLiveTask(tis []queries.TaskInstance) bool {
+func hasLiveTask(tis []planTaskInstance) bool {
 	for _, ti := range tis {
 		if ti.State == queries.TaskStateQueued || ti.State == queries.TaskStateRunning {
 			return true
@@ -1007,7 +1047,7 @@ func (s *SchedulerStore) MarkTaskDispatchFailed(ctx context.Context, runID, task
 
 // MarkTaskAgentLost transitions one TI to `failed` with the agent_lost
 // reason. The WHERE state='running' guard makes this idempotent and prevents
-// a late terminal report being overwritten — if the row already moved, we
+// a late terminal report being overwritten: if the row already moved, we
 // touch zero rows and return nil. It is pinned to the listed attempt,
 // (tryNumber, attemptEpoch) (ADR 0051 amendment): a mark computed for a
 // superseded execution is a no-op on its replacement.

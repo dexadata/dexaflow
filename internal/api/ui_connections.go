@@ -144,6 +144,16 @@ type connectionBody struct {
 	Extra        *string `json:"extra"`
 }
 
+// auditFields names the fields the body set, for the audit entry of the
+// write: the password and extra are named, never recorded.
+func (b connectionBody) auditFields() map[string]string {
+	return map[string]string{"fields": setFields(map[string]bool{
+		"conn_type": b.ConnType != "", "description": b.Description != nil, "host": b.Host != nil,
+		"login": b.Login != nil, "password": b.Password != nil, "schema": b.Schema != nil,
+		"port": b.Port != nil, "extra": b.Extra != nil,
+	})}
+}
+
 // toDomain flattens the tri-state body to a plain domain.Connection (absent
 // fields become ""). It is used only by the non-persisting "test" probe, which
 // validates the posted connection's structure and has no stored value to merge.
@@ -350,7 +360,7 @@ func getConnectionHandler(store ConnectionStore) gin.HandlerFunc {
 	}
 }
 
-func createConnectionHandler(store ConnectionStore) gin.HandlerFunc {
+func createConnectionHandler(store ConnectionStore, audit ResourceAuditWriter) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		var body connectionBody
 		if err := c.ShouldBindJSON(&body); err != nil {
@@ -376,6 +386,11 @@ func createConnectionHandler(store ConnectionStore) gin.HandlerFunc {
 			handleConnWriteError(c, err)
 			return
 		}
+		action := "connection.update"
+		if errors.Is(gerr, ErrNotFound) {
+			action = "connection.create"
+		}
+		recordResourceAudit(c, audit, action, "connection", body.ConnectionID, body.auditFields())
 		dto, err := effectiveConnectionDTO(c, store, body.ConnectionID)
 		if err != nil {
 			handleRepoError(c, err)
@@ -385,7 +400,7 @@ func createConnectionHandler(store ConnectionStore) gin.HandlerFunc {
 	}
 }
 
-func updateConnectionHandler(store ConnectionStore) gin.HandlerFunc {
+func updateConnectionHandler(store ConnectionStore, audit ResourceAuditWriter) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		connID := c.Param("connection_id")
 		stored, gerr := store.GetConnection(c.Request.Context(), tenantOf(c), connID)
@@ -409,6 +424,7 @@ func updateConnectionHandler(store ConnectionStore) gin.HandlerFunc {
 			handleConnWriteError(c, err)
 			return
 		}
+		recordResourceAudit(c, audit, "connection.update", "connection", connID, body.auditFields())
 		dto, err := effectiveConnectionDTO(c, store, connID)
 		if err != nil {
 			handleRepoError(c, err)
@@ -430,12 +446,13 @@ func effectiveConnectionDTO(c *gin.Context, store ConnectionStore, connID string
 	return toConnectionDTO(got), nil
 }
 
-func deleteConnectionHandler(store ConnectionStore) gin.HandlerFunc {
+func deleteConnectionHandler(store ConnectionStore, audit ResourceAuditWriter) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if err := store.DeleteConnection(c.Request.Context(), tenantOf(c), c.Param("connection_id")); err != nil {
 			handleRepoError(c, err)
 			return
 		}
+		recordResourceAudit(c, audit, "connection.delete", "connection", c.Param("connection_id"), nil)
 		c.Status(http.StatusNoContent)
 	}
 }
@@ -453,7 +470,7 @@ func handleConnWriteError(c *gin.Context, err error) {
 
 // registerUIConnections mounts the Admin Connections CRUD when a store is set;
 // otherwise an empty-collection stub keeps the Admin page rendering.
-func registerUIConnections(r gin.IRouter, store ConnectionStore, tester ConnectionTester) {
+func registerUIConnections(r gin.IRouter, store ConnectionStore, tester ConnectionTester, audit ResourceAuditWriter) {
 	if tester == nil {
 		tester = defaultConnectionTester{}
 	}
@@ -466,7 +483,7 @@ func registerUIConnections(r gin.IRouter, store ConnectionStore, tester Connecti
 	}
 	r.GET("/api/v2/connections", RequirePermission("read", "connection"), listConnectionsHandler(store))
 	r.GET("/api/v2/connections/:connection_id", RequirePermission("read", "connection"), getConnectionHandler(store))
-	r.POST("/api/v2/connections", RequirePermission("write", "connection"), createConnectionHandler(store))
-	r.PATCH("/api/v2/connections/:connection_id", RequirePermission("write", "connection"), updateConnectionHandler(store))
-	r.DELETE("/api/v2/connections/:connection_id", RequirePermission("write", "connection"), deleteConnectionHandler(store))
+	r.POST("/api/v2/connections", RequirePermission("write", "connection"), createConnectionHandler(store, audit))
+	r.PATCH("/api/v2/connections/:connection_id", RequirePermission("write", "connection"), updateConnectionHandler(store, audit))
+	r.DELETE("/api/v2/connections/:connection_id", RequirePermission("write", "connection"), deleteConnectionHandler(store, audit))
 }

@@ -23,7 +23,7 @@ type DAG struct {
 	// CurrentVersion is the LABEL of the DAG's current registered version, empty
 	// when it cannot be resolved. Paired with DagRun.Version by the UI's clear
 	// dialog, which offers "Run with latest bundle version" only when the two
-	// differ — see that field.
+	// differ; see that field.
 	CurrentVersion string
 }
 

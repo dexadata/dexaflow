@@ -10,9 +10,9 @@ import "github.com/dexadata/dexaflow/pkg/logsink"
 
 Package logsink is the contract of the task log sink \(ADR 0099\): where the control plane stores the log of each task attempt and where it reads it back from for the API, the UI and the CLI.
 
-A [Sink](<#Sink>) opens a [LogWriter](<#LogWriter>) for one attempt, named by a [Ref](<#Ref>), and the server writes the attempt's [Event](<#Event>) values to it as the agent streams them. \[Sink.Read\] returns the stored log as JSON lines, one event per line, in the order they were written.
+A [Sink](<#Sink>) opens a [LogWriter](<#LogWriter>) for one attempt, named by a [Ref](<#Ref>), and the server writes the attempt's [Event](<#Event>) values to it as the agent streams them. The Read method of a [Sink](<#Sink>) returns the stored log as JSON lines, one event per line, in the order they were written.
 
-Three optional interfaces let the server do more with a sink that supports them, and it checks for each with a type assertion. A [LogWriter](<#LogWriter>) that is also a [LineWriter](<#LineWriter>) takes a line the server already encoded. A [Sink](<#Sink>) that is also a [Resumer](<#Resumer>) continues a stream after the agent's connection dropped mid\-task, instead of refusing the reconnect. A [Sink](<#Sink>) that is also a [MarkerSink](<#MarkerSink>) can add one event to a log that was already closed, which the server uses to record why it stopped a task. A sink that implements none of them still works: the server falls back to \[LogWriter.WriteEvent\], the agent stops reconnecting the stream, and the marker is skipped.
+Three optional interfaces let the server do more with a sink that supports them, and it checks for each with a type assertion. A [LogWriter](<#LogWriter>) that is also a [LineWriter](<#LineWriter>) takes a line the server already encoded. A [Sink](<#Sink>) that is also a [Resumer](<#Resumer>) continues a stream after the agent's connection dropped mid\-task, instead of refusing the reconnect. A [Sink](<#Sink>) that is also a [MarkerSink](<#MarkerSink>) can add one event to a log that was already closed, which the server uses to record why it stopped a task. A sink that implements none of them still works: the server falls back to the WriteEvent method of [LogWriter](<#LogWriter>), the agent stops reconnecting the stream, and the marker is skipped.
 
 Everything exported here follows the pkg/ compatibility rule of ADR 0099: no breaking change in a patch release.
 
@@ -28,7 +28,7 @@ Everything exported here follows the pkg/ compatibility rule of ADR 0099: no bre
 
 
 <a name="Event"></a>
-## type [Event](<https://github.com/dexadata/dexaflow/blob/main/pkg/logsink/logsink.go#L32-L42>)
+## type [Event](<https://github.com/dexadata/dexaflow/blob/main/pkg/logsink/logsink.go#L33-L43>)
 
 Event is one line of a task log. Stored logs are JSON lines whose keys are the struct tags below.
 
@@ -47,7 +47,7 @@ type Event struct {
 ```
 
 <a name="LineWriter"></a>
-## type [LineWriter](<https://github.com/dexadata/dexaflow/blob/main/pkg/logsink/logsink.go#L75-L77>)
+## type [LineWriter](<https://github.com/dexadata/dexaflow/blob/main/pkg/logsink/logsink.go#L76-L78>)
 
 LineWriter is an optional interface of a [LogWriter](<#LogWriter>) that also accepts a line the server already encoded as JSON, without the trailing newline, so a line that is both stored and published to the live tail is encoded once.
 
@@ -58,7 +58,7 @@ type LineWriter interface {
 ```
 
 <a name="LogWriter"></a>
-## type [LogWriter](<https://github.com/dexadata/dexaflow/blob/main/pkg/logsink/logsink.go#L67-L70>)
+## type [LogWriter](<https://github.com/dexadata/dexaflow/blob/main/pkg/logsink/logsink.go#L68-L71>)
 
 LogWriter appends the events of one task attempt. The server calls Close once, when the attempt's stream ends, and a sink flushes there: a log is complete only after Close returned nil.
 
@@ -70,7 +70,7 @@ type LogWriter interface {
 ```
 
 <a name="MarkerSink"></a>
-## type [MarkerSink](<https://github.com/dexadata/dexaflow/blob/main/pkg/logsink/logsink.go#L93-L95>)
+## type [MarkerSink](<https://github.com/dexadata/dexaflow/blob/main/pkg/logsink/logsink.go#L94-L96>)
 
 MarkerSink is an optional interface of a [Sink](<#Sink>) that can append one event to an attempt's log while keeping what it already holds. The server uses it to add a terminal marker to the log of a task it killed.
 
@@ -81,7 +81,7 @@ type MarkerSink interface {
 ```
 
 <a name="Ref"></a>
-## type [Ref](<https://github.com/dexadata/dexaflow/blob/main/pkg/logsink/logsink.go#L55-L62>)
+## type [Ref](<https://github.com/dexadata/dexaflow/blob/main/pkg/logsink/logsink.go#L56-L63>)
 
 Ref identifies the log stream of one execution of one task try.
 
@@ -101,7 +101,7 @@ type Ref struct {
 ```
 
 <a name="Resumer"></a>
-## type [Resumer](<https://github.com/dexadata/dexaflow/blob/main/pkg/logsink/logsink.go#L101-L103>)
+## type [Resumer](<https://github.com/dexadata/dexaflow/blob/main/pkg/logsink/logsink.go#L102-L104>)
 
 Resumer is an optional interface of a [Sink](<#Sink>) that can continue the stored stream of ref: the writer Resume returns keeps what is already stored and appends after it. The server calls it when an agent reopens the log stream of an attempt that is still running.
 
@@ -112,7 +112,7 @@ type Resumer interface {
 ```
 
 <a name="Sink"></a>
-## type [Sink](<https://github.com/dexadata/dexaflow/blob/main/pkg/logsink/logsink.go#L85-L88>)
+## type [Sink](<https://github.com/dexadata/dexaflow/blob/main/pkg/logsink/logsink.go#L86-L89>)
 
 Sink stores and retrieves task logs.
 

@@ -18,8 +18,15 @@ client.gen.go is generated from docs/api/openapi.yaml. Do not edit it by hand; r
 
 ## Index
 
+- [Constants](<#constants>)
+- [Variables](<#variables>)
+- [func DryRunRegister\(\_ context.Context, req \*http.Request\) error](<#DryRunRegister>)
+- [func NewClearDagRunRequest\(server string, dagId DagID, dagRunId DagRunID, body ClearDagRunJSONRequestBody\) \(\*http.Request, error\)](<#NewClearDagRunRequest>)
+- [func NewClearDagRunRequestWithBody\(server string, dagId DagID, dagRunId DagRunID, contentType string, body io.Reader\) \(\*http.Request, error\)](<#NewClearDagRunRequestWithBody>)
 - [func NewClearTaskInstancesRequest\(server string, dagId DagID, body ClearTaskInstancesJSONRequestBody\) \(\*http.Request, error\)](<#NewClearTaskInstancesRequest>)
 - [func NewClearTaskInstancesRequestWithBody\(server string, dagId DagID, contentType string, body io.Reader\) \(\*http.Request, error\)](<#NewClearTaskInstancesRequestWithBody>)
+- [func NewCreateAPITokenRequest\(server string, body CreateAPITokenJSONRequestBody\) \(\*http.Request, error\)](<#NewCreateAPITokenRequest>)
+- [func NewCreateAPITokenRequestWithBody\(server string, contentType string, body io.Reader\) \(\*http.Request, error\)](<#NewCreateAPITokenRequestWithBody>)
 - [func NewCreateConnectionRequest\(server string, body CreateConnectionJSONRequestBody\) \(\*http.Request, error\)](<#NewCreateConnectionRequest>)
 - [func NewCreateConnectionRequestWithBody\(server string, contentType string, body io.Reader\) \(\*http.Request, error\)](<#NewCreateConnectionRequestWithBody>)
 - [func NewCreateUserRequest\(server string, body CreateUserJSONRequestBody\) \(\*http.Request, error\)](<#NewCreateUserRequest>)
@@ -45,6 +52,7 @@ client.gen.go is generated from docs/api/openapi.yaml. Do not edit it by hand; r
 - [func NewGetXcomEntryRequest\(server string, dagId DagID, dagRunId DagRunID, taskId TaskID, key string\) \(\*http.Request, error\)](<#NewGetXcomEntryRequest>)
 - [func NewIssueTokenRequest\(server string, body IssueTokenJSONRequestBody\) \(\*http.Request, error\)](<#NewIssueTokenRequest>)
 - [func NewIssueTokenRequestWithBody\(server string, contentType string, body io.Reader\) \(\*http.Request, error\)](<#NewIssueTokenRequestWithBody>)
+- [func NewListAPITokensRequest\(server string, params \*ListAPITokensParams\) \(\*http.Request, error\)](<#NewListAPITokensRequest>)
 - [func NewListConnectionsRequest\(server string, params \*ListConnectionsParams\) \(\*http.Request, error\)](<#NewListConnectionsRequest>)
 - [func NewListDagRunsRequest\(server string, dagId DagID, params \*ListDagRunsParams\) \(\*http.Request, error\)](<#NewListDagRunsRequest>)
 - [func NewListDagVersionsRequest\(server string, dagId DagID\) \(\*http.Request, error\)](<#NewListDagVersionsRequest>)
@@ -52,26 +60,77 @@ client.gen.go is generated from docs/api/openapi.yaml. Do not edit it by hand; r
 - [func NewListTaskInstancesRequest\(server string, dagId DagID, dagRunId DagRunID\) \(\*http.Request, error\)](<#NewListTaskInstancesRequest>)
 - [func NewListUsersRequest\(server string, params \*ListUsersParams\) \(\*http.Request, error\)](<#NewListUsersRequest>)
 - [func NewListVariablesRequest\(server string, params \*ListVariablesParams\) \(\*http.Request, error\)](<#NewListVariablesRequest>)
+- [func NewPatchTaskInstanceDryRunRequest\(server string, dagId DagID, dagRunId DagRunID, taskId TaskID, body PatchTaskInstanceDryRunJSONRequestBody\) \(\*http.Request, error\)](<#NewPatchTaskInstanceDryRunRequest>)
+- [func NewPatchTaskInstanceDryRunRequestWithBody\(server string, dagId DagID, dagRunId DagRunID, taskId TaskID, contentType string, body io.Reader\) \(\*http.Request, error\)](<#NewPatchTaskInstanceDryRunRequestWithBody>)
+- [func NewPatchTaskInstanceRequest\(server string, dagId DagID, dagRunId DagRunID, taskId TaskID, body PatchTaskInstanceJSONRequestBody\) \(\*http.Request, error\)](<#NewPatchTaskInstanceRequest>)
+- [func NewPatchTaskInstanceRequestWithBody\(server string, dagId DagID, dagRunId DagRunID, taskId TaskID, contentType string, body io.Reader\) \(\*http.Request, error\)](<#NewPatchTaskInstanceRequestWithBody>)
+- [func NewPatchUserRequest\(server string, userId string, body PatchUserJSONRequestBody\) \(\*http.Request, error\)](<#NewPatchUserRequest>)
+- [func NewPatchUserRequestWithBody\(server string, userId string, contentType string, body io.Reader\) \(\*http.Request, error\)](<#NewPatchUserRequestWithBody>)
+- [func NewRegisterDagVersionRequest\(server string, dagId DagID, params \*RegisterDagVersionParams, body RegisterDagVersionJSONRequestBody\) \(\*http.Request, error\)](<#NewRegisterDagVersionRequest>)
+- [func NewRegisterDagVersionRequestWithBody\(server string, dagId DagID, params \*RegisterDagVersionParams, contentType string, body io.Reader\) \(\*http.Request, error\)](<#NewRegisterDagVersionRequestWithBody>)
 - [func NewRenewTokenRequest\(server string\) \(\*http.Request, error\)](<#NewRenewTokenRequest>)
+- [func NewRevokeAPITokenRequest\(server string, tokenId string\) \(\*http.Request, error\)](<#NewRevokeAPITokenRequest>)
+- [func NewSetDagCurrentVersionRequest\(server string, dagId DagID, body SetDagCurrentVersionJSONRequestBody\) \(\*http.Request, error\)](<#NewSetDagCurrentVersionRequest>)
+- [func NewSetDagCurrentVersionRequestWithBody\(server string, dagId DagID, contentType string, body io.Reader\) \(\*http.Request, error\)](<#NewSetDagCurrentVersionRequestWithBody>)
 - [func NewTriggerDagRunRequest\(server string, dagId DagID, body TriggerDagRunJSONRequestBody\) \(\*http.Request, error\)](<#NewTriggerDagRunRequest>)
 - [func NewTriggerDagRunRequestWithBody\(server string, dagId DagID, contentType string, body io.Reader\) \(\*http.Request, error\)](<#NewTriggerDagRunRequestWithBody>)
 - [func NewUpdateConnectionRequest\(server string, connectionId ConnectionID, body UpdateConnectionJSONRequestBody\) \(\*http.Request, error\)](<#NewUpdateConnectionRequest>)
 - [func NewUpdateConnectionRequestWithBody\(server string, connectionId ConnectionID, contentType string, body io.Reader\) \(\*http.Request, error\)](<#NewUpdateConnectionRequestWithBody>)
 - [func NewUpdateDagRequest\(server string, dagId DagID, body UpdateDagJSONRequestBody\) \(\*http.Request, error\)](<#NewUpdateDagRequest>)
 - [func NewUpdateDagRequestWithBody\(server string, dagId DagID, contentType string, body io.Reader\) \(\*http.Request, error\)](<#NewUpdateDagRequestWithBody>)
+- [type APIToken](<#APIToken>)
+- [type APITokenCollection](<#APITokenCollection>)
+- [type AuthMethods](<#AuthMethods>)
+- [type AuthUnavailable](<#AuthUnavailable>)
+- [type BuildInfo](<#BuildInfo>)
+- [type CITokenRequest](<#CITokenRequest>)
+- [type CITokenResponse](<#CITokenResponse>)
+- [type CLIDeviceAuthorization](<#CLIDeviceAuthorization>)
+- [type CLITokenRequest](<#CLITokenRequest>)
+- [type ClearDagRun200JSONResponseBody](<#ClearDagRun200JSONResponseBody>)
+  - [func \(t ClearDagRun200JSONResponseBody\) AsDAGRun\(\) \(DAGRun, error\)](<#ClearDagRun200JSONResponseBody.AsDAGRun>)
+  - [func \(t ClearDagRun200JSONResponseBody\) AsTaskInstanceCollection\(\) \(TaskInstanceCollection, error\)](<#ClearDagRun200JSONResponseBody.AsTaskInstanceCollection>)
+  - [func \(t \*ClearDagRun200JSONResponseBody\) FromDAGRun\(v DAGRun\) error](<#ClearDagRun200JSONResponseBody.FromDAGRun>)
+  - [func \(t \*ClearDagRun200JSONResponseBody\) FromTaskInstanceCollection\(v TaskInstanceCollection\) error](<#ClearDagRun200JSONResponseBody.FromTaskInstanceCollection>)
+  - [func \(t ClearDagRun200JSONResponseBody\) MarshalJSON\(\) \(\[\]byte, error\)](<#ClearDagRun200JSONResponseBody.MarshalJSON>)
+  - [func \(t \*ClearDagRun200JSONResponseBody\) MergeDAGRun\(v DAGRun\) error](<#ClearDagRun200JSONResponseBody.MergeDAGRun>)
+  - [func \(t \*ClearDagRun200JSONResponseBody\) MergeTaskInstanceCollection\(v TaskInstanceCollection\) error](<#ClearDagRun200JSONResponseBody.MergeTaskInstanceCollection>)
+  - [func \(t \*ClearDagRun200JSONResponseBody\) UnmarshalJSON\(b \[\]byte\) error](<#ClearDagRun200JSONResponseBody.UnmarshalJSON>)
+- [type ClearDagRunJSONRequestBody](<#ClearDagRunJSONRequestBody>)
+- [type ClearDagRunResponse](<#ClearDagRunResponse>)
+  - [func ParseClearDagRunResponse\(rsp \*http.Response\) \(\*ClearDagRunResponse, error\)](<#ParseClearDagRunResponse>)
+  - [func \(r ClearDagRunResponse\) ContentType\(\) string](<#ClearDagRunResponse.ContentType>)
+  - [func \(r ClearDagRunResponse\) GetApplicationproblemJSON503\(\) \*AuthUnavailable](<#ClearDagRunResponse.GetApplicationproblemJSON503>)
+  - [func \(r ClearDagRunResponse\) GetBody\(\) \[\]byte](<#ClearDagRunResponse.GetBody>)
+  - [func \(r ClearDagRunResponse\) GetJSON200\(\) \*ClearDagRun200JSONResponseBody](<#ClearDagRunResponse.GetJSON200>)
+  - [func \(r ClearDagRunResponse\) GetJSON400\(\) \*Error](<#ClearDagRunResponse.GetJSON400>)
+  - [func \(r ClearDagRunResponse\) GetJSON403\(\) \*Error](<#ClearDagRunResponse.GetJSON403>)
+  - [func \(r ClearDagRunResponse\) GetJSON404\(\) \*NotFound](<#ClearDagRunResponse.GetJSON404>)
+  - [func \(r ClearDagRunResponse\) GetJSON409\(\) \*Error](<#ClearDagRunResponse.GetJSON409>)
+  - [func \(r ClearDagRunResponse\) Status\(\) string](<#ClearDagRunResponse.Status>)
+  - [func \(r ClearDagRunResponse\) StatusCode\(\) int](<#ClearDagRunResponse.StatusCode>)
+- [type ClearDagRunResponse503Headers](<#ClearDagRunResponse503Headers>)
 - [type ClearTaskInstancesJSONRequestBody](<#ClearTaskInstancesJSONRequestBody>)
 - [type ClearTaskInstancesRequest](<#ClearTaskInstancesRequest>)
 - [type ClearTaskInstancesResponse](<#ClearTaskInstancesResponse>)
   - [func ParseClearTaskInstancesResponse\(rsp \*http.Response\) \(\*ClearTaskInstancesResponse, error\)](<#ParseClearTaskInstancesResponse>)
   - [func \(r ClearTaskInstancesResponse\) ContentType\(\) string](<#ClearTaskInstancesResponse.ContentType>)
+  - [func \(r ClearTaskInstancesResponse\) GetApplicationproblemJSON503\(\) \*AuthUnavailable](<#ClearTaskInstancesResponse.GetApplicationproblemJSON503>)
   - [func \(r ClearTaskInstancesResponse\) GetBody\(\) \[\]byte](<#ClearTaskInstancesResponse.GetBody>)
   - [func \(r ClearTaskInstancesResponse\) GetJSON200\(\) \*TaskInstanceCollection](<#ClearTaskInstancesResponse.GetJSON200>)
+  - [func \(r ClearTaskInstancesResponse\) GetJSON409\(\) \*Error](<#ClearTaskInstancesResponse.GetJSON409>)
   - [func \(r ClearTaskInstancesResponse\) Status\(\) string](<#ClearTaskInstancesResponse.Status>)
   - [func \(r ClearTaskInstancesResponse\) StatusCode\(\) int](<#ClearTaskInstancesResponse.StatusCode>)
+- [type ClearTaskInstancesResponse503Headers](<#ClearTaskInstancesResponse503Headers>)
+- [type ClearVersionNotApplied](<#ClearVersionNotApplied>)
 - [type Client](<#Client>)
   - [func NewClient\(server string, opts ...ClientOption\) \(\*Client, error\)](<#NewClient>)
+  - [func \(c \*Client\) ClearDagRun\(ctx context.Context, dagId DagID, dagRunId DagRunID, body ClearDagRunJSONRequestBody, reqEditors ...RequestEditorFn\) \(\*http.Response, error\)](<#Client.ClearDagRun>)
+  - [func \(c \*Client\) ClearDagRunWithBody\(ctx context.Context, dagId DagID, dagRunId DagRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn\) \(\*http.Response, error\)](<#Client.ClearDagRunWithBody>)
   - [func \(c \*Client\) ClearTaskInstances\(ctx context.Context, dagId DagID, body ClearTaskInstancesJSONRequestBody, reqEditors ...RequestEditorFn\) \(\*http.Response, error\)](<#Client.ClearTaskInstances>)
   - [func \(c \*Client\) ClearTaskInstancesWithBody\(ctx context.Context, dagId DagID, contentType string, body io.Reader, reqEditors ...RequestEditorFn\) \(\*http.Response, error\)](<#Client.ClearTaskInstancesWithBody>)
+  - [func \(c \*Client\) CreateAPIToken\(ctx context.Context, body CreateAPITokenJSONRequestBody, reqEditors ...RequestEditorFn\) \(\*http.Response, error\)](<#Client.CreateAPIToken>)
+  - [func \(c \*Client\) CreateAPITokenWithBody\(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn\) \(\*http.Response, error\)](<#Client.CreateAPITokenWithBody>)
   - [func \(c \*Client\) CreateConnection\(ctx context.Context, body CreateConnectionJSONRequestBody, reqEditors ...RequestEditorFn\) \(\*http.Response, error\)](<#Client.CreateConnection>)
   - [func \(c \*Client\) CreateConnectionWithBody\(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn\) \(\*http.Response, error\)](<#Client.CreateConnectionWithBody>)
   - [func \(c \*Client\) CreateUser\(ctx context.Context, body CreateUserJSONRequestBody, reqEditors ...RequestEditorFn\) \(\*http.Response, error\)](<#Client.CreateUser>)
@@ -80,12 +139,17 @@ client.gen.go is generated from docs/api/openapi.yaml. Do not edit it by hand; r
   - [func \(c \*Client\) CreateVariableWithBody\(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn\) \(\*http.Response, error\)](<#Client.CreateVariableWithBody>)
   - [func \(c \*Client\) DeleteConnection\(ctx context.Context, connectionId ConnectionID, reqEditors ...RequestEditorFn\) \(\*http.Response, error\)](<#Client.DeleteConnection>)
   - [func \(c \*Client\) DeleteVariable\(ctx context.Context, variableKey VariableKey, reqEditors ...RequestEditorFn\) \(\*http.Response, error\)](<#Client.DeleteVariable>)
+  - [func \(c \*Client\) ExchangeCIToken\(ctx context.Context, body CITokenRequest, reqEditors ...RequestEditorFn\) \(\*CITokenResponse, error\)](<#Client.ExchangeCIToken>)
+  - [func \(c \*Client\) ExchangeCLILoginCode\(ctx context.Context, body CLITokenRequest, reqEditors ...RequestEditorFn\) \(\*TokenResponse, error\)](<#Client.ExchangeCLILoginCode>)
+  - [func \(c \*Client\) GetAuthMethods\(ctx context.Context, reqEditors ...RequestEditorFn\) \(\*AuthMethods, error\)](<#Client.GetAuthMethods>)
   - [func \(c \*Client\) GetConnection\(ctx context.Context, connectionId ConnectionID, reqEditors ...RequestEditorFn\) \(\*http.Response, error\)](<#Client.GetConnection>)
   - [func \(c \*Client\) GetDag\(ctx context.Context, dagId DagID, reqEditors ...RequestEditorFn\) \(\*http.Response, error\)](<#Client.GetDag>)
   - [func \(c \*Client\) GetDagRun\(ctx context.Context, dagId DagID, dagRunId DagRunID, reqEditors ...RequestEditorFn\) \(\*http.Response, error\)](<#Client.GetDagRun>)
   - [func \(c \*Client\) GetDagSource\(ctx context.Context, dagId DagID, reqEditors ...RequestEditorFn\) \(\*http.Response, error\)](<#Client.GetDagSource>)
   - [func \(c \*Client\) GetDagSpec\(ctx context.Context, dagId DagID, reqEditors ...RequestEditorFn\) \(\*http.Response, error\)](<#Client.GetDagSpec>)
   - [func \(c \*Client\) GetDagVersion\(ctx context.Context, dagId DagID, versionNumber int, reqEditors ...RequestEditorFn\) \(\*http.Response, error\)](<#Client.GetDagVersion>)
+  - [func \(c \*Client\) GetDagVersionSpec\(ctx context.Context, dagID string, versionNumber int, reqEditors ...RequestEditorFn\) \(json.RawMessage, error\)](<#Client.GetDagVersionSpec>)
+  - [func \(c \*Client\) GetDeployDefaults\(ctx context.Context, reqEditors ...RequestEditorFn\) \(\*DeployDefaults, error\)](<#Client.GetDeployDefaults>)
   - [func \(c \*Client\) GetHealthz\(ctx context.Context, reqEditors ...RequestEditorFn\) \(\*http.Response, error\)](<#Client.GetHealthz>)
   - [func \(c \*Client\) GetMonitorExecutor\(ctx context.Context, reqEditors ...RequestEditorFn\) \(\*http.Response, error\)](<#Client.GetMonitorExecutor>)
   - [func \(c \*Client\) GetMonitorHealth\(ctx context.Context, reqEditors ...RequestEditorFn\) \(\*http.Response, error\)](<#Client.GetMonitorHealth>)
@@ -97,6 +161,7 @@ client.gen.go is generated from docs/api/openapi.yaml. Do not edit it by hand; r
   - [func \(c \*Client\) GetXcomEntry\(ctx context.Context, dagId DagID, dagRunId DagRunID, taskId TaskID, key string, reqEditors ...RequestEditorFn\) \(\*http.Response, error\)](<#Client.GetXcomEntry>)
   - [func \(c \*Client\) IssueToken\(ctx context.Context, body IssueTokenJSONRequestBody, reqEditors ...RequestEditorFn\) \(\*http.Response, error\)](<#Client.IssueToken>)
   - [func \(c \*Client\) IssueTokenWithBody\(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn\) \(\*http.Response, error\)](<#Client.IssueTokenWithBody>)
+  - [func \(c \*Client\) ListAPITokens\(ctx context.Context, params \*ListAPITokensParams, reqEditors ...RequestEditorFn\) \(\*http.Response, error\)](<#Client.ListAPITokens>)
   - [func \(c \*Client\) ListConnections\(ctx context.Context, params \*ListConnectionsParams, reqEditors ...RequestEditorFn\) \(\*http.Response, error\)](<#Client.ListConnections>)
   - [func \(c \*Client\) ListDagRuns\(ctx context.Context, dagId DagID, params \*ListDagRunsParams, reqEditors ...RequestEditorFn\) \(\*http.Response, error\)](<#Client.ListDagRuns>)
   - [func \(c \*Client\) ListDagVersions\(ctx context.Context, dagId DagID, reqEditors ...RequestEditorFn\) \(\*http.Response, error\)](<#Client.ListDagVersions>)
@@ -104,7 +169,20 @@ client.gen.go is generated from docs/api/openapi.yaml. Do not edit it by hand; r
   - [func \(c \*Client\) ListTaskInstances\(ctx context.Context, dagId DagID, dagRunId DagRunID, reqEditors ...RequestEditorFn\) \(\*http.Response, error\)](<#Client.ListTaskInstances>)
   - [func \(c \*Client\) ListUsers\(ctx context.Context, params \*ListUsersParams, reqEditors ...RequestEditorFn\) \(\*http.Response, error\)](<#Client.ListUsers>)
   - [func \(c \*Client\) ListVariables\(ctx context.Context, params \*ListVariablesParams, reqEditors ...RequestEditorFn\) \(\*http.Response, error\)](<#Client.ListVariables>)
+  - [func \(c \*Client\) PatchTaskInstance\(ctx context.Context, dagId DagID, dagRunId DagRunID, taskId TaskID, body PatchTaskInstanceJSONRequestBody, reqEditors ...RequestEditorFn\) \(\*http.Response, error\)](<#Client.PatchTaskInstance>)
+  - [func \(c \*Client\) PatchTaskInstanceDryRun\(ctx context.Context, dagId DagID, dagRunId DagRunID, taskId TaskID, body PatchTaskInstanceDryRunJSONRequestBody, reqEditors ...RequestEditorFn\) \(\*http.Response, error\)](<#Client.PatchTaskInstanceDryRun>)
+  - [func \(c \*Client\) PatchTaskInstanceDryRunWithBody\(ctx context.Context, dagId DagID, dagRunId DagRunID, taskId TaskID, contentType string, body io.Reader, reqEditors ...RequestEditorFn\) \(\*http.Response, error\)](<#Client.PatchTaskInstanceDryRunWithBody>)
+  - [func \(c \*Client\) PatchTaskInstanceWithBody\(ctx context.Context, dagId DagID, dagRunId DagRunID, taskId TaskID, contentType string, body io.Reader, reqEditors ...RequestEditorFn\) \(\*http.Response, error\)](<#Client.PatchTaskInstanceWithBody>)
+  - [func \(c \*Client\) PatchUser\(ctx context.Context, userId string, body PatchUserJSONRequestBody, reqEditors ...RequestEditorFn\) \(\*http.Response, error\)](<#Client.PatchUser>)
+  - [func \(c \*Client\) PatchUserWithBody\(ctx context.Context, userId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn\) \(\*http.Response, error\)](<#Client.PatchUserWithBody>)
+  - [func \(c \*Client\) PollCLIDeviceLogin\(ctx context.Context, deviceCode string, reqEditors ...RequestEditorFn\) \(\*TokenResponse, error\)](<#Client.PollCLIDeviceLogin>)
+  - [func \(c \*Client\) RegisterDagVersion\(ctx context.Context, dagId DagID, params \*RegisterDagVersionParams, body RegisterDagVersionJSONRequestBody, reqEditors ...RequestEditorFn\) \(\*http.Response, error\)](<#Client.RegisterDagVersion>)
+  - [func \(c \*Client\) RegisterDagVersionWithBody\(ctx context.Context, dagId DagID, params \*RegisterDagVersionParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn\) \(\*http.Response, error\)](<#Client.RegisterDagVersionWithBody>)
   - [func \(c \*Client\) RenewToken\(ctx context.Context, reqEditors ...RequestEditorFn\) \(\*http.Response, error\)](<#Client.RenewToken>)
+  - [func \(c \*Client\) RevokeAPIToken\(ctx context.Context, tokenId string, reqEditors ...RequestEditorFn\) \(\*http.Response, error\)](<#Client.RevokeAPIToken>)
+  - [func \(c \*Client\) SetDagCurrentVersion\(ctx context.Context, dagId DagID, body SetDagCurrentVersionJSONRequestBody, reqEditors ...RequestEditorFn\) \(\*http.Response, error\)](<#Client.SetDagCurrentVersion>)
+  - [func \(c \*Client\) SetDagCurrentVersionWithBody\(ctx context.Context, dagId DagID, contentType string, body io.Reader, reqEditors ...RequestEditorFn\) \(\*http.Response, error\)](<#Client.SetDagCurrentVersionWithBody>)
+  - [func \(c \*Client\) StartCLIDeviceLogin\(ctx context.Context, reqEditors ...RequestEditorFn\) \(\*CLIDeviceAuthorization, error\)](<#Client.StartCLIDeviceLogin>)
   - [func \(c \*Client\) TriggerDagRun\(ctx context.Context, dagId DagID, body TriggerDagRunJSONRequestBody, reqEditors ...RequestEditorFn\) \(\*http.Response, error\)](<#Client.TriggerDagRun>)
   - [func \(c \*Client\) TriggerDagRunWithBody\(ctx context.Context, dagId DagID, contentType string, body io.Reader, reqEditors ...RequestEditorFn\) \(\*http.Response, error\)](<#Client.TriggerDagRunWithBody>)
   - [func \(c \*Client\) UpdateConnection\(ctx context.Context, connectionId ConnectionID, body UpdateConnectionJSONRequestBody, reqEditors ...RequestEditorFn\) \(\*http.Response, error\)](<#Client.UpdateConnection>)
@@ -119,8 +197,12 @@ client.gen.go is generated from docs/api/openapi.yaml. Do not edit it by hand; r
 - [type ClientWithResponses](<#ClientWithResponses>)
   - [func New\(baseURL, token string, opts ...ClientOption\) \(\*ClientWithResponses, error\)](<#New>)
   - [func NewClientWithResponses\(server string, opts ...ClientOption\) \(\*ClientWithResponses, error\)](<#NewClientWithResponses>)
+  - [func \(c \*ClientWithResponses\) ClearDagRunWithBodyWithResponse\(ctx context.Context, dagId DagID, dagRunId DagRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn\) \(\*ClearDagRunResponse, error\)](<#ClientWithResponses.ClearDagRunWithBodyWithResponse>)
+  - [func \(c \*ClientWithResponses\) ClearDagRunWithResponse\(ctx context.Context, dagId DagID, dagRunId DagRunID, body ClearDagRunJSONRequestBody, reqEditors ...RequestEditorFn\) \(\*ClearDagRunResponse, error\)](<#ClientWithResponses.ClearDagRunWithResponse>)
   - [func \(c \*ClientWithResponses\) ClearTaskInstancesWithBodyWithResponse\(ctx context.Context, dagId DagID, contentType string, body io.Reader, reqEditors ...RequestEditorFn\) \(\*ClearTaskInstancesResponse, error\)](<#ClientWithResponses.ClearTaskInstancesWithBodyWithResponse>)
   - [func \(c \*ClientWithResponses\) ClearTaskInstancesWithResponse\(ctx context.Context, dagId DagID, body ClearTaskInstancesJSONRequestBody, reqEditors ...RequestEditorFn\) \(\*ClearTaskInstancesResponse, error\)](<#ClientWithResponses.ClearTaskInstancesWithResponse>)
+  - [func \(c \*ClientWithResponses\) CreateAPITokenWithBodyWithResponse\(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn\) \(\*CreateAPITokenResponse, error\)](<#ClientWithResponses.CreateAPITokenWithBodyWithResponse>)
+  - [func \(c \*ClientWithResponses\) CreateAPITokenWithResponse\(ctx context.Context, body CreateAPITokenJSONRequestBody, reqEditors ...RequestEditorFn\) \(\*CreateAPITokenResponse, error\)](<#ClientWithResponses.CreateAPITokenWithResponse>)
   - [func \(c \*ClientWithResponses\) CreateConnectionWithBodyWithResponse\(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn\) \(\*CreateConnectionResponse, error\)](<#ClientWithResponses.CreateConnectionWithBodyWithResponse>)
   - [func \(c \*ClientWithResponses\) CreateConnectionWithResponse\(ctx context.Context, body CreateConnectionJSONRequestBody, reqEditors ...RequestEditorFn\) \(\*CreateConnectionResponse, error\)](<#ClientWithResponses.CreateConnectionWithResponse>)
   - [func \(c \*ClientWithResponses\) CreateUserWithBodyWithResponse\(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn\) \(\*CreateUserResponse, error\)](<#ClientWithResponses.CreateUserWithBodyWithResponse>)
@@ -146,6 +228,7 @@ client.gen.go is generated from docs/api/openapi.yaml. Do not edit it by hand; r
   - [func \(c \*ClientWithResponses\) GetXcomEntryWithResponse\(ctx context.Context, dagId DagID, dagRunId DagRunID, taskId TaskID, key string, reqEditors ...RequestEditorFn\) \(\*GetXcomEntryResponse, error\)](<#ClientWithResponses.GetXcomEntryWithResponse>)
   - [func \(c \*ClientWithResponses\) IssueTokenWithBodyWithResponse\(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn\) \(\*IssueTokenResponse, error\)](<#ClientWithResponses.IssueTokenWithBodyWithResponse>)
   - [func \(c \*ClientWithResponses\) IssueTokenWithResponse\(ctx context.Context, body IssueTokenJSONRequestBody, reqEditors ...RequestEditorFn\) \(\*IssueTokenResponse, error\)](<#ClientWithResponses.IssueTokenWithResponse>)
+  - [func \(c \*ClientWithResponses\) ListAPITokensWithResponse\(ctx context.Context, params \*ListAPITokensParams, reqEditors ...RequestEditorFn\) \(\*ListAPITokensResponse, error\)](<#ClientWithResponses.ListAPITokensWithResponse>)
   - [func \(c \*ClientWithResponses\) ListConnectionsWithResponse\(ctx context.Context, params \*ListConnectionsParams, reqEditors ...RequestEditorFn\) \(\*ListConnectionsResponse, error\)](<#ClientWithResponses.ListConnectionsWithResponse>)
   - [func \(c \*ClientWithResponses\) ListDagRunsWithResponse\(ctx context.Context, dagId DagID, params \*ListDagRunsParams, reqEditors ...RequestEditorFn\) \(\*ListDagRunsResponse, error\)](<#ClientWithResponses.ListDagRunsWithResponse>)
   - [func \(c \*ClientWithResponses\) ListDagVersionsWithResponse\(ctx context.Context, dagId DagID, reqEditors ...RequestEditorFn\) \(\*ListDagVersionsResponse, error\)](<#ClientWithResponses.ListDagVersionsWithResponse>)
@@ -153,7 +236,18 @@ client.gen.go is generated from docs/api/openapi.yaml. Do not edit it by hand; r
   - [func \(c \*ClientWithResponses\) ListTaskInstancesWithResponse\(ctx context.Context, dagId DagID, dagRunId DagRunID, reqEditors ...RequestEditorFn\) \(\*ListTaskInstancesResponse, error\)](<#ClientWithResponses.ListTaskInstancesWithResponse>)
   - [func \(c \*ClientWithResponses\) ListUsersWithResponse\(ctx context.Context, params \*ListUsersParams, reqEditors ...RequestEditorFn\) \(\*ListUsersResponse, error\)](<#ClientWithResponses.ListUsersWithResponse>)
   - [func \(c \*ClientWithResponses\) ListVariablesWithResponse\(ctx context.Context, params \*ListVariablesParams, reqEditors ...RequestEditorFn\) \(\*ListVariablesResponse, error\)](<#ClientWithResponses.ListVariablesWithResponse>)
+  - [func \(c \*ClientWithResponses\) PatchTaskInstanceDryRunWithBodyWithResponse\(ctx context.Context, dagId DagID, dagRunId DagRunID, taskId TaskID, contentType string, body io.Reader, reqEditors ...RequestEditorFn\) \(\*PatchTaskInstanceDryRunResponse, error\)](<#ClientWithResponses.PatchTaskInstanceDryRunWithBodyWithResponse>)
+  - [func \(c \*ClientWithResponses\) PatchTaskInstanceDryRunWithResponse\(ctx context.Context, dagId DagID, dagRunId DagRunID, taskId TaskID, body PatchTaskInstanceDryRunJSONRequestBody, reqEditors ...RequestEditorFn\) \(\*PatchTaskInstanceDryRunResponse, error\)](<#ClientWithResponses.PatchTaskInstanceDryRunWithResponse>)
+  - [func \(c \*ClientWithResponses\) PatchTaskInstanceWithBodyWithResponse\(ctx context.Context, dagId DagID, dagRunId DagRunID, taskId TaskID, contentType string, body io.Reader, reqEditors ...RequestEditorFn\) \(\*PatchTaskInstanceResponse, error\)](<#ClientWithResponses.PatchTaskInstanceWithBodyWithResponse>)
+  - [func \(c \*ClientWithResponses\) PatchTaskInstanceWithResponse\(ctx context.Context, dagId DagID, dagRunId DagRunID, taskId TaskID, body PatchTaskInstanceJSONRequestBody, reqEditors ...RequestEditorFn\) \(\*PatchTaskInstanceResponse, error\)](<#ClientWithResponses.PatchTaskInstanceWithResponse>)
+  - [func \(c \*ClientWithResponses\) PatchUserWithBodyWithResponse\(ctx context.Context, userId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn\) \(\*PatchUserResponse, error\)](<#ClientWithResponses.PatchUserWithBodyWithResponse>)
+  - [func \(c \*ClientWithResponses\) PatchUserWithResponse\(ctx context.Context, userId string, body PatchUserJSONRequestBody, reqEditors ...RequestEditorFn\) \(\*PatchUserResponse, error\)](<#ClientWithResponses.PatchUserWithResponse>)
+  - [func \(c \*ClientWithResponses\) RegisterDagVersionWithBodyWithResponse\(ctx context.Context, dagId DagID, params \*RegisterDagVersionParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn\) \(\*RegisterDagVersionResponse, error\)](<#ClientWithResponses.RegisterDagVersionWithBodyWithResponse>)
+  - [func \(c \*ClientWithResponses\) RegisterDagVersionWithResponse\(ctx context.Context, dagId DagID, params \*RegisterDagVersionParams, body RegisterDagVersionJSONRequestBody, reqEditors ...RequestEditorFn\) \(\*RegisterDagVersionResponse, error\)](<#ClientWithResponses.RegisterDagVersionWithResponse>)
   - [func \(c \*ClientWithResponses\) RenewTokenWithResponse\(ctx context.Context, reqEditors ...RequestEditorFn\) \(\*RenewTokenResponse, error\)](<#ClientWithResponses.RenewTokenWithResponse>)
+  - [func \(c \*ClientWithResponses\) RevokeAPITokenWithResponse\(ctx context.Context, tokenId string, reqEditors ...RequestEditorFn\) \(\*RevokeAPITokenResponse, error\)](<#ClientWithResponses.RevokeAPITokenWithResponse>)
+  - [func \(c \*ClientWithResponses\) SetDagCurrentVersionWithBodyWithResponse\(ctx context.Context, dagId DagID, contentType string, body io.Reader, reqEditors ...RequestEditorFn\) \(\*SetDagCurrentVersionResponse, error\)](<#ClientWithResponses.SetDagCurrentVersionWithBodyWithResponse>)
+  - [func \(c \*ClientWithResponses\) SetDagCurrentVersionWithResponse\(ctx context.Context, dagId DagID, body SetDagCurrentVersionJSONRequestBody, reqEditors ...RequestEditorFn\) \(\*SetDagCurrentVersionResponse, error\)](<#ClientWithResponses.SetDagCurrentVersionWithResponse>)
   - [func \(c \*ClientWithResponses\) TriggerDagRunWithBodyWithResponse\(ctx context.Context, dagId DagID, contentType string, body io.Reader, reqEditors ...RequestEditorFn\) \(\*TriggerDagRunResponse, error\)](<#ClientWithResponses.TriggerDagRunWithBodyWithResponse>)
   - [func \(c \*ClientWithResponses\) TriggerDagRunWithResponse\(ctx context.Context, dagId DagID, body TriggerDagRunJSONRequestBody, reqEditors ...RequestEditorFn\) \(\*TriggerDagRunResponse, error\)](<#ClientWithResponses.TriggerDagRunWithResponse>)
   - [func \(c \*ClientWithResponses\) UpdateConnectionWithBodyWithResponse\(ctx context.Context, connectionId ConnectionID, contentType string, body io.Reader, reqEditors ...RequestEditorFn\) \(\*UpdateConnectionResponse, error\)](<#ClientWithResponses.UpdateConnectionWithBodyWithResponse>)
@@ -166,6 +260,23 @@ client.gen.go is generated from docs/api/openapi.yaml. Do not edit it by hand; r
 - [type ConnectionBody](<#ConnectionBody>)
 - [type ConnectionCollection](<#ConnectionCollection>)
 - [type ConnectionID](<#ConnectionID>)
+- [type CreateAPITokenJSONRequestBody](<#CreateAPITokenJSONRequestBody>)
+- [type CreateAPITokenRequest](<#CreateAPITokenRequest>)
+- [type CreateAPITokenRequestScope](<#CreateAPITokenRequestScope>)
+  - [func \(e CreateAPITokenRequestScope\) Valid\(\) bool](<#CreateAPITokenRequestScope.Valid>)
+- [type CreateAPITokenResponse](<#CreateAPITokenResponse>)
+  - [func ParseCreateAPITokenResponse\(rsp \*http.Response\) \(\*CreateAPITokenResponse, error\)](<#ParseCreateAPITokenResponse>)
+  - [func \(r CreateAPITokenResponse\) ContentType\(\) string](<#CreateAPITokenResponse.ContentType>)
+  - [func \(r CreateAPITokenResponse\) GetApplicationproblemJSON503\(\) \*AuthUnavailable](<#CreateAPITokenResponse.GetApplicationproblemJSON503>)
+  - [func \(r CreateAPITokenResponse\) GetBody\(\) \[\]byte](<#CreateAPITokenResponse.GetBody>)
+  - [func \(r CreateAPITokenResponse\) GetJSON201\(\) \*CreatedAPIToken](<#CreateAPITokenResponse.GetJSON201>)
+  - [func \(r CreateAPITokenResponse\) GetJSON400\(\) \*Error](<#CreateAPITokenResponse.GetJSON400>)
+  - [func \(r CreateAPITokenResponse\) GetJSON401\(\) \*Unauthorized](<#CreateAPITokenResponse.GetJSON401>)
+  - [func \(r CreateAPITokenResponse\) GetJSON403\(\) \*Error](<#CreateAPITokenResponse.GetJSON403>)
+  - [func \(r CreateAPITokenResponse\) GetJSON409\(\) \*Error](<#CreateAPITokenResponse.GetJSON409>)
+  - [func \(r CreateAPITokenResponse\) Status\(\) string](<#CreateAPITokenResponse.Status>)
+  - [func \(r CreateAPITokenResponse\) StatusCode\(\) int](<#CreateAPITokenResponse.StatusCode>)
+- [type CreateAPITokenResponse503Headers](<#CreateAPITokenResponse503Headers>)
 - [type CreateConnectionJSONRequestBody](<#CreateConnectionJSONRequestBody>)
 - [type CreateConnectionResponse](<#CreateConnectionResponse>)
   - [func ParseCreateConnectionResponse\(rsp \*http.Response\) \(\*CreateConnectionResponse, error\)](<#ParseCreateConnectionResponse>)
@@ -182,6 +293,7 @@ client.gen.go is generated from docs/api/openapi.yaml. Do not edit it by hand; r
 - [type CreateUserResponse](<#CreateUserResponse>)
   - [func ParseCreateUserResponse\(rsp \*http.Response\) \(\*CreateUserResponse, error\)](<#ParseCreateUserResponse>)
   - [func \(r CreateUserResponse\) ContentType\(\) string](<#CreateUserResponse.ContentType>)
+  - [func \(r CreateUserResponse\) GetApplicationproblemJSON503\(\) \*AuthUnavailable](<#CreateUserResponse.GetApplicationproblemJSON503>)
   - [func \(r CreateUserResponse\) GetBody\(\) \[\]byte](<#CreateUserResponse.GetBody>)
   - [func \(r CreateUserResponse\) GetJSON201\(\) \*User](<#CreateUserResponse.GetJSON201>)
   - [func \(r CreateUserResponse\) GetJSON400\(\) \*Error](<#CreateUserResponse.GetJSON400>)
@@ -189,19 +301,25 @@ client.gen.go is generated from docs/api/openapi.yaml. Do not edit it by hand; r
   - [func \(r CreateUserResponse\) GetJSON409\(\) \*Error](<#CreateUserResponse.GetJSON409>)
   - [func \(r CreateUserResponse\) Status\(\) string](<#CreateUserResponse.Status>)
   - [func \(r CreateUserResponse\) StatusCode\(\) int](<#CreateUserResponse.StatusCode>)
+- [type CreateUserResponse503Headers](<#CreateUserResponse503Headers>)
 - [type CreateVariableJSONRequestBody](<#CreateVariableJSONRequestBody>)
 - [type CreateVariableResponse](<#CreateVariableResponse>)
   - [func ParseCreateVariableResponse\(rsp \*http.Response\) \(\*CreateVariableResponse, error\)](<#ParseCreateVariableResponse>)
   - [func \(r CreateVariableResponse\) ContentType\(\) string](<#CreateVariableResponse.ContentType>)
+  - [func \(r CreateVariableResponse\) GetApplicationproblemJSON503\(\) \*AuthUnavailable](<#CreateVariableResponse.GetApplicationproblemJSON503>)
   - [func \(r CreateVariableResponse\) GetBody\(\) \[\]byte](<#CreateVariableResponse.GetBody>)
   - [func \(r CreateVariableResponse\) GetJSON201\(\) \*Variable](<#CreateVariableResponse.GetJSON201>)
   - [func \(r CreateVariableResponse\) GetJSON400\(\) \*Error](<#CreateVariableResponse.GetJSON400>)
   - [func \(r CreateVariableResponse\) GetJSON401\(\) \*Unauthorized](<#CreateVariableResponse.GetJSON401>)
   - [func \(r CreateVariableResponse\) Status\(\) string](<#CreateVariableResponse.Status>)
   - [func \(r CreateVariableResponse\) StatusCode\(\) int](<#CreateVariableResponse.StatusCode>)
+- [type CreateVariableResponse503Headers](<#CreateVariableResponse503Headers>)
+- [type CreatedAPIToken](<#CreatedAPIToken>)
+- [type Cursor](<#Cursor>)
 - [type DAG](<#DAG>)
 - [type DAGCollection](<#DAGCollection>)
 - [type DAGRun](<#DAGRun>)
+- [type DAGRunClearRequest](<#DAGRunClearRequest>)
 - [type DAGRunCollection](<#DAGRunCollection>)
 - [type DAGRunCreate](<#DAGRunCreate>)
 - [type DAGRunRunType](<#DAGRunRunType>)
@@ -209,79 +327,111 @@ client.gen.go is generated from docs/api/openapi.yaml. Do not edit it by hand; r
 - [type DAGRunState](<#DAGRunState>)
   - [func \(e DAGRunState\) Valid\(\) bool](<#DAGRunState.Valid>)
 - [type DAGUpdate](<#DAGUpdate>)
+- [type DagCurrentVersionChange](<#DagCurrentVersionChange>)
+- [type DagCurrentVersionRequest](<#DagCurrentVersionRequest>)
 - [type DagID](<#DagID>)
 - [type DagRunID](<#DagRunID>)
 - [type DagSource](<#DagSource>)
+- [type DagSpec](<#DagSpec>)
+  - [func \(a DagSpec\) Get\(fieldName string\) \(value interface\{\}, found bool\)](<#DagSpec.Get>)
+  - [func \(a DagSpec\) MarshalJSON\(\) \(\[\]byte, error\)](<#DagSpec.MarshalJSON>)
+  - [func \(a \*DagSpec\) Set\(fieldName string, value interface\{\}\)](<#DagSpec.Set>)
+  - [func \(a \*DagSpec\) UnmarshalJSON\(b \[\]byte\) error](<#DagSpec.UnmarshalJSON>)
 - [type DagVersion](<#DagVersion>)
 - [type DagVersionCollection](<#DagVersionCollection>)
 - [type DeleteConnectionResponse](<#DeleteConnectionResponse>)
   - [func ParseDeleteConnectionResponse\(rsp \*http.Response\) \(\*DeleteConnectionResponse, error\)](<#ParseDeleteConnectionResponse>)
   - [func \(r DeleteConnectionResponse\) ContentType\(\) string](<#DeleteConnectionResponse.ContentType>)
+  - [func \(r DeleteConnectionResponse\) GetApplicationproblemJSON503\(\) \*AuthUnavailable](<#DeleteConnectionResponse.GetApplicationproblemJSON503>)
   - [func \(r DeleteConnectionResponse\) GetBody\(\) \[\]byte](<#DeleteConnectionResponse.GetBody>)
   - [func \(r DeleteConnectionResponse\) GetJSON401\(\) \*Unauthorized](<#DeleteConnectionResponse.GetJSON401>)
   - [func \(r DeleteConnectionResponse\) GetJSON404\(\) \*NotFound](<#DeleteConnectionResponse.GetJSON404>)
   - [func \(r DeleteConnectionResponse\) Status\(\) string](<#DeleteConnectionResponse.Status>)
   - [func \(r DeleteConnectionResponse\) StatusCode\(\) int](<#DeleteConnectionResponse.StatusCode>)
+- [type DeleteConnectionResponse503Headers](<#DeleteConnectionResponse503Headers>)
 - [type DeleteVariableResponse](<#DeleteVariableResponse>)
   - [func ParseDeleteVariableResponse\(rsp \*http.Response\) \(\*DeleteVariableResponse, error\)](<#ParseDeleteVariableResponse>)
   - [func \(r DeleteVariableResponse\) ContentType\(\) string](<#DeleteVariableResponse.ContentType>)
+  - [func \(r DeleteVariableResponse\) GetApplicationproblemJSON503\(\) \*AuthUnavailable](<#DeleteVariableResponse.GetApplicationproblemJSON503>)
   - [func \(r DeleteVariableResponse\) GetBody\(\) \[\]byte](<#DeleteVariableResponse.GetBody>)
   - [func \(r DeleteVariableResponse\) GetJSON401\(\) \*Unauthorized](<#DeleteVariableResponse.GetJSON401>)
   - [func \(r DeleteVariableResponse\) GetJSON404\(\) \*NotFound](<#DeleteVariableResponse.GetJSON404>)
   - [func \(r DeleteVariableResponse\) Status\(\) string](<#DeleteVariableResponse.Status>)
   - [func \(r DeleteVariableResponse\) StatusCode\(\) int](<#DeleteVariableResponse.StatusCode>)
+- [type DeleteVariableResponse503Headers](<#DeleteVariableResponse503Headers>)
+- [type DeployBuildKit](<#DeployBuildKit>)
+- [type DeployCIOIDC](<#DeployCIOIDC>)
+- [type DeployCIOIDCIssuer](<#DeployCIOIDCIssuer>)
+- [type DeployCloudBuild](<#DeployCloudBuild>)
+- [type DeployDefaults](<#DeployDefaults>)
+- [type DeployRemoteBuilder](<#DeployRemoteBuilder>)
+- [type DeployWarmPools](<#DeployWarmPools>)
 - [type EncryptionUnavailable](<#EncryptionUnavailable>)
 - [type Error](<#Error>)
+- [type ExecutionReport](<#ExecutionReport>)
 - [type ExecutorInfo](<#ExecutorInfo>)
 - [type GetConnectionResponse](<#GetConnectionResponse>)
   - [func ParseGetConnectionResponse\(rsp \*http.Response\) \(\*GetConnectionResponse, error\)](<#ParseGetConnectionResponse>)
   - [func \(r GetConnectionResponse\) ContentType\(\) string](<#GetConnectionResponse.ContentType>)
+  - [func \(r GetConnectionResponse\) GetApplicationproblemJSON503\(\) \*AuthUnavailable](<#GetConnectionResponse.GetApplicationproblemJSON503>)
   - [func \(r GetConnectionResponse\) GetBody\(\) \[\]byte](<#GetConnectionResponse.GetBody>)
   - [func \(r GetConnectionResponse\) GetJSON200\(\) \*Connection](<#GetConnectionResponse.GetJSON200>)
   - [func \(r GetConnectionResponse\) GetJSON401\(\) \*Unauthorized](<#GetConnectionResponse.GetJSON401>)
   - [func \(r GetConnectionResponse\) GetJSON404\(\) \*NotFound](<#GetConnectionResponse.GetJSON404>)
   - [func \(r GetConnectionResponse\) Status\(\) string](<#GetConnectionResponse.Status>)
   - [func \(r GetConnectionResponse\) StatusCode\(\) int](<#GetConnectionResponse.StatusCode>)
+- [type GetConnectionResponse503Headers](<#GetConnectionResponse503Headers>)
 - [type GetDagResponse](<#GetDagResponse>)
   - [func ParseGetDagResponse\(rsp \*http.Response\) \(\*GetDagResponse, error\)](<#ParseGetDagResponse>)
   - [func \(r GetDagResponse\) ContentType\(\) string](<#GetDagResponse.ContentType>)
+  - [func \(r GetDagResponse\) GetApplicationproblemJSON503\(\) \*AuthUnavailable](<#GetDagResponse.GetApplicationproblemJSON503>)
   - [func \(r GetDagResponse\) GetBody\(\) \[\]byte](<#GetDagResponse.GetBody>)
   - [func \(r GetDagResponse\) GetJSON200\(\) \*DAG](<#GetDagResponse.GetJSON200>)
   - [func \(r GetDagResponse\) GetJSON404\(\) \*NotFound](<#GetDagResponse.GetJSON404>)
   - [func \(r GetDagResponse\) Status\(\) string](<#GetDagResponse.Status>)
   - [func \(r GetDagResponse\) StatusCode\(\) int](<#GetDagResponse.StatusCode>)
+- [type GetDagResponse503Headers](<#GetDagResponse503Headers>)
 - [type GetDagRunResponse](<#GetDagRunResponse>)
   - [func ParseGetDagRunResponse\(rsp \*http.Response\) \(\*GetDagRunResponse, error\)](<#ParseGetDagRunResponse>)
   - [func \(r GetDagRunResponse\) ContentType\(\) string](<#GetDagRunResponse.ContentType>)
+  - [func \(r GetDagRunResponse\) GetApplicationproblemJSON503\(\) \*AuthUnavailable](<#GetDagRunResponse.GetApplicationproblemJSON503>)
   - [func \(r GetDagRunResponse\) GetBody\(\) \[\]byte](<#GetDagRunResponse.GetBody>)
   - [func \(r GetDagRunResponse\) GetJSON200\(\) \*DAGRun](<#GetDagRunResponse.GetJSON200>)
   - [func \(r GetDagRunResponse\) GetJSON404\(\) \*NotFound](<#GetDagRunResponse.GetJSON404>)
   - [func \(r GetDagRunResponse\) Status\(\) string](<#GetDagRunResponse.Status>)
   - [func \(r GetDagRunResponse\) StatusCode\(\) int](<#GetDagRunResponse.StatusCode>)
+- [type GetDagRunResponse503Headers](<#GetDagRunResponse503Headers>)
 - [type GetDagSourceResponse](<#GetDagSourceResponse>)
   - [func ParseGetDagSourceResponse\(rsp \*http.Response\) \(\*GetDagSourceResponse, error\)](<#ParseGetDagSourceResponse>)
   - [func \(r GetDagSourceResponse\) ContentType\(\) string](<#GetDagSourceResponse.ContentType>)
+  - [func \(r GetDagSourceResponse\) GetApplicationproblemJSON503\(\) \*AuthUnavailable](<#GetDagSourceResponse.GetApplicationproblemJSON503>)
   - [func \(r GetDagSourceResponse\) GetBody\(\) \[\]byte](<#GetDagSourceResponse.GetBody>)
   - [func \(r GetDagSourceResponse\) GetJSON200\(\) \*DagSource](<#GetDagSourceResponse.GetJSON200>)
+  - [func \(r GetDagSourceResponse\) GetJSON400\(\) \*Error](<#GetDagSourceResponse.GetJSON400>)
   - [func \(r GetDagSourceResponse\) GetJSON404\(\) \*NotFound](<#GetDagSourceResponse.GetJSON404>)
   - [func \(r GetDagSourceResponse\) Status\(\) string](<#GetDagSourceResponse.Status>)
   - [func \(r GetDagSourceResponse\) StatusCode\(\) int](<#GetDagSourceResponse.StatusCode>)
+- [type GetDagSourceResponse503Headers](<#GetDagSourceResponse503Headers>)
 - [type GetDagSpecResponse](<#GetDagSpecResponse>)
   - [func ParseGetDagSpecResponse\(rsp \*http.Response\) \(\*GetDagSpecResponse, error\)](<#ParseGetDagSpecResponse>)
   - [func \(r GetDagSpecResponse\) ContentType\(\) string](<#GetDagSpecResponse.ContentType>)
+  - [func \(r GetDagSpecResponse\) GetApplicationproblemJSON503\(\) \*AuthUnavailable](<#GetDagSpecResponse.GetApplicationproblemJSON503>)
   - [func \(r GetDagSpecResponse\) GetBody\(\) \[\]byte](<#GetDagSpecResponse.GetBody>)
   - [func \(r GetDagSpecResponse\) GetJSON200\(\) \*map\[string\]interface\{\}](<#GetDagSpecResponse.GetJSON200>)
   - [func \(r GetDagSpecResponse\) GetJSON404\(\) \*NotFound](<#GetDagSpecResponse.GetJSON404>)
   - [func \(r GetDagSpecResponse\) Status\(\) string](<#GetDagSpecResponse.Status>)
   - [func \(r GetDagSpecResponse\) StatusCode\(\) int](<#GetDagSpecResponse.StatusCode>)
+- [type GetDagSpecResponse503Headers](<#GetDagSpecResponse503Headers>)
 - [type GetDagVersionResponse](<#GetDagVersionResponse>)
   - [func ParseGetDagVersionResponse\(rsp \*http.Response\) \(\*GetDagVersionResponse, error\)](<#ParseGetDagVersionResponse>)
   - [func \(r GetDagVersionResponse\) ContentType\(\) string](<#GetDagVersionResponse.ContentType>)
+  - [func \(r GetDagVersionResponse\) GetApplicationproblemJSON503\(\) \*AuthUnavailable](<#GetDagVersionResponse.GetApplicationproblemJSON503>)
   - [func \(r GetDagVersionResponse\) GetBody\(\) \[\]byte](<#GetDagVersionResponse.GetBody>)
   - [func \(r GetDagVersionResponse\) GetJSON200\(\) \*DagVersion](<#GetDagVersionResponse.GetJSON200>)
   - [func \(r GetDagVersionResponse\) GetJSON404\(\) \*NotFound](<#GetDagVersionResponse.GetJSON404>)
   - [func \(r GetDagVersionResponse\) Status\(\) string](<#GetDagVersionResponse.Status>)
   - [func \(r GetDagVersionResponse\) StatusCode\(\) int](<#GetDagVersionResponse.StatusCode>)
+- [type GetDagVersionResponse503Headers](<#GetDagVersionResponse503Headers>)
 - [type GetHealthzResponse](<#GetHealthzResponse>)
   - [func ParseGetHealthzResponse\(rsp \*http.Response\) \(\*GetHealthzResponse, error\)](<#ParseGetHealthzResponse>)
   - [func \(r GetHealthzResponse\) ContentType\(\) string](<#GetHealthzResponse.ContentType>)
@@ -291,17 +441,21 @@ client.gen.go is generated from docs/api/openapi.yaml. Do not edit it by hand; r
 - [type GetMonitorExecutorResponse](<#GetMonitorExecutorResponse>)
   - [func ParseGetMonitorExecutorResponse\(rsp \*http.Response\) \(\*GetMonitorExecutorResponse, error\)](<#ParseGetMonitorExecutorResponse>)
   - [func \(r GetMonitorExecutorResponse\) ContentType\(\) string](<#GetMonitorExecutorResponse.ContentType>)
+  - [func \(r GetMonitorExecutorResponse\) GetApplicationproblemJSON503\(\) \*AuthUnavailable](<#GetMonitorExecutorResponse.GetApplicationproblemJSON503>)
   - [func \(r GetMonitorExecutorResponse\) GetBody\(\) \[\]byte](<#GetMonitorExecutorResponse.GetBody>)
   - [func \(r GetMonitorExecutorResponse\) GetJSON200\(\) \*ExecutorInfo](<#GetMonitorExecutorResponse.GetJSON200>)
   - [func \(r GetMonitorExecutorResponse\) Status\(\) string](<#GetMonitorExecutorResponse.Status>)
   - [func \(r GetMonitorExecutorResponse\) StatusCode\(\) int](<#GetMonitorExecutorResponse.StatusCode>)
+- [type GetMonitorExecutorResponse503Headers](<#GetMonitorExecutorResponse503Headers>)
 - [type GetMonitorHealthResponse](<#GetMonitorHealthResponse>)
   - [func ParseGetMonitorHealthResponse\(rsp \*http.Response\) \(\*GetMonitorHealthResponse, error\)](<#ParseGetMonitorHealthResponse>)
   - [func \(r GetMonitorHealthResponse\) ContentType\(\) string](<#GetMonitorHealthResponse.ContentType>)
+  - [func \(r GetMonitorHealthResponse\) GetApplicationproblemJSON503\(\) \*AuthUnavailable](<#GetMonitorHealthResponse.GetApplicationproblemJSON503>)
   - [func \(r GetMonitorHealthResponse\) GetBody\(\) \[\]byte](<#GetMonitorHealthResponse.GetBody>)
   - [func \(r GetMonitorHealthResponse\) GetJSON200\(\) \*HealthInfo](<#GetMonitorHealthResponse.GetJSON200>)
   - [func \(r GetMonitorHealthResponse\) Status\(\) string](<#GetMonitorHealthResponse.Status>)
   - [func \(r GetMonitorHealthResponse\) StatusCode\(\) int](<#GetMonitorHealthResponse.StatusCode>)
+- [type GetMonitorHealthResponse503Headers](<#GetMonitorHealthResponse503Headers>)
 - [type GetReadyzResponse](<#GetReadyzResponse>)
   - [func ParseGetReadyzResponse\(rsp \*http.Response\) \(\*GetReadyzResponse, error\)](<#ParseGetReadyzResponse>)
   - [func \(r GetReadyzResponse\) ContentType\(\) string](<#GetReadyzResponse.ContentType>)
@@ -311,137 +465,273 @@ client.gen.go is generated from docs/api/openapi.yaml. Do not edit it by hand; r
 - [type GetTaskInstanceResponse](<#GetTaskInstanceResponse>)
   - [func ParseGetTaskInstanceResponse\(rsp \*http.Response\) \(\*GetTaskInstanceResponse, error\)](<#ParseGetTaskInstanceResponse>)
   - [func \(r GetTaskInstanceResponse\) ContentType\(\) string](<#GetTaskInstanceResponse.ContentType>)
+  - [func \(r GetTaskInstanceResponse\) GetApplicationproblemJSON503\(\) \*AuthUnavailable](<#GetTaskInstanceResponse.GetApplicationproblemJSON503>)
   - [func \(r GetTaskInstanceResponse\) GetBody\(\) \[\]byte](<#GetTaskInstanceResponse.GetBody>)
   - [func \(r GetTaskInstanceResponse\) GetJSON200\(\) \*TaskInstance](<#GetTaskInstanceResponse.GetJSON200>)
   - [func \(r GetTaskInstanceResponse\) Status\(\) string](<#GetTaskInstanceResponse.Status>)
   - [func \(r GetTaskInstanceResponse\) StatusCode\(\) int](<#GetTaskInstanceResponse.StatusCode>)
+- [type GetTaskInstanceResponse503Headers](<#GetTaskInstanceResponse503Headers>)
 - [type GetTaskLogsResponse](<#GetTaskLogsResponse>)
   - [func ParseGetTaskLogsResponse\(rsp \*http.Response\) \(\*GetTaskLogsResponse, error\)](<#ParseGetTaskLogsResponse>)
   - [func \(r GetTaskLogsResponse\) ContentType\(\) string](<#GetTaskLogsResponse.ContentType>)
+  - [func \(r GetTaskLogsResponse\) GetApplicationproblemJSON503\(\) \*AuthUnavailable](<#GetTaskLogsResponse.GetApplicationproblemJSON503>)
   - [func \(r GetTaskLogsResponse\) GetBody\(\) \[\]byte](<#GetTaskLogsResponse.GetBody>)
   - [func \(r GetTaskLogsResponse\) Status\(\) string](<#GetTaskLogsResponse.Status>)
   - [func \(r GetTaskLogsResponse\) StatusCode\(\) int](<#GetTaskLogsResponse.StatusCode>)
+- [type GetTaskLogsResponse503Headers](<#GetTaskLogsResponse503Headers>)
 - [type GetVariableResponse](<#GetVariableResponse>)
   - [func ParseGetVariableResponse\(rsp \*http.Response\) \(\*GetVariableResponse, error\)](<#ParseGetVariableResponse>)
   - [func \(r GetVariableResponse\) ContentType\(\) string](<#GetVariableResponse.ContentType>)
+  - [func \(r GetVariableResponse\) GetApplicationproblemJSON503\(\) \*AuthUnavailable](<#GetVariableResponse.GetApplicationproblemJSON503>)
   - [func \(r GetVariableResponse\) GetBody\(\) \[\]byte](<#GetVariableResponse.GetBody>)
   - [func \(r GetVariableResponse\) GetJSON200\(\) \*Variable](<#GetVariableResponse.GetJSON200>)
   - [func \(r GetVariableResponse\) GetJSON401\(\) \*Unauthorized](<#GetVariableResponse.GetJSON401>)
   - [func \(r GetVariableResponse\) GetJSON404\(\) \*NotFound](<#GetVariableResponse.GetJSON404>)
   - [func \(r GetVariableResponse\) Status\(\) string](<#GetVariableResponse.Status>)
   - [func \(r GetVariableResponse\) StatusCode\(\) int](<#GetVariableResponse.StatusCode>)
+- [type GetVariableResponse503Headers](<#GetVariableResponse503Headers>)
 - [type GetVersionResponse](<#GetVersionResponse>)
   - [func ParseGetVersionResponse\(rsp \*http.Response\) \(\*GetVersionResponse, error\)](<#ParseGetVersionResponse>)
   - [func \(r GetVersionResponse\) ContentType\(\) string](<#GetVersionResponse.ContentType>)
+  - [func \(r GetVersionResponse\) GetApplicationproblemJSON503\(\) \*AuthUnavailable](<#GetVersionResponse.GetApplicationproblemJSON503>)
   - [func \(r GetVersionResponse\) GetBody\(\) \[\]byte](<#GetVersionResponse.GetBody>)
   - [func \(r GetVersionResponse\) GetJSON200\(\) \*VersionInfo](<#GetVersionResponse.GetJSON200>)
   - [func \(r GetVersionResponse\) Status\(\) string](<#GetVersionResponse.Status>)
   - [func \(r GetVersionResponse\) StatusCode\(\) int](<#GetVersionResponse.StatusCode>)
+- [type GetVersionResponse503Headers](<#GetVersionResponse503Headers>)
 - [type GetXcomEntryResponse](<#GetXcomEntryResponse>)
   - [func ParseGetXcomEntryResponse\(rsp \*http.Response\) \(\*GetXcomEntryResponse, error\)](<#ParseGetXcomEntryResponse>)
   - [func \(r GetXcomEntryResponse\) ContentType\(\) string](<#GetXcomEntryResponse.ContentType>)
+  - [func \(r GetXcomEntryResponse\) GetApplicationproblemJSON503\(\) \*AuthUnavailable](<#GetXcomEntryResponse.GetApplicationproblemJSON503>)
   - [func \(r GetXcomEntryResponse\) GetBody\(\) \[\]byte](<#GetXcomEntryResponse.GetBody>)
   - [func \(r GetXcomEntryResponse\) GetJSON200\(\) \*XComEntry](<#GetXcomEntryResponse.GetJSON200>)
   - [func \(r GetXcomEntryResponse\) GetJSON404\(\) \*NotFound](<#GetXcomEntryResponse.GetJSON404>)
   - [func \(r GetXcomEntryResponse\) Status\(\) string](<#GetXcomEntryResponse.Status>)
   - [func \(r GetXcomEntryResponse\) StatusCode\(\) int](<#GetXcomEntryResponse.StatusCode>)
+- [type GetXcomEntryResponse503Headers](<#GetXcomEntryResponse503Headers>)
 - [type HealthInfo](<#HealthInfo>)
 - [type HttpRequestDoer](<#HttpRequestDoer>)
 - [type IssueTokenJSONRequestBody](<#IssueTokenJSONRequestBody>)
 - [type IssueTokenResponse](<#IssueTokenResponse>)
   - [func ParseIssueTokenResponse\(rsp \*http.Response\) \(\*IssueTokenResponse, error\)](<#ParseIssueTokenResponse>)
   - [func \(r IssueTokenResponse\) ContentType\(\) string](<#IssueTokenResponse.ContentType>)
+  - [func \(r IssueTokenResponse\) GetApplicationproblemJSON503\(\) \*AuthUnavailable](<#IssueTokenResponse.GetApplicationproblemJSON503>)
   - [func \(r IssueTokenResponse\) GetBody\(\) \[\]byte](<#IssueTokenResponse.GetBody>)
   - [func \(r IssueTokenResponse\) GetJSON200\(\) \*TokenResponse](<#IssueTokenResponse.GetJSON200>)
   - [func \(r IssueTokenResponse\) GetJSON401\(\) \*Unauthorized](<#IssueTokenResponse.GetJSON401>)
   - [func \(r IssueTokenResponse\) Status\(\) string](<#IssueTokenResponse.Status>)
   - [func \(r IssueTokenResponse\) StatusCode\(\) int](<#IssueTokenResponse.StatusCode>)
+- [type IssueTokenResponse200Headers](<#IssueTokenResponse200Headers>)
+- [type IssueTokenResponse503Headers](<#IssueTokenResponse503Headers>)
 - [type Limit](<#Limit>)
+- [type ListAPITokensParams](<#ListAPITokensParams>)
+- [type ListAPITokensResponse](<#ListAPITokensResponse>)
+  - [func ParseListAPITokensResponse\(rsp \*http.Response\) \(\*ListAPITokensResponse, error\)](<#ParseListAPITokensResponse>)
+  - [func \(r ListAPITokensResponse\) ContentType\(\) string](<#ListAPITokensResponse.ContentType>)
+  - [func \(r ListAPITokensResponse\) GetApplicationproblemJSON503\(\) \*AuthUnavailable](<#ListAPITokensResponse.GetApplicationproblemJSON503>)
+  - [func \(r ListAPITokensResponse\) GetBody\(\) \[\]byte](<#ListAPITokensResponse.GetBody>)
+  - [func \(r ListAPITokensResponse\) GetJSON200\(\) \*APITokenCollection](<#ListAPITokensResponse.GetJSON200>)
+  - [func \(r ListAPITokensResponse\) GetJSON401\(\) \*Unauthorized](<#ListAPITokensResponse.GetJSON401>)
+  - [func \(r ListAPITokensResponse\) GetJSON403\(\) \*Error](<#ListAPITokensResponse.GetJSON403>)
+  - [func \(r ListAPITokensResponse\) Status\(\) string](<#ListAPITokensResponse.Status>)
+  - [func \(r ListAPITokensResponse\) StatusCode\(\) int](<#ListAPITokensResponse.StatusCode>)
+- [type ListAPITokensResponse503Headers](<#ListAPITokensResponse503Headers>)
 - [type ListConnectionsParams](<#ListConnectionsParams>)
 - [type ListConnectionsResponse](<#ListConnectionsResponse>)
   - [func ParseListConnectionsResponse\(rsp \*http.Response\) \(\*ListConnectionsResponse, error\)](<#ParseListConnectionsResponse>)
   - [func \(r ListConnectionsResponse\) ContentType\(\) string](<#ListConnectionsResponse.ContentType>)
+  - [func \(r ListConnectionsResponse\) GetApplicationproblemJSON503\(\) \*AuthUnavailable](<#ListConnectionsResponse.GetApplicationproblemJSON503>)
   - [func \(r ListConnectionsResponse\) GetBody\(\) \[\]byte](<#ListConnectionsResponse.GetBody>)
   - [func \(r ListConnectionsResponse\) GetJSON200\(\) \*ConnectionCollection](<#ListConnectionsResponse.GetJSON200>)
   - [func \(r ListConnectionsResponse\) GetJSON401\(\) \*Unauthorized](<#ListConnectionsResponse.GetJSON401>)
   - [func \(r ListConnectionsResponse\) Status\(\) string](<#ListConnectionsResponse.Status>)
   - [func \(r ListConnectionsResponse\) StatusCode\(\) int](<#ListConnectionsResponse.StatusCode>)
+- [type ListConnectionsResponse503Headers](<#ListConnectionsResponse503Headers>)
 - [type ListDagRunsParams](<#ListDagRunsParams>)
 - [type ListDagRunsParamsState](<#ListDagRunsParamsState>)
   - [func \(e ListDagRunsParamsState\) Valid\(\) bool](<#ListDagRunsParamsState.Valid>)
 - [type ListDagRunsResponse](<#ListDagRunsResponse>)
   - [func ParseListDagRunsResponse\(rsp \*http.Response\) \(\*ListDagRunsResponse, error\)](<#ParseListDagRunsResponse>)
   - [func \(r ListDagRunsResponse\) ContentType\(\) string](<#ListDagRunsResponse.ContentType>)
+  - [func \(r ListDagRunsResponse\) GetApplicationproblemJSON503\(\) \*AuthUnavailable](<#ListDagRunsResponse.GetApplicationproblemJSON503>)
   - [func \(r ListDagRunsResponse\) GetBody\(\) \[\]byte](<#ListDagRunsResponse.GetBody>)
   - [func \(r ListDagRunsResponse\) GetJSON200\(\) \*DAGRunCollection](<#ListDagRunsResponse.GetJSON200>)
   - [func \(r ListDagRunsResponse\) Status\(\) string](<#ListDagRunsResponse.Status>)
   - [func \(r ListDagRunsResponse\) StatusCode\(\) int](<#ListDagRunsResponse.StatusCode>)
+- [type ListDagRunsResponse503Headers](<#ListDagRunsResponse503Headers>)
 - [type ListDagVersionsResponse](<#ListDagVersionsResponse>)
   - [func ParseListDagVersionsResponse\(rsp \*http.Response\) \(\*ListDagVersionsResponse, error\)](<#ParseListDagVersionsResponse>)
   - [func \(r ListDagVersionsResponse\) ContentType\(\) string](<#ListDagVersionsResponse.ContentType>)
+  - [func \(r ListDagVersionsResponse\) GetApplicationproblemJSON503\(\) \*AuthUnavailable](<#ListDagVersionsResponse.GetApplicationproblemJSON503>)
   - [func \(r ListDagVersionsResponse\) GetBody\(\) \[\]byte](<#ListDagVersionsResponse.GetBody>)
   - [func \(r ListDagVersionsResponse\) GetJSON200\(\) \*DagVersionCollection](<#ListDagVersionsResponse.GetJSON200>)
   - [func \(r ListDagVersionsResponse\) Status\(\) string](<#ListDagVersionsResponse.Status>)
   - [func \(r ListDagVersionsResponse\) StatusCode\(\) int](<#ListDagVersionsResponse.StatusCode>)
+- [type ListDagVersionsResponse503Headers](<#ListDagVersionsResponse503Headers>)
 - [type ListDagsParams](<#ListDagsParams>)
 - [type ListDagsResponse](<#ListDagsResponse>)
   - [func ParseListDagsResponse\(rsp \*http.Response\) \(\*ListDagsResponse, error\)](<#ParseListDagsResponse>)
   - [func \(r ListDagsResponse\) ContentType\(\) string](<#ListDagsResponse.ContentType>)
+  - [func \(r ListDagsResponse\) GetApplicationproblemJSON503\(\) \*AuthUnavailable](<#ListDagsResponse.GetApplicationproblemJSON503>)
   - [func \(r ListDagsResponse\) GetBody\(\) \[\]byte](<#ListDagsResponse.GetBody>)
   - [func \(r ListDagsResponse\) GetJSON200\(\) \*DAGCollection](<#ListDagsResponse.GetJSON200>)
   - [func \(r ListDagsResponse\) Status\(\) string](<#ListDagsResponse.Status>)
   - [func \(r ListDagsResponse\) StatusCode\(\) int](<#ListDagsResponse.StatusCode>)
+- [type ListDagsResponse503Headers](<#ListDagsResponse503Headers>)
 - [type ListTaskInstancesResponse](<#ListTaskInstancesResponse>)
   - [func ParseListTaskInstancesResponse\(rsp \*http.Response\) \(\*ListTaskInstancesResponse, error\)](<#ParseListTaskInstancesResponse>)
   - [func \(r ListTaskInstancesResponse\) ContentType\(\) string](<#ListTaskInstancesResponse.ContentType>)
+  - [func \(r ListTaskInstancesResponse\) GetApplicationproblemJSON503\(\) \*AuthUnavailable](<#ListTaskInstancesResponse.GetApplicationproblemJSON503>)
   - [func \(r ListTaskInstancesResponse\) GetBody\(\) \[\]byte](<#ListTaskInstancesResponse.GetBody>)
   - [func \(r ListTaskInstancesResponse\) GetJSON200\(\) \*TaskInstanceCollection](<#ListTaskInstancesResponse.GetJSON200>)
   - [func \(r ListTaskInstancesResponse\) Status\(\) string](<#ListTaskInstancesResponse.Status>)
   - [func \(r ListTaskInstancesResponse\) StatusCode\(\) int](<#ListTaskInstancesResponse.StatusCode>)
+- [type ListTaskInstancesResponse503Headers](<#ListTaskInstancesResponse503Headers>)
 - [type ListUsersParams](<#ListUsersParams>)
 - [type ListUsersResponse](<#ListUsersResponse>)
   - [func ParseListUsersResponse\(rsp \*http.Response\) \(\*ListUsersResponse, error\)](<#ParseListUsersResponse>)
   - [func \(r ListUsersResponse\) ContentType\(\) string](<#ListUsersResponse.ContentType>)
+  - [func \(r ListUsersResponse\) GetApplicationproblemJSON503\(\) \*AuthUnavailable](<#ListUsersResponse.GetApplicationproblemJSON503>)
   - [func \(r ListUsersResponse\) GetBody\(\) \[\]byte](<#ListUsersResponse.GetBody>)
   - [func \(r ListUsersResponse\) GetJSON200\(\) \*UserCollection](<#ListUsersResponse.GetJSON200>)
   - [func \(r ListUsersResponse\) GetJSON401\(\) \*Unauthorized](<#ListUsersResponse.GetJSON401>)
   - [func \(r ListUsersResponse\) Status\(\) string](<#ListUsersResponse.Status>)
   - [func \(r ListUsersResponse\) StatusCode\(\) int](<#ListUsersResponse.StatusCode>)
+- [type ListUsersResponse503Headers](<#ListUsersResponse503Headers>)
 - [type ListVariablesParams](<#ListVariablesParams>)
 - [type ListVariablesResponse](<#ListVariablesResponse>)
   - [func ParseListVariablesResponse\(rsp \*http.Response\) \(\*ListVariablesResponse, error\)](<#ParseListVariablesResponse>)
   - [func \(r ListVariablesResponse\) ContentType\(\) string](<#ListVariablesResponse.ContentType>)
+  - [func \(r ListVariablesResponse\) GetApplicationproblemJSON503\(\) \*AuthUnavailable](<#ListVariablesResponse.GetApplicationproblemJSON503>)
   - [func \(r ListVariablesResponse\) GetBody\(\) \[\]byte](<#ListVariablesResponse.GetBody>)
   - [func \(r ListVariablesResponse\) GetJSON200\(\) \*VariableCollection](<#ListVariablesResponse.GetJSON200>)
   - [func \(r ListVariablesResponse\) GetJSON401\(\) \*Unauthorized](<#ListVariablesResponse.GetJSON401>)
   - [func \(r ListVariablesResponse\) Status\(\) string](<#ListVariablesResponse.Status>)
   - [func \(r ListVariablesResponse\) StatusCode\(\) int](<#ListVariablesResponse.StatusCode>)
+- [type ListVariablesResponse503Headers](<#ListVariablesResponse503Headers>)
 - [type NotFound](<#NotFound>)
 - [type Offset](<#Offset>)
+- [type PatchTaskInstanceDryRunJSONRequestBody](<#PatchTaskInstanceDryRunJSONRequestBody>)
+- [type PatchTaskInstanceDryRunResponse](<#PatchTaskInstanceDryRunResponse>)
+  - [func ParsePatchTaskInstanceDryRunResponse\(rsp \*http.Response\) \(\*PatchTaskInstanceDryRunResponse, error\)](<#ParsePatchTaskInstanceDryRunResponse>)
+  - [func \(r PatchTaskInstanceDryRunResponse\) ContentType\(\) string](<#PatchTaskInstanceDryRunResponse.ContentType>)
+  - [func \(r PatchTaskInstanceDryRunResponse\) GetApplicationproblemJSON503\(\) \*AuthUnavailable](<#PatchTaskInstanceDryRunResponse.GetApplicationproblemJSON503>)
+  - [func \(r PatchTaskInstanceDryRunResponse\) GetBody\(\) \[\]byte](<#PatchTaskInstanceDryRunResponse.GetBody>)
+  - [func \(r PatchTaskInstanceDryRunResponse\) GetJSON200\(\) \*TaskInstanceCollection](<#PatchTaskInstanceDryRunResponse.GetJSON200>)
+  - [func \(r PatchTaskInstanceDryRunResponse\) GetJSON400\(\) \*Error](<#PatchTaskInstanceDryRunResponse.GetJSON400>)
+  - [func \(r PatchTaskInstanceDryRunResponse\) GetJSON404\(\) \*NotFound](<#PatchTaskInstanceDryRunResponse.GetJSON404>)
+  - [func \(r PatchTaskInstanceDryRunResponse\) Status\(\) string](<#PatchTaskInstanceDryRunResponse.Status>)
+  - [func \(r PatchTaskInstanceDryRunResponse\) StatusCode\(\) int](<#PatchTaskInstanceDryRunResponse.StatusCode>)
+- [type PatchTaskInstanceDryRunResponse503Headers](<#PatchTaskInstanceDryRunResponse503Headers>)
+- [type PatchTaskInstanceJSONRequestBody](<#PatchTaskInstanceJSONRequestBody>)
+- [type PatchTaskInstanceResponse](<#PatchTaskInstanceResponse>)
+  - [func ParsePatchTaskInstanceResponse\(rsp \*http.Response\) \(\*PatchTaskInstanceResponse, error\)](<#ParsePatchTaskInstanceResponse>)
+  - [func \(r PatchTaskInstanceResponse\) ContentType\(\) string](<#PatchTaskInstanceResponse.ContentType>)
+  - [func \(r PatchTaskInstanceResponse\) GetApplicationproblemJSON503\(\) \*AuthUnavailable](<#PatchTaskInstanceResponse.GetApplicationproblemJSON503>)
+  - [func \(r PatchTaskInstanceResponse\) GetBody\(\) \[\]byte](<#PatchTaskInstanceResponse.GetBody>)
+  - [func \(r PatchTaskInstanceResponse\) GetJSON200\(\) \*TaskInstanceCollection](<#PatchTaskInstanceResponse.GetJSON200>)
+  - [func \(r PatchTaskInstanceResponse\) GetJSON400\(\) \*Error](<#PatchTaskInstanceResponse.GetJSON400>)
+  - [func \(r PatchTaskInstanceResponse\) GetJSON404\(\) \*NotFound](<#PatchTaskInstanceResponse.GetJSON404>)
+  - [func \(r PatchTaskInstanceResponse\) Status\(\) string](<#PatchTaskInstanceResponse.Status>)
+  - [func \(r PatchTaskInstanceResponse\) StatusCode\(\) int](<#PatchTaskInstanceResponse.StatusCode>)
+- [type PatchTaskInstanceResponse503Headers](<#PatchTaskInstanceResponse503Headers>)
+- [type PatchUserJSONRequestBody](<#PatchUserJSONRequestBody>)
+- [type PatchUserRequest](<#PatchUserRequest>)
+- [type PatchUserResponse](<#PatchUserResponse>)
+  - [func ParsePatchUserResponse\(rsp \*http.Response\) \(\*PatchUserResponse, error\)](<#ParsePatchUserResponse>)
+  - [func \(r PatchUserResponse\) ContentType\(\) string](<#PatchUserResponse.ContentType>)
+  - [func \(r PatchUserResponse\) GetApplicationproblemJSON503\(\) \*AuthUnavailable](<#PatchUserResponse.GetApplicationproblemJSON503>)
+  - [func \(r PatchUserResponse\) GetBody\(\) \[\]byte](<#PatchUserResponse.GetBody>)
+  - [func \(r PatchUserResponse\) GetJSON200\(\) \*User](<#PatchUserResponse.GetJSON200>)
+  - [func \(r PatchUserResponse\) GetJSON400\(\) \*Error](<#PatchUserResponse.GetJSON400>)
+  - [func \(r PatchUserResponse\) GetJSON401\(\) \*Unauthorized](<#PatchUserResponse.GetJSON401>)
+  - [func \(r PatchUserResponse\) GetJSON404\(\) \*NotFound](<#PatchUserResponse.GetJSON404>)
+  - [func \(r PatchUserResponse\) GetJSON409\(\) \*Error](<#PatchUserResponse.GetJSON409>)
+  - [func \(r PatchUserResponse\) Status\(\) string](<#PatchUserResponse.Status>)
+  - [func \(r PatchUserResponse\) StatusCode\(\) int](<#PatchUserResponse.StatusCode>)
+- [type PatchUserResponse503Headers](<#PatchUserResponse503Headers>)
+- [type RegisterDagVersionJSONRequestBody](<#RegisterDagVersionJSONRequestBody>)
+- [type RegisterDagVersionParams](<#RegisterDagVersionParams>)
+- [type RegisterDagVersionResponse](<#RegisterDagVersionResponse>)
+  - [func ParseRegisterDagVersionResponse\(rsp \*http.Response\) \(\*RegisterDagVersionResponse, error\)](<#ParseRegisterDagVersionResponse>)
+  - [func \(r RegisterDagVersionResponse\) ContentType\(\) string](<#RegisterDagVersionResponse.ContentType>)
+  - [func \(r RegisterDagVersionResponse\) GetApplicationproblemJSON503\(\) \*AuthUnavailable](<#RegisterDagVersionResponse.GetApplicationproblemJSON503>)
+  - [func \(r RegisterDagVersionResponse\) GetBody\(\) \[\]byte](<#RegisterDagVersionResponse.GetBody>)
+  - [func \(r RegisterDagVersionResponse\) GetJSON200\(\) \*VersionRegistration](<#RegisterDagVersionResponse.GetJSON200>)
+  - [func \(r RegisterDagVersionResponse\) GetJSON201\(\) \*VersionRegistration](<#RegisterDagVersionResponse.GetJSON201>)
+  - [func \(r RegisterDagVersionResponse\) GetJSON400\(\) \*Error](<#RegisterDagVersionResponse.GetJSON400>)
+  - [func \(r RegisterDagVersionResponse\) GetJSON401\(\) \*Unauthorized](<#RegisterDagVersionResponse.GetJSON401>)
+  - [func \(r RegisterDagVersionResponse\) GetJSON403\(\) \*Error](<#RegisterDagVersionResponse.GetJSON403>)
+  - [func \(r RegisterDagVersionResponse\) GetJSON409\(\) \*Error](<#RegisterDagVersionResponse.GetJSON409>)
+  - [func \(r RegisterDagVersionResponse\) Status\(\) string](<#RegisterDagVersionResponse.Status>)
+  - [func \(r RegisterDagVersionResponse\) StatusCode\(\) int](<#RegisterDagVersionResponse.StatusCode>)
+- [type RegisterDagVersionResponse403Headers](<#RegisterDagVersionResponse403Headers>)
+- [type RegisterDagVersionResponse503Headers](<#RegisterDagVersionResponse503Headers>)
 - [type RenewTokenResponse](<#RenewTokenResponse>)
   - [func ParseRenewTokenResponse\(rsp \*http.Response\) \(\*RenewTokenResponse, error\)](<#ParseRenewTokenResponse>)
   - [func \(r RenewTokenResponse\) ContentType\(\) string](<#RenewTokenResponse.ContentType>)
+  - [func \(r RenewTokenResponse\) GetApplicationproblemJSON503\(\) \*AuthUnavailable](<#RenewTokenResponse.GetApplicationproblemJSON503>)
   - [func \(r RenewTokenResponse\) GetBody\(\) \[\]byte](<#RenewTokenResponse.GetBody>)
   - [func \(r RenewTokenResponse\) GetJSON200\(\) \*TokenResponse](<#RenewTokenResponse.GetJSON200>)
   - [func \(r RenewTokenResponse\) GetJSON401\(\) \*Unauthorized](<#RenewTokenResponse.GetJSON401>)
   - [func \(r RenewTokenResponse\) Status\(\) string](<#RenewTokenResponse.Status>)
   - [func \(r RenewTokenResponse\) StatusCode\(\) int](<#RenewTokenResponse.StatusCode>)
+- [type RenewTokenResponse503Headers](<#RenewTokenResponse503Headers>)
 - [type RequestEditorFn](<#RequestEditorFn>)
+  - [func WithDagSourceVersion\(n int\) RequestEditorFn](<#WithDagSourceVersion>)
+- [type RevokeAPITokenResponse](<#RevokeAPITokenResponse>)
+  - [func ParseRevokeAPITokenResponse\(rsp \*http.Response\) \(\*RevokeAPITokenResponse, error\)](<#ParseRevokeAPITokenResponse>)
+  - [func \(r RevokeAPITokenResponse\) ContentType\(\) string](<#RevokeAPITokenResponse.ContentType>)
+  - [func \(r RevokeAPITokenResponse\) GetApplicationproblemJSON503\(\) \*AuthUnavailable](<#RevokeAPITokenResponse.GetApplicationproblemJSON503>)
+  - [func \(r RevokeAPITokenResponse\) GetBody\(\) \[\]byte](<#RevokeAPITokenResponse.GetBody>)
+  - [func \(r RevokeAPITokenResponse\) GetJSON401\(\) \*Unauthorized](<#RevokeAPITokenResponse.GetJSON401>)
+  - [func \(r RevokeAPITokenResponse\) GetJSON403\(\) \*Error](<#RevokeAPITokenResponse.GetJSON403>)
+  - [func \(r RevokeAPITokenResponse\) GetJSON404\(\) \*NotFound](<#RevokeAPITokenResponse.GetJSON404>)
+  - [func \(r RevokeAPITokenResponse\) Status\(\) string](<#RevokeAPITokenResponse.Status>)
+  - [func \(r RevokeAPITokenResponse\) StatusCode\(\) int](<#RevokeAPITokenResponse.StatusCode>)
+- [type RevokeAPITokenResponse503Headers](<#RevokeAPITokenResponse503Headers>)
+- [type SetDagCurrentVersionJSONRequestBody](<#SetDagCurrentVersionJSONRequestBody>)
+- [type SetDagCurrentVersionResponse](<#SetDagCurrentVersionResponse>)
+  - [func ParseSetDagCurrentVersionResponse\(rsp \*http.Response\) \(\*SetDagCurrentVersionResponse, error\)](<#ParseSetDagCurrentVersionResponse>)
+  - [func \(r SetDagCurrentVersionResponse\) ContentType\(\) string](<#SetDagCurrentVersionResponse.ContentType>)
+  - [func \(r SetDagCurrentVersionResponse\) GetApplicationproblemJSON503\(\) \*AuthUnavailable](<#SetDagCurrentVersionResponse.GetApplicationproblemJSON503>)
+  - [func \(r SetDagCurrentVersionResponse\) GetBody\(\) \[\]byte](<#SetDagCurrentVersionResponse.GetBody>)
+  - [func \(r SetDagCurrentVersionResponse\) GetJSON200\(\) \*DagCurrentVersionChange](<#SetDagCurrentVersionResponse.GetJSON200>)
+  - [func \(r SetDagCurrentVersionResponse\) GetJSON400\(\) \*Error](<#SetDagCurrentVersionResponse.GetJSON400>)
+  - [func \(r SetDagCurrentVersionResponse\) GetJSON401\(\) \*Unauthorized](<#SetDagCurrentVersionResponse.GetJSON401>)
+  - [func \(r SetDagCurrentVersionResponse\) GetJSON403\(\) \*Error](<#SetDagCurrentVersionResponse.GetJSON403>)
+  - [func \(r SetDagCurrentVersionResponse\) GetJSON404\(\) \*NotFound](<#SetDagCurrentVersionResponse.GetJSON404>)
+  - [func \(r SetDagCurrentVersionResponse\) Status\(\) string](<#SetDagCurrentVersionResponse.Status>)
+  - [func \(r SetDagCurrentVersionResponse\) StatusCode\(\) int](<#SetDagCurrentVersionResponse.StatusCode>)
+- [type SetDagCurrentVersionResponse403Headers](<#SetDagCurrentVersionResponse403Headers>)
+- [type SetDagCurrentVersionResponse503Headers](<#SetDagCurrentVersionResponse503Headers>)
+- [type StatusError](<#StatusError>)
+  - [func \(e \*StatusError\) Error\(\) string](<#StatusError.Error>)
+- [type TaskExecution](<#TaskExecution>)
+- [type TaskExecutionMode](<#TaskExecutionMode>)
+  - [func \(e TaskExecutionMode\) Valid\(\) bool](<#TaskExecutionMode.Valid>)
 - [type TaskID](<#TaskID>)
 - [type TaskInstance](<#TaskInstance>)
 - [type TaskInstanceCollection](<#TaskInstanceCollection>)
 - [type TaskInstanceState](<#TaskInstanceState>)
   - [func \(e TaskInstanceState\) Valid\(\) bool](<#TaskInstanceState.Valid>)
+- [type TaskInstanceStateUpdate](<#TaskInstanceStateUpdate>)
+- [type TaskInstanceStateUpdateNewState](<#TaskInstanceStateUpdateNewState>)
+  - [func \(e TaskInstanceStateUpdateNewState\) Valid\(\) bool](<#TaskInstanceStateUpdateNewState.Valid>)
+- [type TaskPodsReport](<#TaskPodsReport>)
+- [type TaskServiceAccountCheck](<#TaskServiceAccountCheck>)
 - [type TokenRequest](<#TokenRequest>)
 - [type TokenResponse](<#TokenResponse>)
 - [type TriggerDagRunJSONRequestBody](<#TriggerDagRunJSONRequestBody>)
 - [type TriggerDagRunResponse](<#TriggerDagRunResponse>)
   - [func ParseTriggerDagRunResponse\(rsp \*http.Response\) \(\*TriggerDagRunResponse, error\)](<#ParseTriggerDagRunResponse>)
   - [func \(r TriggerDagRunResponse\) ContentType\(\) string](<#TriggerDagRunResponse.ContentType>)
+  - [func \(r TriggerDagRunResponse\) GetApplicationproblemJSON503\(\) \*AuthUnavailable](<#TriggerDagRunResponse.GetApplicationproblemJSON503>)
   - [func \(r TriggerDagRunResponse\) GetBody\(\) \[\]byte](<#TriggerDagRunResponse.GetBody>)
   - [func \(r TriggerDagRunResponse\) GetJSON200\(\) \*DAGRun](<#TriggerDagRunResponse.GetJSON200>)
   - [func \(r TriggerDagRunResponse\) Status\(\) string](<#TriggerDagRunResponse.Status>)
   - [func \(r TriggerDagRunResponse\) StatusCode\(\) int](<#TriggerDagRunResponse.StatusCode>)
+- [type TriggerDagRunResponse503Headers](<#TriggerDagRunResponse503Headers>)
 - [type Unauthorized](<#Unauthorized>)
 - [type UpdateConnectionJSONRequestBody](<#UpdateConnectionJSONRequestBody>)
 - [type UpdateConnectionResponse](<#UpdateConnectionResponse>)
@@ -459,10 +749,13 @@ client.gen.go is generated from docs/api/openapi.yaml. Do not edit it by hand; r
 - [type UpdateDagResponse](<#UpdateDagResponse>)
   - [func ParseUpdateDagResponse\(rsp \*http.Response\) \(\*UpdateDagResponse, error\)](<#ParseUpdateDagResponse>)
   - [func \(r UpdateDagResponse\) ContentType\(\) string](<#UpdateDagResponse.ContentType>)
+  - [func \(r UpdateDagResponse\) GetApplicationproblemJSON503\(\) \*AuthUnavailable](<#UpdateDagResponse.GetApplicationproblemJSON503>)
   - [func \(r UpdateDagResponse\) GetBody\(\) \[\]byte](<#UpdateDagResponse.GetBody>)
   - [func \(r UpdateDagResponse\) GetJSON200\(\) \*DAG](<#UpdateDagResponse.GetJSON200>)
+  - [func \(r UpdateDagResponse\) GetJSON400\(\) \*Error](<#UpdateDagResponse.GetJSON400>)
   - [func \(r UpdateDagResponse\) Status\(\) string](<#UpdateDagResponse.Status>)
   - [func \(r UpdateDagResponse\) StatusCode\(\) int](<#UpdateDagResponse.StatusCode>)
+- [type UpdateDagResponse503Headers](<#UpdateDagResponse503Headers>)
 - [type User](<#User>)
 - [type UserCollection](<#UserCollection>)
 - [type UserListItem](<#UserListItem>)
@@ -471,11 +764,103 @@ client.gen.go is generated from docs/api/openapi.yaml. Do not edit it by hand; r
 - [type VariableCollection](<#VariableCollection>)
 - [type VariableKey](<#VariableKey>)
 - [type VersionInfo](<#VersionInfo>)
+- [type VersionRegistration](<#VersionRegistration>)
+- [type WarmPoolReport](<#WarmPoolReport>)
+- [type WarmPoolReportPreviousPool](<#WarmPoolReportPreviousPool>)
+  - [func \(e WarmPoolReportPreviousPool\) Valid\(\) bool](<#WarmPoolReportPreviousPool.Valid>)
+- [type WarmPoolReportState](<#WarmPoolReportState>)
+  - [func \(e WarmPoolReportState\) Valid\(\) bool](<#WarmPoolReportState.Valid>)
 - [type XComEntry](<#XComEntry>)
 
 
+## Constants
+
+<a name="DeviceGrantType"></a>DeviceGrantType is the grant\_type of a device poll \(RFC 8628\).
+
+```go
+const DeviceGrantType = "urn:ietf:params:oauth:grant-type:device_code"
+```
+
+## Variables
+
+<a name="ErrDeviceAuthorizationPending"></a>The answers of a device poll that are not a token \(RFC 8628 section 3.5\). ErrCLILoginCodeRefused is the answer for a device code that is not live.
+
+```go
+var (
+    // ErrDeviceAuthorizationPending: nobody approved the sign-in yet; poll
+    // again after the interval.
+    ErrDeviceAuthorizationPending = errors.New("the sign-in is waiting for its approval in the browser")
+    // ErrDeviceSlowDown: the poll came too soon; add five seconds to the
+    // interval.
+    ErrDeviceSlowDown = errors.New("polling too fast")
+    // ErrDeviceAccessDenied: the sign-in was canceled in the browser.
+    ErrDeviceAccessDenied = errors.New("the sign-in was canceled in the browser")
+    // ErrDeviceExpired: the sign-in expired before it was approved.
+    ErrDeviceExpired = errors.New("the sign-in expired")
+)
+```
+
+<a name="ErrAuthMethodsNotServed"></a>ErrAuthMethodsNotServed is what GetAuthMethods returns when the server answers 404: it predates GET /api/v2/auth/methods, and so offers only a password login to the CLI.
+
+```go
+var ErrAuthMethodsNotServed = errors.New("the server does not serve " + authMethodsPath)
+```
+
+<a name="ErrCITokenNotServed"></a>ErrCITokenNotServed is what ExchangeCIToken returns when the server answers 404: it trusts no CI issuer, or predates the exchange.
+
+```go
+var ErrCITokenNotServed = errors.New("the server does not serve " + ciTokenPath)
+```
+
+<a name="ErrCLILoginCodeRefused"></a>ErrCLILoginCodeRefused is what ExchangeCLILoginCode returns when the server refuses the code \(400\). The server does not say why, by design: the code may be unknown, expired, already used, or not bound to the verifier.
+
+```go
+var ErrCLILoginCodeRefused = errors.New("the server refused the sign-in code")
+```
+
+<a name="ErrDeployDefaultsNotServed"></a>ErrDeployDefaultsNotServed is what GetDeployDefaults returns when the server answers 404: it predates GET /api/v2/deployDefaults, and so advertises no deploy defaults.
+
+```go
+var ErrDeployDefaultsNotServed = errors.New("the server does not serve " + deployDefaultsPath)
+```
+
+<a name="ErrDeviceLoginNotServed"></a>ErrDeviceLoginNotServed is what StartCLIDeviceLogin returns when the server answers 404: it does not serve the device sign\-in.
+
+```go
+var ErrDeviceLoginNotServed = errors.New("the server does not serve " + cliDevicePath)
+```
+
+<a name="DryRunRegister"></a>
+## func [DryRunRegister](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.go#L73>)
+
+```go
+func DryRunRegister(_ context.Context, req *http.Request) error
+```
+
+DryRunRegister is a RequestEditorFn for RegisterDagVersion that sends the register to POST /api/v2/dags/\{dag\_id\}/versions/dry\_run instead: the server runs every check of the register and writes nothing, answering 200 with dry\_run true, or the refusal the register would give. A server from before the route answers 404 and registers nothing. Pass it only to RegisterDagVersion; it refuses any request other than a POST to the register path.
+
+As an argument of the call it runs after the client\-level editors \(WithRequestEditorFn\): an editor of the client that signs the path signs the register path, not the dry run route.
+
+<a name="NewClearDagRunRequest"></a>
+## func [NewClearDagRunRequest](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L3565>)
+
+```go
+func NewClearDagRunRequest(server string, dagId DagID, dagRunId DagRunID, body ClearDagRunJSONRequestBody) (*http.Request, error)
+```
+
+NewClearDagRunRequest calls the generic ClearDagRun builder with application/json body
+
+<a name="NewClearDagRunRequestWithBody"></a>
+## func [NewClearDagRunRequestWithBody](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L3576>)
+
+```go
+func NewClearDagRunRequestWithBody(server string, dagId DagID, dagRunId DagRunID, contentType string, body io.Reader) (*http.Request, error)
+```
+
+NewClearDagRunRequestWithBody constructs an http.Request for the ClearDagRun method, with any body, and a specified content type
+
 <a name="NewClearTaskInstancesRequest"></a>
-## func [NewClearTaskInstancesRequest](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L2006>)
+## func [NewClearTaskInstancesRequest](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L3286>)
 
 ```go
 func NewClearTaskInstancesRequest(server string, dagId DagID, body ClearTaskInstancesJSONRequestBody) (*http.Request, error)
@@ -484,7 +869,7 @@ func NewClearTaskInstancesRequest(server string, dagId DagID, body ClearTaskInst
 NewClearTaskInstancesRequest calls the generic ClearTaskInstances builder with application/json body
 
 <a name="NewClearTaskInstancesRequestWithBody"></a>
-## func [NewClearTaskInstancesRequestWithBody](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L2017>)
+## func [NewClearTaskInstancesRequestWithBody](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L3297>)
 
 ```go
 func NewClearTaskInstancesRequestWithBody(server string, dagId DagID, contentType string, body io.Reader) (*http.Request, error)
@@ -492,8 +877,26 @@ func NewClearTaskInstancesRequestWithBody(server string, dagId DagID, contentTyp
 
 NewClearTaskInstancesRequestWithBody constructs an http.Request for the ClearTaskInstances method, with any body, and a specified content type
 
+<a name="NewCreateAPITokenRequest"></a>
+## func [NewCreateAPITokenRequest](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L2747>)
+
+```go
+func NewCreateAPITokenRequest(server string, body CreateAPITokenJSONRequestBody) (*http.Request, error)
+```
+
+NewCreateAPITokenRequest calls the generic CreateAPIToken builder with application/json body
+
+<a name="NewCreateAPITokenRequestWithBody"></a>
+## func [NewCreateAPITokenRequestWithBody](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L2758>)
+
+```go
+func NewCreateAPITokenRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error)
+```
+
+NewCreateAPITokenRequestWithBody constructs an http.Request for the CreateAPIToken method, with any body, and a specified content type
+
 <a name="NewCreateConnectionRequest"></a>
-## func [NewCreateConnectionRequest](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L1634>)
+## func [NewCreateConnectionRequest](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L2914>)
 
 ```go
 func NewCreateConnectionRequest(server string, body CreateConnectionJSONRequestBody) (*http.Request, error)
@@ -502,7 +905,7 @@ func NewCreateConnectionRequest(server string, body CreateConnectionJSONRequestB
 NewCreateConnectionRequest calls the generic CreateConnection builder with application/json body
 
 <a name="NewCreateConnectionRequestWithBody"></a>
-## func [NewCreateConnectionRequestWithBody](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L1645>)
+## func [NewCreateConnectionRequestWithBody](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L2925>)
 
 ```go
 func NewCreateConnectionRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error)
@@ -511,7 +914,7 @@ func NewCreateConnectionRequestWithBody(server string, contentType string, body 
 NewCreateConnectionRequestWithBody constructs an http.Request for the CreateConnection method, with any body, and a specified content type
 
 <a name="NewCreateUserRequest"></a>
-## func [NewCreateUserRequest](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L2599>)
+## func [NewCreateUserRequest](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L4284>)
 
 ```go
 func NewCreateUserRequest(server string, body CreateUserJSONRequestBody) (*http.Request, error)
@@ -520,7 +923,7 @@ func NewCreateUserRequest(server string, body CreateUserJSONRequestBody) (*http.
 NewCreateUserRequest calls the generic CreateUser builder with application/json body
 
 <a name="NewCreateUserRequestWithBody"></a>
-## func [NewCreateUserRequestWithBody](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L2610>)
+## func [NewCreateUserRequestWithBody](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L4295>)
 
 ```go
 func NewCreateUserRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error)
@@ -529,7 +932,7 @@ func NewCreateUserRequestWithBody(server string, contentType string, body io.Rea
 NewCreateUserRequestWithBody constructs an http.Request for the CreateUser method, with any body, and a specified content type
 
 <a name="NewCreateVariableRequest"></a>
-## func [NewCreateVariableRequest](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L2705>)
+## func [NewCreateVariableRequest](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L4437>)
 
 ```go
 func NewCreateVariableRequest(server string, body CreateVariableJSONRequestBody) (*http.Request, error)
@@ -538,7 +941,7 @@ func NewCreateVariableRequest(server string, body CreateVariableJSONRequestBody)
 NewCreateVariableRequest calls the generic CreateVariable builder with application/json body
 
 <a name="NewCreateVariableRequestWithBody"></a>
-## func [NewCreateVariableRequestWithBody](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L2716>)
+## func [NewCreateVariableRequestWithBody](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L4448>)
 
 ```go
 func NewCreateVariableRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error)
@@ -547,7 +950,7 @@ func NewCreateVariableRequestWithBody(server string, contentType string, body io
 NewCreateVariableRequestWithBody constructs an http.Request for the CreateVariable method, with any body, and a specified content type
 
 <a name="NewDeleteConnectionRequest"></a>
-## func [NewDeleteConnectionRequest](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L1674>)
+## func [NewDeleteConnectionRequest](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L2954>)
 
 ```go
 func NewDeleteConnectionRequest(server string, connectionId ConnectionID) (*http.Request, error)
@@ -556,7 +959,7 @@ func NewDeleteConnectionRequest(server string, connectionId ConnectionID) (*http
 NewDeleteConnectionRequest constructs an http.Request for the DeleteConnection method
 
 <a name="NewDeleteVariableRequest"></a>
-## func [NewDeleteVariableRequest](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L2745>)
+## func [NewDeleteVariableRequest](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L4477>)
 
 ```go
 func NewDeleteVariableRequest(server string, variableKey VariableKey) (*http.Request, error)
@@ -565,7 +968,7 @@ func NewDeleteVariableRequest(server string, variableKey VariableKey) (*http.Req
 NewDeleteVariableRequest constructs an http.Request for the DeleteVariable method
 
 <a name="NewGetConnectionRequest"></a>
-## func [NewGetConnectionRequest](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L1708>)
+## func [NewGetConnectionRequest](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L2988>)
 
 ```go
 func NewGetConnectionRequest(server string, connectionId ConnectionID) (*http.Request, error)
@@ -574,7 +977,7 @@ func NewGetConnectionRequest(server string, connectionId ConnectionID) (*http.Re
 NewGetConnectionRequest constructs an http.Request for the GetConnection method
 
 <a name="NewGetDagRequest"></a>
-## func [NewGetDagRequest](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L1925>)
+## func [NewGetDagRequest](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L3205>)
 
 ```go
 func NewGetDagRequest(server string, dagId DagID) (*http.Request, error)
@@ -583,7 +986,7 @@ func NewGetDagRequest(server string, dagId DagID) (*http.Request, error)
 NewGetDagRequest constructs an http.Request for the GetDag method
 
 <a name="NewGetDagRunRequest"></a>
-## func [NewGetDagRunRequest](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L2185>)
+## func [NewGetDagRunRequest](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L3524>)
 
 ```go
 func NewGetDagRunRequest(server string, dagId DagID, dagRunId DagRunID) (*http.Request, error)
@@ -592,7 +995,7 @@ func NewGetDagRunRequest(server string, dagId DagID, dagRunId DagRunID) (*http.R
 NewGetDagRunRequest constructs an http.Request for the GetDagRun method
 
 <a name="NewGetDagSourceRequest"></a>
-## func [NewGetDagSourceRequest](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L1789>)
+## func [NewGetDagSourceRequest](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L3069>)
 
 ```go
 func NewGetDagSourceRequest(server string, dagId DagID) (*http.Request, error)
@@ -601,7 +1004,7 @@ func NewGetDagSourceRequest(server string, dagId DagID) (*http.Request, error)
 NewGetDagSourceRequest constructs an http.Request for the GetDagSource method
 
 <a name="NewGetDagSpecRequest"></a>
-## func [NewGetDagSpecRequest](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L2445>)
+## func [NewGetDagSpecRequest](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L3960>)
 
 ```go
 func NewGetDagSpecRequest(server string, dagId DagID) (*http.Request, error)
@@ -610,7 +1013,7 @@ func NewGetDagSpecRequest(server string, dagId DagID) (*http.Request, error)
 NewGetDagSpecRequest constructs an http.Request for the GetDagSpec method
 
 <a name="NewGetDagVersionRequest"></a>
-## func [NewGetDagVersionRequest](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L2404>)
+## func [NewGetDagVersionRequest](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L3919>)
 
 ```go
 func NewGetDagVersionRequest(server string, dagId DagID, versionNumber int) (*http.Request, error)
@@ -619,7 +1022,7 @@ func NewGetDagVersionRequest(server string, dagId DagID, versionNumber int) (*ht
 NewGetDagVersionRequest constructs an http.Request for the GetDagVersion method
 
 <a name="NewGetHealthzRequest"></a>
-## func [NewGetHealthzRequest](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L2935>)
+## func [NewGetHealthzRequest](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L4667>)
 
 ```go
 func NewGetHealthzRequest(server string) (*http.Request, error)
@@ -628,7 +1031,7 @@ func NewGetHealthzRequest(server string) (*http.Request, error)
 NewGetHealthzRequest constructs an http.Request for the GetHealthz method
 
 <a name="NewGetMonitorExecutorRequest"></a>
-## func [NewGetMonitorExecutorRequest](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L2479>)
+## func [NewGetMonitorExecutorRequest](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L4164>)
 
 ```go
 func NewGetMonitorExecutorRequest(server string) (*http.Request, error)
@@ -637,7 +1040,7 @@ func NewGetMonitorExecutorRequest(server string) (*http.Request, error)
 NewGetMonitorExecutorRequest constructs an http.Request for the GetMonitorExecutor method
 
 <a name="NewGetMonitorHealthRequest"></a>
-## func [NewGetMonitorHealthRequest](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L2506>)
+## func [NewGetMonitorHealthRequest](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L4191>)
 
 ```go
 func NewGetMonitorHealthRequest(server string) (*http.Request, error)
@@ -646,7 +1049,7 @@ func NewGetMonitorHealthRequest(server string) (*http.Request, error)
 NewGetMonitorHealthRequest constructs an http.Request for the GetMonitorHealth method
 
 <a name="NewGetReadyzRequest"></a>
-## func [NewGetReadyzRequest](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L2962>)
+## func [NewGetReadyzRequest](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L4694>)
 
 ```go
 func NewGetReadyzRequest(server string) (*http.Request, error)
@@ -655,7 +1058,7 @@ func NewGetReadyzRequest(server string) (*http.Request, error)
 NewGetReadyzRequest constructs an http.Request for the GetReadyz method
 
 <a name="NewGetTaskInstanceRequest"></a>
-## func [NewGetTaskInstanceRequest](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L2267>)
+## func [NewGetTaskInstanceRequest](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L3660>)
 
 ```go
 func NewGetTaskInstanceRequest(server string, dagId DagID, dagRunId DagRunID, taskId TaskID) (*http.Request, error)
@@ -664,7 +1067,7 @@ func NewGetTaskInstanceRequest(server string, dagId DagID, dagRunId DagRunID, ta
 NewGetTaskInstanceRequest constructs an http.Request for the GetTaskInstance method
 
 <a name="NewGetTaskLogsRequest"></a>
-## func [NewGetTaskLogsRequest](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L2315>)
+## func [NewGetTaskLogsRequest](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L3830>)
 
 ```go
 func NewGetTaskLogsRequest(server string, dagId DagID, dagRunId DagRunID, taskId TaskID, tryNumber int) (*http.Request, error)
@@ -673,7 +1076,7 @@ func NewGetTaskLogsRequest(server string, dagId DagID, dagRunId DagRunID, taskId
 NewGetTaskLogsRequest constructs an http.Request for the GetTaskLogs method
 
 <a name="NewGetVariableRequest"></a>
-## func [NewGetVariableRequest](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L2779>)
+## func [NewGetVariableRequest](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L4511>)
 
 ```go
 func NewGetVariableRequest(server string, variableKey VariableKey) (*http.Request, error)
@@ -682,7 +1085,7 @@ func NewGetVariableRequest(server string, variableKey VariableKey) (*http.Reques
 NewGetVariableRequest constructs an http.Request for the GetVariable method
 
 <a name="NewGetVersionRequest"></a>
-## func [NewGetVersionRequest](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L2813>)
+## func [NewGetVersionRequest](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L4545>)
 
 ```go
 func NewGetVersionRequest(server string) (*http.Request, error)
@@ -691,7 +1094,7 @@ func NewGetVersionRequest(server string) (*http.Request, error)
 NewGetVersionRequest constructs an http.Request for the GetVersion method
 
 <a name="NewGetXcomEntryRequest"></a>
-## func [NewGetXcomEntryRequest](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L2840>)
+## func [NewGetXcomEntryRequest](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L4572>)
 
 ```go
 func NewGetXcomEntryRequest(server string, dagId DagID, dagRunId DagRunID, taskId TaskID, key string) (*http.Request, error)
@@ -700,7 +1103,7 @@ func NewGetXcomEntryRequest(server string, dagId DagID, dagRunId DagRunID, taskI
 NewGetXcomEntryRequest constructs an http.Request for the GetXcomEntry method
 
 <a name="NewIssueTokenRequest"></a>
-## func [NewIssueTokenRequest](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L2895>)
+## func [NewIssueTokenRequest](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L4627>)
 
 ```go
 func NewIssueTokenRequest(server string, body IssueTokenJSONRequestBody) (*http.Request, error)
@@ -709,7 +1112,7 @@ func NewIssueTokenRequest(server string, body IssueTokenJSONRequestBody) (*http.
 NewIssueTokenRequest calls the generic IssueToken builder with application/json body
 
 <a name="NewIssueTokenRequestWithBody"></a>
-## func [NewIssueTokenRequestWithBody](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L2906>)
+## func [NewIssueTokenRequestWithBody](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L4638>)
 
 ```go
 func NewIssueTokenRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error)
@@ -717,8 +1120,17 @@ func NewIssueTokenRequestWithBody(server string, contentType string, body io.Rea
 
 NewIssueTokenRequestWithBody constructs an http.Request for the IssueToken method, with any body, and a specified content type
 
+<a name="NewListAPITokensRequest"></a>
+## func [NewListAPITokensRequest](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L2681>)
+
+```go
+func NewListAPITokensRequest(server string, params *ListAPITokensParams) (*http.Request, error)
+```
+
+NewListAPITokensRequest constructs an http.Request for the ListAPITokens method
+
 <a name="NewListConnectionsRequest"></a>
-## func [NewListConnectionsRequest](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L1568>)
+## func [NewListConnectionsRequest](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L2848>)
 
 ```go
 func NewListConnectionsRequest(server string, params *ListConnectionsParams) (*http.Request, error)
@@ -727,7 +1139,7 @@ func NewListConnectionsRequest(server string, params *ListConnectionsParams) (*h
 NewListConnectionsRequest constructs an http.Request for the ListConnections method
 
 <a name="NewListDagRunsRequest"></a>
-## func [NewListDagRunsRequest](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L2053>)
+## func [NewListDagRunsRequest](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L3380>)
 
 ```go
 func NewListDagRunsRequest(server string, dagId DagID, params *ListDagRunsParams) (*http.Request, error)
@@ -736,7 +1148,7 @@ func NewListDagRunsRequest(server string, dagId DagID, params *ListDagRunsParams
 NewListDagRunsRequest constructs an http.Request for the ListDagRuns method
 
 <a name="NewListDagVersionsRequest"></a>
-## func [NewListDagVersionsRequest](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L2370>)
+## func [NewListDagVersionsRequest](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L3885>)
 
 ```go
 func NewListDagVersionsRequest(server string, dagId DagID) (*http.Request, error)
@@ -745,7 +1157,7 @@ func NewListDagVersionsRequest(server string, dagId DagID) (*http.Request, error
 NewListDagVersionsRequest constructs an http.Request for the ListDagVersions method
 
 <a name="NewListDagsRequest"></a>
-## func [NewListDagsRequest](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L1823>)
+## func [NewListDagsRequest](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L3103>)
 
 ```go
 func NewListDagsRequest(server string, params *ListDagsParams) (*http.Request, error)
@@ -754,7 +1166,7 @@ func NewListDagsRequest(server string, params *ListDagsParams) (*http.Request, e
 NewListDagsRequest constructs an http.Request for the ListDags method
 
 <a name="NewListTaskInstancesRequest"></a>
-## func [NewListTaskInstancesRequest](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L2226>)
+## func [NewListTaskInstancesRequest](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L3619>)
 
 ```go
 func NewListTaskInstancesRequest(server string, dagId DagID, dagRunId DagRunID) (*http.Request, error)
@@ -763,7 +1175,7 @@ func NewListTaskInstancesRequest(server string, dagId DagID, dagRunId DagRunID) 
 NewListTaskInstancesRequest constructs an http.Request for the ListTaskInstances method
 
 <a name="NewListUsersRequest"></a>
-## func [NewListUsersRequest](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L2533>)
+## func [NewListUsersRequest](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L4218>)
 
 ```go
 func NewListUsersRequest(server string, params *ListUsersParams) (*http.Request, error)
@@ -772,7 +1184,7 @@ func NewListUsersRequest(server string, params *ListUsersParams) (*http.Request,
 NewListUsersRequest constructs an http.Request for the ListUsers method
 
 <a name="NewListVariablesRequest"></a>
-## func [NewListVariablesRequest](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L2639>)
+## func [NewListVariablesRequest](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L4371>)
 
 ```go
 func NewListVariablesRequest(server string, params *ListVariablesParams) (*http.Request, error)
@@ -780,8 +1192,80 @@ func NewListVariablesRequest(server string, params *ListVariablesParams) (*http.
 
 NewListVariablesRequest constructs an http.Request for the ListVariables method
 
+<a name="NewPatchTaskInstanceDryRunRequest"></a>
+## func [NewPatchTaskInstanceDryRunRequest](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L3769>)
+
+```go
+func NewPatchTaskInstanceDryRunRequest(server string, dagId DagID, dagRunId DagRunID, taskId TaskID, body PatchTaskInstanceDryRunJSONRequestBody) (*http.Request, error)
+```
+
+NewPatchTaskInstanceDryRunRequest calls the generic PatchTaskInstanceDryRun builder with application/json body
+
+<a name="NewPatchTaskInstanceDryRunRequestWithBody"></a>
+## func [NewPatchTaskInstanceDryRunRequestWithBody](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L3780>)
+
+```go
+func NewPatchTaskInstanceDryRunRequestWithBody(server string, dagId DagID, dagRunId DagRunID, taskId TaskID, contentType string, body io.Reader) (*http.Request, error)
+```
+
+NewPatchTaskInstanceDryRunRequestWithBody constructs an http.Request for the PatchTaskInstanceDryRun method, with any body, and a specified content type
+
+<a name="NewPatchTaskInstanceRequest"></a>
+## func [NewPatchTaskInstanceRequest](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L3708>)
+
+```go
+func NewPatchTaskInstanceRequest(server string, dagId DagID, dagRunId DagRunID, taskId TaskID, body PatchTaskInstanceJSONRequestBody) (*http.Request, error)
+```
+
+NewPatchTaskInstanceRequest calls the generic PatchTaskInstance builder with application/json body
+
+<a name="NewPatchTaskInstanceRequestWithBody"></a>
+## func [NewPatchTaskInstanceRequestWithBody](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L3719>)
+
+```go
+func NewPatchTaskInstanceRequestWithBody(server string, dagId DagID, dagRunId DagRunID, taskId TaskID, contentType string, body io.Reader) (*http.Request, error)
+```
+
+NewPatchTaskInstanceRequestWithBody constructs an http.Request for the PatchTaskInstance method, with any body, and a specified content type
+
+<a name="NewPatchUserRequest"></a>
+## func [NewPatchUserRequest](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L4324>)
+
+```go
+func NewPatchUserRequest(server string, userId string, body PatchUserJSONRequestBody) (*http.Request, error)
+```
+
+NewPatchUserRequest calls the generic PatchUser builder with application/json body
+
+<a name="NewPatchUserRequestWithBody"></a>
+## func [NewPatchUserRequestWithBody](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L4335>)
+
+```go
+func NewPatchUserRequestWithBody(server string, userId string, contentType string, body io.Reader) (*http.Request, error)
+```
+
+NewPatchUserRequestWithBody constructs an http.Request for the PatchUser method, with any body, and a specified content type
+
+<a name="NewRegisterDagVersionRequest"></a>
+## func [NewRegisterDagVersionRequest](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L3994>)
+
+```go
+func NewRegisterDagVersionRequest(server string, dagId DagID, params *RegisterDagVersionParams, body RegisterDagVersionJSONRequestBody) (*http.Request, error)
+```
+
+NewRegisterDagVersionRequest calls the generic RegisterDagVersion builder with application/json body
+
+<a name="NewRegisterDagVersionRequestWithBody"></a>
+## func [NewRegisterDagVersionRequestWithBody](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L4005>)
+
+```go
+func NewRegisterDagVersionRequestWithBody(server string, dagId DagID, params *RegisterDagVersionParams, contentType string, body io.Reader) (*http.Request, error)
+```
+
+NewRegisterDagVersionRequestWithBody constructs an http.Request for the RegisterDagVersion method, with any body, and a specified content type
+
 <a name="NewRenewTokenRequest"></a>
-## func [NewRenewTokenRequest](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L1541>)
+## func [NewRenewTokenRequest](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L2821>)
 
 ```go
 func NewRenewTokenRequest(server string) (*http.Request, error)
@@ -789,8 +1273,35 @@ func NewRenewTokenRequest(server string) (*http.Request, error)
 
 NewRenewTokenRequest constructs an http.Request for the RenewToken method
 
+<a name="NewRevokeAPITokenRequest"></a>
+## func [NewRevokeAPITokenRequest](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L2787>)
+
+```go
+func NewRevokeAPITokenRequest(server string, tokenId string) (*http.Request, error)
+```
+
+NewRevokeAPITokenRequest constructs an http.Request for the RevokeAPIToken method
+
+<a name="NewSetDagCurrentVersionRequest"></a>
+## func [NewSetDagCurrentVersionRequest](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L3333>)
+
+```go
+func NewSetDagCurrentVersionRequest(server string, dagId DagID, body SetDagCurrentVersionJSONRequestBody) (*http.Request, error)
+```
+
+NewSetDagCurrentVersionRequest calls the generic SetDagCurrentVersion builder with application/json body
+
+<a name="NewSetDagCurrentVersionRequestWithBody"></a>
+## func [NewSetDagCurrentVersionRequestWithBody](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L3344>)
+
+```go
+func NewSetDagCurrentVersionRequestWithBody(server string, dagId DagID, contentType string, body io.Reader) (*http.Request, error)
+```
+
+NewSetDagCurrentVersionRequestWithBody constructs an http.Request for the SetDagCurrentVersion method, with any body, and a specified content type
+
 <a name="NewTriggerDagRunRequest"></a>
-## func [NewTriggerDagRunRequest](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L2138>)
+## func [NewTriggerDagRunRequest](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L3477>)
 
 ```go
 func NewTriggerDagRunRequest(server string, dagId DagID, body TriggerDagRunJSONRequestBody) (*http.Request, error)
@@ -799,7 +1310,7 @@ func NewTriggerDagRunRequest(server string, dagId DagID, body TriggerDagRunJSONR
 NewTriggerDagRunRequest calls the generic TriggerDagRun builder with application/json body
 
 <a name="NewTriggerDagRunRequestWithBody"></a>
-## func [NewTriggerDagRunRequestWithBody](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L2149>)
+## func [NewTriggerDagRunRequestWithBody](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L3488>)
 
 ```go
 func NewTriggerDagRunRequestWithBody(server string, dagId DagID, contentType string, body io.Reader) (*http.Request, error)
@@ -808,7 +1319,7 @@ func NewTriggerDagRunRequestWithBody(server string, dagId DagID, contentType str
 NewTriggerDagRunRequestWithBody constructs an http.Request for the TriggerDagRun method, with any body, and a specified content type
 
 <a name="NewUpdateConnectionRequest"></a>
-## func [NewUpdateConnectionRequest](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L1742>)
+## func [NewUpdateConnectionRequest](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L3022>)
 
 ```go
 func NewUpdateConnectionRequest(server string, connectionId ConnectionID, body UpdateConnectionJSONRequestBody) (*http.Request, error)
@@ -817,7 +1328,7 @@ func NewUpdateConnectionRequest(server string, connectionId ConnectionID, body U
 NewUpdateConnectionRequest calls the generic UpdateConnection builder with application/json body
 
 <a name="NewUpdateConnectionRequestWithBody"></a>
-## func [NewUpdateConnectionRequestWithBody](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L1753>)
+## func [NewUpdateConnectionRequestWithBody](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L3033>)
 
 ```go
 func NewUpdateConnectionRequestWithBody(server string, connectionId ConnectionID, contentType string, body io.Reader) (*http.Request, error)
@@ -826,7 +1337,7 @@ func NewUpdateConnectionRequestWithBody(server string, connectionId ConnectionID
 NewUpdateConnectionRequestWithBody constructs an http.Request for the UpdateConnection method, with any body, and a specified content type
 
 <a name="NewUpdateDagRequest"></a>
-## func [NewUpdateDagRequest](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L1959>)
+## func [NewUpdateDagRequest](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L3239>)
 
 ```go
 func NewUpdateDagRequest(server string, dagId DagID, body UpdateDagJSONRequestBody) (*http.Request, error)
@@ -835,7 +1346,7 @@ func NewUpdateDagRequest(server string, dagId DagID, body UpdateDagJSONRequestBo
 NewUpdateDagRequest calls the generic UpdateDag builder with application/json body
 
 <a name="NewUpdateDagRequestWithBody"></a>
-## func [NewUpdateDagRequestWithBody](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L1970>)
+## func [NewUpdateDagRequestWithBody](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L3250>)
 
 ```go
 func NewUpdateDagRequestWithBody(server string, dagId DagID, contentType string, body io.Reader) (*http.Request, error)
@@ -843,8 +1354,389 @@ func NewUpdateDagRequestWithBody(server string, dagId DagID, contentType string,
 
 NewUpdateDagRequestWithBody constructs an http.Request for the UpdateDag method, with any body, and a specified content type
 
+<a name="APIToken"></a>
+## type [APIToken](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L228-L240>)
+
+APIToken defines model for APIToken.
+
+```go
+type APIToken struct {
+    CreatedAt time.Time `json:"created_at"`
+    ExpiresAt time.Time `json:"expires_at"`
+    Id        string    `json:"id"`
+
+    // LastUsedAt When the token last authenticated a request, recorded at most once every five minutes; null when it was never used.
+    LastUsedAt *time.Time `json:"last_used_at,omitempty"`
+    Name       string     `json:"name"`
+
+    // OwnerEmail Email of the token's owner (in lists).
+    OwnerEmail *string  `json:"owner_email,omitempty"`
+    Scopes     []string `json:"scopes"`
+}
+```
+
+<a name="APITokenCollection"></a>
+## type [APITokenCollection](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L243-L246>)
+
+APITokenCollection defines model for APITokenCollection.
+
+```go
+type APITokenCollection struct {
+    ApiTokens    *[]APIToken `json:"api_tokens,omitempty"`
+    TotalEntries *int        `json:"total_entries,omitempty"`
+}
+```
+
+<a name="AuthMethods"></a>
+## type [AuthMethods](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/auth_cli.go#L37-L45>)
+
+AuthMethods are the sign\-in methods GET /api/v2/auth/methods reports.
+
+```go
+type AuthMethods struct {
+    // Password is whether a password login can succeed for someone.
+    Password bool `json:"password"`
+    // SSO is whether the OIDC single sign-on flow is served.
+    SSO bool `json:"sso"`
+    // Device is whether the device sign-in for machines with no browser is
+    // served (POST /api/v2/auth/cli/device). Servers from before it omit it.
+    Device bool `json:"device"`
+}
+```
+
+<a name="AuthUnavailable"></a>
+## type [AuthUnavailable](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L836>)
+
+AuthUnavailable defines model for AuthUnavailable.
+
+```go
+type AuthUnavailable = Error
+```
+
+<a name="BuildInfo"></a>
+## type [BuildInfo](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L249-L267>)
+
+BuildInfo Dexaflow. Where a DAG version was built \(\#1702\), as the register claimed it, not verified. Every field is optional and absent when it was not sent.
+
+```go
+type BuildInfo struct {
+    // BaseImage The base image the DAG image was built from; it carries the task agent.
+    BaseImage *string `json:"base_image,omitempty"`
+
+    // Builder The builder that produced the image.
+    Builder *string `json:"builder,omitempty"`
+
+    // CliVersion The version of the CLI that built and registered the version.
+    CliVersion *string `json:"cli_version,omitempty"`
+
+    // Commit The git commit of the sources.
+    Commit *string `json:"commit,omitempty"`
+
+    // PipelineUrl The CI pipeline run that built the version (http or https URL).
+    PipelineUrl *string `json:"pipeline_url,omitempty"`
+
+    // Repo The repository of the sources (http or https URL).
+    Repo *string `json:"repo,omitempty"`
+}
+```
+
+<a name="CITokenRequest"></a>
+## type [CITokenRequest](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/auth_ci.go#L24-L26>)
+
+CITokenRequest is the body of POST /api/v2/auth/ciToken: the OIDC token the CI provider minted for the job.
+
+```go
+type CITokenRequest struct {
+    Token string `json:"token"`
+}
+```
+
+<a name="CITokenResponse"></a>
+## type [CITokenResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/auth_ci.go#L31-L40>)
+
+CITokenResponse is the deploy session POST /api/v2/auth/ciToken answers: the token, its lifetime, and the issuer entry, tenant, role and scopes it acts with.
+
+```go
+type CITokenResponse struct {
+    AccessToken string    `json:"access_token"`
+    TokenType   string    `json:"token_type"`
+    ExpiresIn   int       `json:"expires_in"`
+    ExpiresAt   time.Time `json:"expires_at"`
+    Issuer      string    `json:"issuer"`
+    Tenant      string    `json:"tenant"`
+    Role        string    `json:"role"`
+    Scopes      []string  `json:"scopes"`
+}
+```
+
+<a name="CLIDeviceAuthorization"></a>
+## type [CLIDeviceAuthorization](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/auth_cli.go#L71-L84>)
+
+CLIDeviceAuthorization is what POST /api/v2/auth/cli/device answers: the device code the CLI polls with, and what the person needs to approve it.
+
+```go
+type CLIDeviceAuthorization struct {
+    // DeviceCode is the secret the CLI polls with. Never print it.
+    DeviceCode string `json:"device_code"`
+    // UserCode is the short code the person enters and confirms.
+    UserCode string `json:"user_code"`
+    // VerificationURI is the page the person enters the code on.
+    VerificationURI string `json:"verification_uri"`
+    // VerificationURIComplete is that page with the code filled in.
+    VerificationURIComplete string `json:"verification_uri_complete"`
+    // ExpiresIn is the sign-in's lifetime in seconds.
+    ExpiresIn int `json:"expires_in"`
+    // Interval is the minimum number of seconds between polls.
+    Interval int `json:"interval"`
+}
+```
+
+<a name="CLITokenRequest"></a>
+## type [CLITokenRequest](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/auth_cli.go#L87-L94>)
+
+CLITokenRequest is the body of POST /api/v2/auth/cli/token.
+
+```go
+type CLITokenRequest struct {
+    // Code is the one-time code the CLI's loopback received.
+    Code string `json:"code"`
+    // CodeVerifier is the PKCE verifier of the login's code_challenge.
+    CodeVerifier string `json:"code_verifier"`
+    // RedirectURI is the redirect_uri the login was started with.
+    RedirectURI string `json:"redirect_uri"`
+}
+```
+
+<a name="ClearDagRun200JSONResponseBody"></a>
+## type [ClearDagRun200JSONResponseBody](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L882-L884>)
+
+ClearDagRun200JSONResponseBody defines parameters for ClearDagRun.
+
+```go
+type ClearDagRun200JSONResponseBody struct {
+    // contains filtered or unexported fields
+}
+```
+
+<a name="ClearDagRun200JSONResponseBody.AsDAGRun"></a>
+### func \(ClearDagRun200JSONResponseBody\) [AsDAGRun](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L1120>)
+
+```go
+func (t ClearDagRun200JSONResponseBody) AsDAGRun() (DAGRun, error)
+```
+
+AsDAGRun returns the union data inside the ClearDagRun200JSONResponseBody as a DAGRun
+
+<a name="ClearDagRun200JSONResponseBody.AsTaskInstanceCollection"></a>
+### func \(ClearDagRun200JSONResponseBody\) [AsTaskInstanceCollection](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L1094>)
+
+```go
+func (t ClearDagRun200JSONResponseBody) AsTaskInstanceCollection() (TaskInstanceCollection, error)
+```
+
+AsTaskInstanceCollection returns the union data inside the ClearDagRun200JSONResponseBody as a TaskInstanceCollection
+
+<a name="ClearDagRun200JSONResponseBody.FromDAGRun"></a>
+### func \(\*ClearDagRun200JSONResponseBody\) [FromDAGRun](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L1127>)
+
+```go
+func (t *ClearDagRun200JSONResponseBody) FromDAGRun(v DAGRun) error
+```
+
+FromDAGRun overwrites any union data inside the ClearDagRun200JSONResponseBody as the provided DAGRun
+
+<a name="ClearDagRun200JSONResponseBody.FromTaskInstanceCollection"></a>
+### func \(\*ClearDagRun200JSONResponseBody\) [FromTaskInstanceCollection](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L1101>)
+
+```go
+func (t *ClearDagRun200JSONResponseBody) FromTaskInstanceCollection(v TaskInstanceCollection) error
+```
+
+FromTaskInstanceCollection overwrites any union data inside the ClearDagRun200JSONResponseBody as the provided TaskInstanceCollection
+
+<a name="ClearDagRun200JSONResponseBody.MarshalJSON"></a>
+### func \(ClearDagRun200JSONResponseBody\) [MarshalJSON](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L1145>)
+
+```go
+func (t ClearDagRun200JSONResponseBody) MarshalJSON() ([]byte, error)
+```
+
+
+
+<a name="ClearDagRun200JSONResponseBody.MergeDAGRun"></a>
+### func \(\*ClearDagRun200JSONResponseBody\) [MergeDAGRun](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L1134>)
+
+```go
+func (t *ClearDagRun200JSONResponseBody) MergeDAGRun(v DAGRun) error
+```
+
+MergeDAGRun performs a merge with any union data inside the ClearDagRun200JSONResponseBody, using the provided DAGRun
+
+<a name="ClearDagRun200JSONResponseBody.MergeTaskInstanceCollection"></a>
+### func \(\*ClearDagRun200JSONResponseBody\) [MergeTaskInstanceCollection](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L1108>)
+
+```go
+func (t *ClearDagRun200JSONResponseBody) MergeTaskInstanceCollection(v TaskInstanceCollection) error
+```
+
+MergeTaskInstanceCollection performs a merge with any union data inside the ClearDagRun200JSONResponseBody, using the provided TaskInstanceCollection
+
+<a name="ClearDagRun200JSONResponseBody.UnmarshalJSON"></a>
+### func \(\*ClearDagRun200JSONResponseBody\) [UnmarshalJSON](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L1150>)
+
+```go
+func (t *ClearDagRun200JSONResponseBody) UnmarshalJSON(b []byte) error
+```
+
+
+
+<a name="ClearDagRunJSONRequestBody"></a>
+## type [ClearDagRunJSONRequestBody](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L950>)
+
+ClearDagRunJSONRequestBody defines body for ClearDagRun for application/json ContentType.
+
+```go
+type ClearDagRunJSONRequestBody = DAGRunClearRequest
+```
+
+<a name="ClearDagRunResponse"></a>
+## type [ClearDagRunResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L6443-L6460>)
+
+
+
+```go
+type ClearDagRunResponse struct {
+    Body         []byte
+    HTTPResponse *http.Response
+    // JSON200 the response for an HTTP 200 `application/json` response
+    JSON200 *ClearDagRun200JSONResponseBody
+    // JSON400 the response for an HTTP 400 `application/json` response
+    JSON400 *Error
+    // JSON403 the response for an HTTP 403 `application/json` response
+    JSON403 *Error
+    // JSON404 the response for an HTTP 404 `application/json` response
+    JSON404 *NotFound
+    // JSON409 the response for an HTTP 409 `application/json` response
+    JSON409 *Error
+    // ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+    ApplicationproblemJSON503 *AuthUnavailable
+    // Headers503 the parsed response headers for an HTTP 503 response
+    Headers503 *ClearDagRunResponse503Headers
+}
+```
+
+<a name="ParseClearDagRunResponse"></a>
+### func [ParseClearDagRunResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L9791>)
+
+```go
+func ParseClearDagRunResponse(rsp *http.Response) (*ClearDagRunResponse, error)
+```
+
+ParseClearDagRunResponse parses an HTTP response from a ClearDagRunWithResponse call
+
+<a name="ClearDagRunResponse.ContentType"></a>
+### func \(ClearDagRunResponse\) [ContentType](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L6514>)
+
+```go
+func (r ClearDagRunResponse) ContentType() string
+```
+
+ContentType is a convenience method to retrieve the Content\-Type value from the HTTP response headers
+
+<a name="ClearDagRunResponse.GetApplicationproblemJSON503"></a>
+### func \(ClearDagRunResponse\) [GetApplicationproblemJSON503](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L6488>)
+
+```go
+func (r ClearDagRunResponse) GetApplicationproblemJSON503() *AuthUnavailable
+```
+
+GetApplicationproblemJSON503 returns the response for an HTTP 503 \`application/problem\+json\` response
+
+<a name="ClearDagRunResponse.GetBody"></a>
+### func \(ClearDagRunResponse\) [GetBody](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L6493>)
+
+```go
+func (r ClearDagRunResponse) GetBody() []byte
+```
+
+GetBody returns the raw response body bytes
+
+<a name="ClearDagRunResponse.GetJSON200"></a>
+### func \(ClearDagRunResponse\) [GetJSON200](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L6463>)
+
+```go
+func (r ClearDagRunResponse) GetJSON200() *ClearDagRun200JSONResponseBody
+```
+
+GetJSON200 returns the response for an HTTP 200 \`application/json\` response
+
+<a name="ClearDagRunResponse.GetJSON400"></a>
+### func \(ClearDagRunResponse\) [GetJSON400](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L6468>)
+
+```go
+func (r ClearDagRunResponse) GetJSON400() *Error
+```
+
+GetJSON400 returns the response for an HTTP 400 \`application/json\` response
+
+<a name="ClearDagRunResponse.GetJSON403"></a>
+### func \(ClearDagRunResponse\) [GetJSON403](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L6473>)
+
+```go
+func (r ClearDagRunResponse) GetJSON403() *Error
+```
+
+GetJSON403 returns the response for an HTTP 403 \`application/json\` response
+
+<a name="ClearDagRunResponse.GetJSON404"></a>
+### func \(ClearDagRunResponse\) [GetJSON404](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L6478>)
+
+```go
+func (r ClearDagRunResponse) GetJSON404() *NotFound
+```
+
+GetJSON404 returns the response for an HTTP 404 \`application/json\` response
+
+<a name="ClearDagRunResponse.GetJSON409"></a>
+### func \(ClearDagRunResponse\) [GetJSON409](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L6483>)
+
+```go
+func (r ClearDagRunResponse) GetJSON409() *Error
+```
+
+GetJSON409 returns the response for an HTTP 409 \`application/json\` response
+
+<a name="ClearDagRunResponse.Status"></a>
+### func \(ClearDagRunResponse\) [Status](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L6498>)
+
+```go
+func (r ClearDagRunResponse) Status() string
+```
+
+Status returns HTTPResponse.Status
+
+<a name="ClearDagRunResponse.StatusCode"></a>
+### func \(ClearDagRunResponse\) [StatusCode](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L6506>)
+
+```go
+func (r ClearDagRunResponse) StatusCode() int
+```
+
+StatusCode returns HTTPResponse.StatusCode
+
+<a name="ClearDagRunResponse503Headers"></a>
+## type [ClearDagRunResponse503Headers](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L6439-L6441>)
+
+ClearDagRunResponse503Headers the declared response headers of an HTTP 503 response for ClearDagRun
+
+```go
+type ClearDagRunResponse503Headers struct {
+    RetryAfter *int
+}
+```
+
 <a name="ClearTaskInstancesJSONRequestBody"></a>
-## type [ClearTaskInstancesJSONRequestBody](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L497>)
+## type [ClearTaskInstancesJSONRequestBody](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L941>)
 
 ClearTaskInstancesJSONRequestBody defines body for ClearTaskInstances for application/json ContentType.
 
@@ -853,22 +1745,38 @@ type ClearTaskInstancesJSONRequestBody = ClearTaskInstancesRequest
 ```
 
 <a name="ClearTaskInstancesRequest"></a>
-## type [ClearTaskInstancesRequest](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L132-L138>)
+## type [ClearTaskInstancesRequest](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L270-L292>)
 
 ClearTaskInstancesRequest defines model for ClearTaskInstancesRequest.
 
 ```go
 type ClearTaskInstancesRequest struct {
-    DagRunId     *string   `json:"dag_run_id,omitempty"`
-    OnlyFailed   *bool     `json:"only_failed,omitempty"`
-    OnlyRunning  *bool     `json:"only_running,omitempty"`
-    ResetDagRuns *bool     `json:"reset_dag_runs,omitempty"`
-    TaskIds      *[]string `json:"task_ids,omitempty"`
+    DagRunId *string `json:"dag_run_id,omitempty"`
+
+    // DryRun Return the task instances that WOULD be cleared, without clearing them. Defaults to true, matching Apache Airflow, so a request that names no flags never destroys state. Send false to execute.
+    DryRun            *bool `json:"dry_run,omitempty"`
+    IncludeDownstream *bool `json:"include_downstream,omitempty"`
+    IncludeFuture     *bool `json:"include_future,omitempty"`
+    IncludePast       *bool `json:"include_past,omitempty"`
+    IncludeUpstream   *bool `json:"include_upstream,omitempty"`
+
+    // OnlyFailed Restrict the clear to task instances in a failed state, matching Apache Airflow. false widens it to every task instance named by the request, including ones that succeeded.
+    OnlyFailed *bool `json:"only_failed,omitempty"`
+
+    // OnlyRunning Not supported. Sending true is refused with 400. leoflow has no path that clears a running task instance (Apache Airflow sets it to RESTARTING and kills it), and honoring the only_failed=false that Airflow requires alongside it would widen the clear to every task instance named by the request, including ones that succeeded.
+    OnlyRunning *bool `json:"only_running,omitempty"`
+
+    // ResetDagRuns Re-open the run so the scheduler looks at it again. Without it a terminal run stays terminal and the cleared task instance is never scheduled.
+    ResetDagRuns *bool `json:"reset_dag_runs,omitempty"`
+
+    // RunOnLatestVersion Which version the re-run executes. false (the default, matching Apache Airflow) keeps the version the run was created with, so the re-run executes the image that produced the original attempt. true re-binds the run to the DAG's current registered version, so the re-run picks up the newest image and config. Use it to re-run a failed task against a fix without creating a new run. Only a finished run (success or failed, with no task instance queued or running) moves: the clear creates the task instances of the tasks the version adds and marks removed the ones of the tasks it dropped. A run that has not finished keeps its version, as in Airflow, and the response lists it in run_on_latest_version_not_applied with the reason (ADR 0086).
+    RunOnLatestVersion *bool     `json:"run_on_latest_version,omitempty"`
+    TaskIds            *[]string `json:"task_ids,omitempty"`
 }
 ```
 
 <a name="ClearTaskInstancesResponse"></a>
-## type [ClearTaskInstancesResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L3863-L3868>)
+## type [ClearTaskInstancesResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L6119-L6130>)
 
 
 
@@ -878,11 +1786,17 @@ type ClearTaskInstancesResponse struct {
     HTTPResponse *http.Response
     // JSON200 the response for an HTTP 200 `application/json` response
     JSON200 *TaskInstanceCollection
+    // JSON409 the response for an HTTP 409 `application/json` response
+    JSON409 *Error
+    // ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+    ApplicationproblemJSON503 *AuthUnavailable
+    // Headers503 the parsed response headers for an HTTP 503 response
+    Headers503 *ClearTaskInstancesResponse503Headers
 }
 ```
 
 <a name="ParseClearTaskInstancesResponse"></a>
-### func [ParseClearTaskInstancesResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L5820>)
+### func [ParseClearTaskInstancesResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L9509>)
 
 ```go
 func ParseClearTaskInstancesResponse(rsp *http.Response) (*ClearTaskInstancesResponse, error)
@@ -891,7 +1805,7 @@ func ParseClearTaskInstancesResponse(rsp *http.Response) (*ClearTaskInstancesRes
 ParseClearTaskInstancesResponse parses an HTTP response from a ClearTaskInstancesWithResponse call
 
 <a name="ClearTaskInstancesResponse.ContentType"></a>
-### func \(ClearTaskInstancesResponse\) [ContentType](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L3897>)
+### func \(ClearTaskInstancesResponse\) [ContentType](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L6169>)
 
 ```go
 func (r ClearTaskInstancesResponse) ContentType() string
@@ -899,8 +1813,17 @@ func (r ClearTaskInstancesResponse) ContentType() string
 
 ContentType is a convenience method to retrieve the Content\-Type value from the HTTP response headers
 
+<a name="ClearTaskInstancesResponse.GetApplicationproblemJSON503"></a>
+### func \(ClearTaskInstancesResponse\) [GetApplicationproblemJSON503](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L6143>)
+
+```go
+func (r ClearTaskInstancesResponse) GetApplicationproblemJSON503() *AuthUnavailable
+```
+
+GetApplicationproblemJSON503 returns the response for an HTTP 503 \`application/problem\+json\` response
+
 <a name="ClearTaskInstancesResponse.GetBody"></a>
-### func \(ClearTaskInstancesResponse\) [GetBody](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L3876>)
+### func \(ClearTaskInstancesResponse\) [GetBody](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L6148>)
 
 ```go
 func (r ClearTaskInstancesResponse) GetBody() []byte
@@ -909,7 +1832,7 @@ func (r ClearTaskInstancesResponse) GetBody() []byte
 GetBody returns the raw response body bytes
 
 <a name="ClearTaskInstancesResponse.GetJSON200"></a>
-### func \(ClearTaskInstancesResponse\) [GetJSON200](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L3871>)
+### func \(ClearTaskInstancesResponse\) [GetJSON200](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L6133>)
 
 ```go
 func (r ClearTaskInstancesResponse) GetJSON200() *TaskInstanceCollection
@@ -917,8 +1840,17 @@ func (r ClearTaskInstancesResponse) GetJSON200() *TaskInstanceCollection
 
 GetJSON200 returns the response for an HTTP 200 \`application/json\` response
 
+<a name="ClearTaskInstancesResponse.GetJSON409"></a>
+### func \(ClearTaskInstancesResponse\) [GetJSON409](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L6138>)
+
+```go
+func (r ClearTaskInstancesResponse) GetJSON409() *Error
+```
+
+GetJSON409 returns the response for an HTTP 409 \`application/json\` response
+
 <a name="ClearTaskInstancesResponse.Status"></a>
-### func \(ClearTaskInstancesResponse\) [Status](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L3881>)
+### func \(ClearTaskInstancesResponse\) [Status](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L6153>)
 
 ```go
 func (r ClearTaskInstancesResponse) Status() string
@@ -927,7 +1859,7 @@ func (r ClearTaskInstancesResponse) Status() string
 Status returns HTTPResponse.Status
 
 <a name="ClearTaskInstancesResponse.StatusCode"></a>
-### func \(ClearTaskInstancesResponse\) [StatusCode](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L3889>)
+### func \(ClearTaskInstancesResponse\) [StatusCode](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L6161>)
 
 ```go
 func (r ClearTaskInstancesResponse) StatusCode() int
@@ -935,8 +1867,33 @@ func (r ClearTaskInstancesResponse) StatusCode() int
 
 StatusCode returns HTTPResponse.StatusCode
 
+<a name="ClearTaskInstancesResponse503Headers"></a>
+## type [ClearTaskInstancesResponse503Headers](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L6115-L6117>)
+
+ClearTaskInstancesResponse503Headers the declared response headers of an HTTP 503 response for ClearTaskInstances
+
+```go
+type ClearTaskInstancesResponse503Headers struct {
+    RetryAfter *int
+}
+```
+
+<a name="ClearVersionNotApplied"></a>
+## type [ClearVersionNotApplied](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L295-L300>)
+
+ClearVersionNotApplied Dexaflow\-only. The runs a clear with run\_on\_latest\_version keeps on their own version, each with the reason \(ADR 0086\): only a finished run with no task instance queued or running moves to the current version. The clear still applies to these runs, on their version. Left out when every run moved or the option was not asked, and on every response other than the two clear routes.
+
+```go
+type ClearVersionNotApplied = []struct {
+    DagRunId string `json:"dag_run_id"`
+
+    // Reason Why the run keeps its version, for example "the run is running: only a finished run moves to the current version".
+    Reason string `json:"reason"`
+}
+```
+
 <a name="Client"></a>
-## type [Client](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L522-L536>)
+## type [Client](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L1166-L1180>)
 
 Client which conforms to the OpenAPI3 specification for this service.
 
@@ -959,7 +1916,7 @@ type Client struct {
 ```
 
 <a name="NewClient"></a>
-### func [NewClient](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L542>)
+### func [NewClient](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L1186>)
 
 ```go
 func NewClient(server string, opts ...ClientOption) (*Client, error)
@@ -967,8 +1924,38 @@ func NewClient(server string, opts ...ClientOption) (*Client, error)
 
 Creates a new Client, with reasonable defaults
 
+<a name="Client.ClearDagRun"></a>
+### func \(\*Client\) [ClearDagRun](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L2131>)
+
+```go
+func (c *Client) ClearDagRun(ctx context.Context, dagId DagID, dagRunId DagRunID, body ClearDagRunJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+```
+
+ClearDagRun Clear a whole DAG run \(queue its task instances for re\-run\)
+
+The run page's Clear action. A dry run \(the default\) answers the task instances the clear would reset. The clear itself resets them, re\-queues the run and answers the run.
+
+Takes a body of the \`application/json\` content type.
+
+Corresponds with POST /api/v2/dags/\{dag\_id\}/dagRuns/\{dag\_run\_id\}/clear \(the \`ClearDagRun\` operationId\).
+
+<a name="Client.ClearDagRunWithBody"></a>
+### func \(\*Client\) [ClearDagRunWithBody](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L2112>)
+
+```go
+func (c *Client) ClearDagRunWithBody(ctx context.Context, dagId DagID, dagRunId DagRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+```
+
+ClearDagRunWithBody Clear a whole DAG run \(queue its task instances for re\-run\)
+
+The run page's Clear action. A dry run \(the default\) answers the task instances the clear would reset. The clear itself resets them, re\-queues the run and answers the run.
+
+Takes any type of body and a specified content type.
+
+Corresponds with POST /api/v2/dags/\{dag\_id\}/dagRuns/\{dag\_run\_id\}/clear \(the \`ClearDagRun\` operationId\).
+
 <a name="Client.ClearTaskInstances"></a>
-### func \(\*Client\) [ClearTaskInstances](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L1101>)
+### func \(\*Client\) [ClearTaskInstances](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L1991>)
 
 ```go
 func (c *Client) ClearTaskInstances(ctx context.Context, dagId DagID, body ClearTaskInstancesJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -981,7 +1968,7 @@ Takes a body of the \`application/json\` content type.
 Corresponds with POST /api/v2/dags/\{dag\_id\}/clearTaskInstances \(the \`ClearTaskInstances\` operationId\).
 
 <a name="Client.ClearTaskInstancesWithBody"></a>
-### func \(\*Client\) [ClearTaskInstancesWithBody](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L1084>)
+### func \(\*Client\) [ClearTaskInstancesWithBody](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L1974>)
 
 ```go
 func (c *Client) ClearTaskInstancesWithBody(ctx context.Context, dagId DagID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -993,8 +1980,38 @@ Takes any type of body and a specified content type.
 
 Corresponds with POST /api/v2/dags/\{dag\_id\}/clearTaskInstances \(the \`ClearTaskInstances\` operationId\).
 
+<a name="Client.CreateAPIToken"></a>
+### func \(\*Client\) [CreateAPIToken](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L1713>)
+
+```go
+func (c *Client) CreateAPIToken(ctx context.Context, body CreateAPITokenJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+```
+
+CreateAPIToken Create an API token \(Dexaflow\)
+
+Creates a long\-lived, named API token owned by the caller \(ADR 0074\). The response carries the token once; the server keeps only its SHA\-256 hash. The token authenticates as its owner, with the owner's current roles narrowed to the token's scopes: deploy carries dexaflow:deploy alone \(it registers versions, sets the current version, and reads the DAG list, DAGs, their details and versions, and nothing else\), read carries dexaflow:read. The caller's roles must allow what the scope does \(deploy needs deploy or write on dags, read needs read on dags\). An account holds at most 50 live tokens. Audited as api\_token.create. Reusing the name of an expired token retires that token, audited as api\_token.retire\_expired. Not callable with an API token or any other scoped token.
+
+Takes a body of the \`application/json\` content type.
+
+Corresponds with POST /api/v2/apiTokens \(the \`CreateAPIToken\` operationId\).
+
+<a name="Client.CreateAPITokenWithBody"></a>
+### func \(\*Client\) [CreateAPITokenWithBody](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L1694>)
+
+```go
+func (c *Client) CreateAPITokenWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+```
+
+CreateAPITokenWithBody Create an API token \(Dexaflow\)
+
+Creates a long\-lived, named API token owned by the caller \(ADR 0074\). The response carries the token once; the server keeps only its SHA\-256 hash. The token authenticates as its owner, with the owner's current roles narrowed to the token's scopes: deploy carries dexaflow:deploy alone \(it registers versions, sets the current version, and reads the DAG list, DAGs, their details and versions, and nothing else\), read carries dexaflow:read. The caller's roles must allow what the scope does \(deploy needs deploy or write on dags, read needs read on dags\). An account holds at most 50 live tokens. Audited as api\_token.create. Reusing the name of an expired token retires that token, audited as api\_token.retire\_expired. Not callable with an API token or any other scoped token.
+
+Takes any type of body and a specified content type.
+
+Corresponds with POST /api/v2/apiTokens \(the \`CreateAPIToken\` operationId\).
+
 <a name="Client.CreateConnection"></a>
-### func \(\*Client\) [CreateConnection](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L924>)
+### func \(\*Client\) [CreateConnection](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L1808>)
 
 ```go
 func (c *Client) CreateConnection(ctx context.Context, body CreateConnectionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -1009,7 +2026,7 @@ Takes a body of the \`application/json\` content type.
 Corresponds with POST /api/v2/connections \(the \`CreateConnection\` operationId\).
 
 <a name="Client.CreateConnectionWithBody"></a>
-### func \(\*Client\) [CreateConnectionWithBody](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L903>)
+### func \(\*Client\) [CreateConnectionWithBody](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L1787>)
 
 ```go
 func (c *Client) CreateConnectionWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -1024,7 +2041,7 @@ Takes any type of body and a specified content type.
 Corresponds with POST /api/v2/connections \(the \`CreateConnection\` operationId\).
 
 <a name="Client.CreateUser"></a>
-### func \(\*Client\) [CreateUser](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L1346>)
+### func \(\*Client\) [CreateUser](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L2434>)
 
 ```go
 func (c *Client) CreateUser(ctx context.Context, body CreateUserJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -1039,7 +2056,7 @@ Takes a body of the \`application/json\` content type.
 Corresponds with POST /api/v2/users \(the \`CreateUser\` operationId\).
 
 <a name="Client.CreateUserWithBody"></a>
-### func \(\*Client\) [CreateUserWithBody](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L1325>)
+### func \(\*Client\) [CreateUserWithBody](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L2413>)
 
 ```go
 func (c *Client) CreateUserWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -1054,7 +2071,7 @@ Takes any type of body and a specified content type.
 Corresponds with POST /api/v2/users \(the \`CreateUser\` operationId\).
 
 <a name="Client.CreateVariable"></a>
-### func \(\*Client\) [CreateVariable](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L1404>)
+### func \(\*Client\) [CreateVariable](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L2544>)
 
 ```go
 func (c *Client) CreateVariable(ctx context.Context, body CreateVariableJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -1069,7 +2086,7 @@ Takes a body of the \`application/json\` content type.
 Corresponds with POST /api/v2/variables \(the \`CreateVariable\` operationId\).
 
 <a name="Client.CreateVariableWithBody"></a>
-### func \(\*Client\) [CreateVariableWithBody](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L1384>)
+### func \(\*Client\) [CreateVariableWithBody](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L2524>)
 
 ```go
 func (c *Client) CreateVariableWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -1084,7 +2101,7 @@ Takes any type of body and a specified content type.
 Corresponds with POST /api/v2/variables \(the \`CreateVariable\` operationId\).
 
 <a name="Client.DeleteConnection"></a>
-### func \(\*Client\) [DeleteConnection](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L939>)
+### func \(\*Client\) [DeleteConnection](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L1823>)
 
 ```go
 func (c *Client) DeleteConnection(ctx context.Context, connectionId ConnectionID, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -1095,7 +2112,7 @@ DeleteConnection Delete a connection
 Corresponds with DELETE /api/v2/connections/\{connection\_id\} \(the \`DeleteConnection\` operationId\).
 
 <a name="Client.DeleteVariable"></a>
-### func \(\*Client\) [DeleteVariable](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L1419>)
+### func \(\*Client\) [DeleteVariable](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L2559>)
 
 ```go
 func (c *Client) DeleteVariable(ctx context.Context, variableKey VariableKey, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -1105,8 +2122,35 @@ DeleteVariable Delete a variable
 
 Corresponds with DELETE /api/v2/variables/\{variable\_key\} \(the \`DeleteVariable\` operationId\).
 
+<a name="Client.ExchangeCIToken"></a>
+### func \(\*Client\) [ExchangeCIToken](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/auth_ci.go#L45>)
+
+```go
+func (c *Client) ExchangeCIToken(ctx context.Context, body CITokenRequest, reqEditors ...RequestEditorFn) (*CITokenResponse, error)
+```
+
+ExchangeCIToken posts a CI job's OIDC token to POST /api/v2/auth/ciToken and returns the session the server answers. A 404 is ErrCITokenNotServed; any other status but 200 is an error naming it and the problem detail.
+
+<a name="Client.ExchangeCLILoginCode"></a>
+### func \(\*Client\) [ExchangeCLILoginCode](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/auth_cli.go#L123>)
+
+```go
+func (c *Client) ExchangeCLILoginCode(ctx context.Context, body CLITokenRequest, reqEditors ...RequestEditorFn) (*TokenResponse, error)
+```
+
+ExchangeCLILoginCode posts a one\-time sign\-in code with its PKCE verifier to POST /api/v2/auth/cli/token and returns the token the server answers, the same shape POST /auth/token answers. A refused code is ErrCLILoginCodeRefused; any other status but 200 is an error naming it.
+
+<a name="Client.GetAuthMethods"></a>
+### func \(\*Client\) [GetAuthMethods](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/auth_cli.go#L99>)
+
+```go
+func (c *Client) GetAuthMethods(ctx context.Context, reqEditors ...RequestEditorFn) (*AuthMethods, error)
+```
+
+GetAuthMethods reads GET /api/v2/auth/methods through the client's Doer, server URL and request editors, then reqEditors. A server from before the route answers 404, which returns ErrAuthMethodsNotServed.
+
 <a name="Client.GetConnection"></a>
-### func \(\*Client\) [GetConnection](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L954>)
+### func \(\*Client\) [GetConnection](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L1838>)
 
 ```go
 func (c *Client) GetConnection(ctx context.Context, connectionId ConnectionID, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -1117,7 +2161,7 @@ GetConnection Get a connection
 Corresponds with GET /api/v2/connections/\{connection\_id\} \(the \`GetConnection\` operationId\).
 
 <a name="Client.GetDag"></a>
-### func \(\*Client\) [GetDag](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L1033>)
+### func \(\*Client\) [GetDag](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L1919>)
 
 ```go
 func (c *Client) GetDag(ctx context.Context, dagId DagID, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -1128,7 +2172,7 @@ GetDag Get a DAG
 Corresponds with GET /api/v2/dags/\{dag\_id\} \(the \`GetDag\` operationId\).
 
 <a name="Client.GetDagRun"></a>
-### func \(\*Client\) [GetDagRun](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L1165>)
+### func \(\*Client\) [GetDagRun](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L2093>)
 
 ```go
 func (c *Client) GetDagRun(ctx context.Context, dagId DagID, dagRunId DagRunID, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -1139,7 +2183,7 @@ GetDagRun Get a DAG run
 Corresponds with GET /api/v2/dags/\{dag\_id\}/dagRuns/\{dag\_run\_id\} \(the \`GetDagRun\` operationId\).
 
 <a name="Client.GetDagSource"></a>
-### func \(\*Client\) [GetDagSource](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L1003>)
+### func \(\*Client\) [GetDagSource](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L1889>)
 
 ```go
 func (c *Client) GetDagSource(ctx context.Context, dagId DagID, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -1147,10 +2191,12 @@ func (c *Client) GetDagSource(ctx context.Context, dagId DagID, reqEditors ...Re
 
 GetDagSource Get a DAG's source \(the dag.py text\)
 
+The source registered with one version of the DAG, as in Airflow 3.2: version\_number selects the version, and without it \(or with 0\) the newest version is served. After a rollback the newest version is not the current one. A version the DAG does not have is a 404, and a version\_number that is not an integer is a 400.
+
 Corresponds with GET /api/v2/dagSources/\{dag\_id\} \(the \`GetDagSource\` operationId\).
 
 <a name="Client.GetDagSpec"></a>
-### func \(\*Client\) [GetDagSpec](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L1255>)
+### func \(\*Client\) [GetDagSpec](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L2299>)
 
 ```go
 func (c *Client) GetDagSpec(ctx context.Context, dagId DagID, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -1161,7 +2207,7 @@ GetDagSpec Get a DAG's compiled spec \(the dag.json artifact\)
 Corresponds with GET /api/v2/dags/\{dag\_id\}/spec \(the \`GetDagSpec\` operationId\).
 
 <a name="Client.GetDagVersion"></a>
-### func \(\*Client\) [GetDagVersion](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L1240>)
+### func \(\*Client\) [GetDagVersion](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L2284>)
 
 ```go
 func (c *Client) GetDagVersion(ctx context.Context, dagId DagID, versionNumber int, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -1171,8 +2217,26 @@ GetDagVersion Get a specific registered DAG version
 
 Corresponds with GET /api/v2/dags/\{dag\_id\}/dagVersions/\{version\_number\} \(the \`GetDagVersion\` operationId\).
 
+<a name="Client.GetDagVersionSpec"></a>
+### func \(\*Client\) [GetDagVersionSpec](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/dag_version_spec.go#L43>)
+
+```go
+func (c *Client) GetDagVersionSpec(ctx context.Context, dagID string, versionNumber int, reqEditors ...RequestEditorFn) (json.RawMessage, error)
+```
+
+GetDagVersionSpec reads GET /api/v2/dags/\{dag\_id\}/dagVersions/\{version\_number\}/spec, the dag.json registered with that version of the DAG, through the client's Doer, server URL and request editors, then reqEditors \(\#1708\). The spec is returned as served, byte for byte, so it can be registered again unchanged. An answer other than 200 is a \*StatusError: a 404 is an unknown version or a server from before the route. The route gets no generated method \(see overlay.yaml\): a new method on ClientInterface would break every implementation of it.
+
+<a name="Client.GetDeployDefaults"></a>
+### func \(\*Client\) [GetDeployDefaults](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.go#L196>)
+
+```go
+func (c *Client) GetDeployDefaults(ctx context.Context, reqEditors ...RequestEditorFn) (*DeployDefaults, error)
+```
+
+GetDeployDefaults reads GET /api/v2/deployDefaults through the client's Doer, server URL and request editors, then reqEditors. A server from before the route answers 404, which returns ErrDeployDefaultsNotServed; any other status but 200 is an error naming it. The route gets no generated method \(see overlay.yaml\): a new method on ClientInterface would break every implementation of it.
+
 <a name="Client.GetHealthz"></a>
-### func \(\*Client\) [GetHealthz](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L1513>)
+### func \(\*Client\) [GetHealthz](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L2653>)
 
 ```go
 func (c *Client) GetHealthz(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -1183,7 +2247,7 @@ GetHealthz Liveness probe
 Corresponds with GET /healthz \(the \`GetHealthz\` operationId\).
 
 <a name="Client.GetMonitorExecutor"></a>
-### func \(\*Client\) [GetMonitorExecutor](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L1270>)
+### func \(\*Client\) [GetMonitorExecutor](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L2358>)
 
 ```go
 func (c *Client) GetMonitorExecutor(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -1194,7 +2258,7 @@ GetMonitorExecutor Executor capability and configuration
 Corresponds with GET /api/v2/monitor/executor \(the \`GetMonitorExecutor\` operationId\).
 
 <a name="Client.GetMonitorHealth"></a>
-### func \(\*Client\) [GetMonitorHealth](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L1285>)
+### func \(\*Client\) [GetMonitorHealth](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L2373>)
 
 ```go
 func (c *Client) GetMonitorHealth(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -1205,7 +2269,7 @@ GetMonitorHealth Control\-plane health \(Airflow HealthInfoResponse shape\)
 Corresponds with GET /api/v2/monitor/health \(the \`GetMonitorHealth\` operationId\).
 
 <a name="Client.GetReadyz"></a>
-### func \(\*Client\) [GetReadyz](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L1528>)
+### func \(\*Client\) [GetReadyz](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L2668>)
 
 ```go
 func (c *Client) GetReadyz(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -1216,7 +2280,7 @@ GetReadyz Readiness probe
 Corresponds with GET /readyz \(the \`GetReadyz\` operationId\).
 
 <a name="Client.GetTaskInstance"></a>
-### func \(\*Client\) [GetTaskInstance](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L1195>)
+### func \(\*Client\) [GetTaskInstance](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L2163>)
 
 ```go
 func (c *Client) GetTaskInstance(ctx context.Context, dagId DagID, dagRunId DagRunID, taskId TaskID, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -1227,7 +2291,7 @@ GetTaskInstance Get a task instance
 Corresponds with GET /api/v2/dags/\{dag\_id\}/dagRuns/\{dag\_run\_id\}/taskInstances/\{task\_id\} \(the \`GetTaskInstance\` operationId\).
 
 <a name="Client.GetTaskLogs"></a>
-### func \(\*Client\) [GetTaskLogs](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L1210>)
+### func \(\*Client\) [GetTaskLogs](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L2254>)
 
 ```go
 func (c *Client) GetTaskLogs(ctx context.Context, dagId DagID, dagRunId DagRunID, taskId TaskID, tryNumber int, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -1238,7 +2302,7 @@ GetTaskLogs Get task logs
 Corresponds with GET /api/v2/dags/\{dag\_id\}/dagRuns/\{dag\_run\_id\}/taskInstances/\{task\_id\}/logs/\{try\_number\} \(the \`GetTaskLogs\` operationId\).
 
 <a name="Client.GetVariable"></a>
-### func \(\*Client\) [GetVariable](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L1434>)
+### func \(\*Client\) [GetVariable](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L2574>)
 
 ```go
 func (c *Client) GetVariable(ctx context.Context, variableKey VariableKey, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -1249,7 +2313,7 @@ GetVariable Get a variable
 Corresponds with GET /api/v2/variables/\{variable\_key\} \(the \`GetVariable\` operationId\).
 
 <a name="Client.GetVersion"></a>
-### func \(\*Client\) [GetVersion](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L1449>)
+### func \(\*Client\) [GetVersion](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L2589>)
 
 ```go
 func (c *Client) GetVersion(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -1260,7 +2324,7 @@ GetVersion Control\-plane version \(Airflow VersionInfo shape\)
 Corresponds with GET /api/v2/version \(the \`GetVersion\` operationId\).
 
 <a name="Client.GetXcomEntry"></a>
-### func \(\*Client\) [GetXcomEntry](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L1464>)
+### func \(\*Client\) [GetXcomEntry](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L2604>)
 
 ```go
 func (c *Client) GetXcomEntry(ctx context.Context, dagId DagID, dagRunId DagRunID, taskId TaskID, key string, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -1271,7 +2335,7 @@ GetXcomEntry Read XCom value \(read\-only proxy for the Redis backend\)
 Corresponds with GET /api/v2/xcoms/\{dag\_id\}/\{dag\_run\_id\}/\{task\_id\}/\{key\} \(the \`GetXcomEntry\` operationId\).
 
 <a name="Client.IssueToken"></a>
-### func \(\*Client\) [IssueToken](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L1498>)
+### func \(\*Client\) [IssueToken](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L2638>)
 
 ```go
 func (c *Client) IssueToken(ctx context.Context, body IssueTokenJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -1284,7 +2348,7 @@ Takes a body of the \`application/json\` content type.
 Corresponds with POST /auth/token \(the \`IssueToken\` operationId\).
 
 <a name="Client.IssueTokenWithBody"></a>
-### func \(\*Client\) [IssueTokenWithBody](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L1481>)
+### func \(\*Client\) [IssueTokenWithBody](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L2621>)
 
 ```go
 func (c *Client) IssueTokenWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -1296,8 +2360,21 @@ Takes any type of body and a specified content type.
 
 Corresponds with POST /auth/token \(the \`IssueToken\` operationId\).
 
+<a name="Client.ListAPITokens"></a>
+### func \(\*Client\) [ListAPITokens](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L1675>)
+
+```go
+func (c *Client) ListAPITokens(ctx context.Context, params *ListAPITokensParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+```
+
+ListAPITokens List API tokens \(Dexaflow\)
+
+Lists the caller's unrevoked API tokens, newest first, expired ones included. A caller who may manage accounts \(write:user\) sees every token of the tenant. The token itself and its hash are never returned. Not callable with an API token or any other scoped token \(ADR 0074\).
+
+Corresponds with GET /api/v2/apiTokens \(the \`ListAPITokens\` operationId\).
+
 <a name="Client.ListConnections"></a>
-### func \(\*Client\) [ListConnections](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L882>)
+### func \(\*Client\) [ListConnections](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L1766>)
 
 ```go
 func (c *Client) ListConnections(ctx context.Context, params *ListConnectionsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -1310,7 +2387,7 @@ Lists the tenant's Airflow\-style connections. Passwords are write\-only and nev
 Corresponds with GET /api/v2/connections \(the \`ListConnections\` operationId\).
 
 <a name="Client.ListDagRuns"></a>
-### func \(\*Client\) [ListDagRuns](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L1116>)
+### func \(\*Client\) [ListDagRuns](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L2044>)
 
 ```go
 func (c *Client) ListDagRuns(ctx context.Context, dagId DagID, params *ListDagRunsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -1321,7 +2398,7 @@ ListDagRuns List DAG runs
 Corresponds with GET /api/v2/dags/\{dag\_id\}/dagRuns \(the \`ListDagRuns\` operationId\).
 
 <a name="Client.ListDagVersions"></a>
-### func \(\*Client\) [ListDagVersions](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L1225>)
+### func \(\*Client\) [ListDagVersions](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L2269>)
 
 ```go
 func (c *Client) ListDagVersions(ctx context.Context, dagId DagID, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -1332,7 +2409,7 @@ ListDagVersions List a DAG's registered versions
 Corresponds with GET /api/v2/dags/\{dag\_id\}/dagVersions \(the \`ListDagVersions\` operationId\).
 
 <a name="Client.ListDags"></a>
-### func \(\*Client\) [ListDags](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L1018>)
+### func \(\*Client\) [ListDags](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L1904>)
 
 ```go
 func (c *Client) ListDags(ctx context.Context, params *ListDagsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -1343,7 +2420,7 @@ ListDags List DAGs
 Corresponds with GET /api/v2/dags \(the \`ListDags\` operationId\).
 
 <a name="Client.ListTaskInstances"></a>
-### func \(\*Client\) [ListTaskInstances](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L1180>)
+### func \(\*Client\) [ListTaskInstances](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L2148>)
 
 ```go
 func (c *Client) ListTaskInstances(ctx context.Context, dagId DagID, dagRunId DagRunID, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -1351,10 +2428,12 @@ func (c *Client) ListTaskInstances(ctx context.Context, dagId DagID, dagRunId Da
 
 ListTaskInstances List task instances of a DAG run
 
+Pages with the same limit, offset and cursor query parameters as the DAG run list \(they are not declared on this operation so the generated client keeps its signature\). A request that carries cursor gets next\_cursor and previous\_cursor in the body; only the offset cursors this list issues are accepted, any other is refused with 400.
+
 Corresponds with GET /api/v2/dags/\{dag\_id\}/dagRuns/\{dag\_run\_id\}/taskInstances \(the \`ListTaskInstances\` operationId\).
 
 <a name="Client.ListUsers"></a>
-### func \(\*Client\) [ListUsers](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L1304>)
+### func \(\*Client\) [ListUsers](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L2392>)
 
 ```go
 func (c *Client) ListUsers(ctx context.Context, params *ListUsersParams, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -1367,7 +2446,7 @@ Lists the tenant's control\-plane accounts, newest first. Each entry carries the
 Corresponds with GET /api/v2/users \(the \`ListUsers\` operationId\).
 
 <a name="Client.ListVariables"></a>
-### func \(\*Client\) [ListVariables](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L1364>)
+### func \(\*Client\) [ListVariables](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L2504>)
 
 ```go
 func (c *Client) ListVariables(ctx context.Context, params *ListVariablesParams, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -1379,8 +2458,137 @@ Lists the tenant's Airflow\-style variables. Values of secret\-ish keys are mask
 
 Corresponds with GET /api/v2/variables \(the \`ListVariables\` operationId\).
 
+<a name="Client.PatchTaskInstance"></a>
+### func \(\*Client\) [PatchTaskInstance](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L2201>)
+
+```go
+func (c *Client) PatchTaskInstance(ctx context.Context, dagId DagID, dagRunId DagRunID, taskId TaskID, body PatchTaskInstanceJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+```
+
+PatchTaskInstance Mark a task instance as success, failed or skipped
+
+Sets the task instance's state, as the UI's Mark as action does. The answer is the affected set, a collection holding the updated task instance, as Apache Airflow declares it.
+
+Takes a body of the \`application/json\` content type.
+
+Corresponds with PATCH /api/v2/dags/\{dag\_id\}/dagRuns/\{dag\_run\_id\}/taskInstances/\{task\_id\} \(the \`PatchTaskInstance\` operationId\).
+
+<a name="Client.PatchTaskInstanceDryRun"></a>
+### func \(\*Client\) [PatchTaskInstanceDryRun](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L2239>)
+
+```go
+func (c *Client) PatchTaskInstanceDryRun(ctx context.Context, dagId DagID, dagRunId DagRunID, taskId TaskID, body PatchTaskInstanceDryRunJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+```
+
+PatchTaskInstanceDryRun Preview marking a task instance
+
+Answers the task instance with the state the PATCH would set, without changing anything.
+
+Takes a body of the \`application/json\` content type.
+
+Corresponds with PATCH /api/v2/dags/\{dag\_id\}/dagRuns/\{dag\_run\_id\}/taskInstances/\{task\_id\}/dry\_run \(the \`PatchTaskInstanceDryRun\` operationId\).
+
+<a name="Client.PatchTaskInstanceDryRunWithBody"></a>
+### func \(\*Client\) [PatchTaskInstanceDryRunWithBody](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L2220>)
+
+```go
+func (c *Client) PatchTaskInstanceDryRunWithBody(ctx context.Context, dagId DagID, dagRunId DagRunID, taskId TaskID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+```
+
+PatchTaskInstanceDryRunWithBody Preview marking a task instance
+
+Answers the task instance with the state the PATCH would set, without changing anything.
+
+Takes any type of body and a specified content type.
+
+Corresponds with PATCH /api/v2/dags/\{dag\_id\}/dagRuns/\{dag\_run\_id\}/taskInstances/\{task\_id\}/dry\_run \(the \`PatchTaskInstanceDryRun\` operationId\).
+
+<a name="Client.PatchTaskInstanceWithBody"></a>
+### func \(\*Client\) [PatchTaskInstanceWithBody](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L2182>)
+
+```go
+func (c *Client) PatchTaskInstanceWithBody(ctx context.Context, dagId DagID, dagRunId DagRunID, taskId TaskID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+```
+
+PatchTaskInstanceWithBody Mark a task instance as success, failed or skipped
+
+Sets the task instance's state, as the UI's Mark as action does. The answer is the affected set, a collection holding the updated task instance, as Apache Airflow declares it.
+
+Takes any type of body and a specified content type.
+
+Corresponds with PATCH /api/v2/dags/\{dag\_id\}/dagRuns/\{dag\_run\_id\}/taskInstances/\{task\_id\} \(the \`PatchTaskInstance\` operationId\).
+
+<a name="Client.PatchUser"></a>
+### func \(\*Client\) [PatchUser](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L2486>)
+
+```go
+func (c *Client) PatchUser(ctx context.Context, userId string, body PatchUserJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+```
+
+PatchUser Activate or deactivate a user
+
+Admin\-only. Deactivates or reactivates an account of the caller's tenant. A deactivated user's sessions and API tokens stop working at their next request, their token renewal is refused, and they cannot sign in; reactivating restores access with a fresh sign\-in. The change and a user.deactivate or user.activate audit entry are written together. is\_active is the only field accepted. An admin cannot deactivate their own account. A user of another tenant answers 404. Requires the write:user permission.
+
+Takes a body of the \`application/json\` content type.
+
+Corresponds with PATCH /api/v2/users/\{user\_id\} \(the \`PatchUser\` operationId\).
+
+<a name="Client.PatchUserWithBody"></a>
+### func \(\*Client\) [PatchUserWithBody](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L2460>)
+
+```go
+func (c *Client) PatchUserWithBody(ctx context.Context, userId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+```
+
+PatchUserWithBody Activate or deactivate a user
+
+Admin\-only. Deactivates or reactivates an account of the caller's tenant. A deactivated user's sessions and API tokens stop working at their next request, their token renewal is refused, and they cannot sign in; reactivating restores access with a fresh sign\-in. The change and a user.deactivate or user.activate audit entry are written together. is\_active is the only field accepted. An admin cannot deactivate their own account. A user of another tenant answers 404. Requires the write:user permission.
+
+Takes any type of body and a specified content type.
+
+Corresponds with PATCH /api/v2/users/\{user\_id\} \(the \`PatchUser\` operationId\).
+
+<a name="Client.PollCLIDeviceLogin"></a>
+### func \(\*Client\) [PollCLIDeviceLogin](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/auth_cli.go#L185>)
+
+```go
+func (c *Client) PollCLIDeviceLogin(ctx context.Context, deviceCode string, reqEditors ...RequestEditorFn) (*TokenResponse, error)
+```
+
+PollCLIDeviceLogin polls a device sign\-in once on POST /api/v2/auth/cli/token and returns the token once it was approved. A refusal is one of the ErrDevice sentinels, or ErrCLILoginCodeRefused for a device code that is not live; a 429 is ErrDeviceSlowDown too.
+
+<a name="Client.RegisterDagVersion"></a>
+### func \(\*Client\) [RegisterDagVersion](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L2343>)
+
+```go
+func (c *Client) RegisterDagVersion(ctx context.Context, dagId DagID, params *RegisterDagVersionParams, body RegisterDagVersionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+```
+
+RegisterDagVersion Register a compiled DAG version \(Dexaflow\)
+
+Registers a compiled dag.json as a new version of the DAG and makes it current. Re\-registering content that is already registered \(same spec hash\) is a no\-op answered with 200 and created false, and leaves the current version as it is. The same label with other content is refused with 409. Needs deploy or write on dags \(scope dexaflow:deploy\). Without is\_paused, a DAG the register creates starts paused per its is\_paused\_upon\_creation, else the server's dags\_are\_paused\_at\_creation, and an existing DAG keeps its state. With is\_paused, the DAG ends the register in that state whether it is created, gets a new version or already had this content; a change to an existing DAG is audited as dag.pause or dag.unpause in the same transaction. Pausing is a run\-state write: sending is\_paused also needs write on dags, and a scoped token needs dexaflow:run as well as dexaflow:deploy, else the register is refused with 403. Under the server setting deploy.require\_digest, an image that is not pinned by a full digest \(repository@sha256: and 64 hex characters\) is registered with a warning in warnings \(warn\), or refused with 400 \(enforce\). Off, the default, accepts any image. POST /api/v2/dags/\{dag\_id\}/versions/dry\_run runs the same checks and writes nothing.
+
+Takes a body of the \`application/json\` content type.
+
+Corresponds with POST /api/v2/dags/\{dag\_id\}/versions \(the \`RegisterDagVersion\` operationId\).
+
+<a name="Client.RegisterDagVersionWithBody"></a>
+### func \(\*Client\) [RegisterDagVersionWithBody](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L2321>)
+
+```go
+func (c *Client) RegisterDagVersionWithBody(ctx context.Context, dagId DagID, params *RegisterDagVersionParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+```
+
+RegisterDagVersionWithBody Register a compiled DAG version \(Dexaflow\)
+
+Registers a compiled dag.json as a new version of the DAG and makes it current. Re\-registering content that is already registered \(same spec hash\) is a no\-op answered with 200 and created false, and leaves the current version as it is. The same label with other content is refused with 409. Needs deploy or write on dags \(scope dexaflow:deploy\). Without is\_paused, a DAG the register creates starts paused per its is\_paused\_upon\_creation, else the server's dags\_are\_paused\_at\_creation, and an existing DAG keeps its state. With is\_paused, the DAG ends the register in that state whether it is created, gets a new version or already had this content; a change to an existing DAG is audited as dag.pause or dag.unpause in the same transaction. Pausing is a run\-state write: sending is\_paused also needs write on dags, and a scoped token needs dexaflow:run as well as dexaflow:deploy, else the register is refused with 403. Under the server setting deploy.require\_digest, an image that is not pinned by a full digest \(repository@sha256: and 64 hex characters\) is registered with a warning in warnings \(warn\), or refused with 400 \(enforce\). Off, the default, accepts any image. POST /api/v2/dags/\{dag\_id\}/versions/dry\_run runs the same checks and writes nothing.
+
+Takes any type of body and a specified content type.
+
+Corresponds with POST /api/v2/dags/\{dag\_id\}/versions \(the \`RegisterDagVersion\` operationId\).
+
 <a name="Client.RenewToken"></a>
-### func \(\*Client\) [RenewToken](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L863>)
+### func \(\*Client\) [RenewToken](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L1747>)
 
 ```go
 func (c *Client) RenewToken(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -1388,12 +2596,64 @@ func (c *Client) RenewToken(ctx context.Context, reqEditors ...RequestEditorFn) 
 
 RenewToken Renew a still\-valid JWT into a fresh short\-lived token
 
-Transparent renewal: given a still\-valid user bearer, re\-mints the same identity with a fresh short TTL, bounded by a server\-side max\_lifetime measured from first login. Lets a long CLI/dev session avoid re\-logging in every token TTL while keeping the access token short\-lived. Returns 401 when the presented token is invalid, expired, or past max\_lifetime, in which case the client must log in again.
+Transparent renewal: given a still\-valid user bearer, re\-mints the same identity with a fresh short TTL, bounded by a server\-side max\_lifetime measured from first login. Lets a long CLI/dev session avoid re\-logging in every token TTL while keeping the access token short\-lived. Returns 401 when the presented token is invalid, expired, or past max\_lifetime, in which case the client must log in again. Returns 503 with Retry\-After when the token could not be checked because the user store is unreachable; the token may still be good, so the client waits and retries instead of logging in again.
 
 Corresponds with POST /api/v2/auth/token/renew \(the \`RenewToken\` operationId\).
 
+<a name="Client.RevokeAPIToken"></a>
+### func \(\*Client\) [RevokeAPIToken](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L1730>)
+
+```go
+func (c *Client) RevokeAPIToken(ctx context.Context, tokenId string, reqEditors ...RequestEditorFn) (*http.Response, error)
+```
+
+RevokeAPIToken Revoke an API token \(Dexaflow\)
+
+Revokes one of the caller's API tokens, or any token of the tenant for a caller who may manage accounts \(write:user\). The token stops working on its next request. Revoking a revoked token succeeds. Audited as api\_token.revoke. Not callable with an API token or any other scoped token.
+
+Corresponds with DELETE /api/v2/apiTokens/\{token\_id\} \(the \`RevokeAPIToken\` operationId\).
+
+<a name="Client.SetDagCurrentVersion"></a>
+### func \(\*Client\) [SetDagCurrentVersion](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L2029>)
+
+```go
+func (c *Client) SetDagCurrentVersion(ctx context.Context, dagId DagID, body SetDagCurrentVersionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+```
+
+SetDagCurrentVersion Make a registered version current \(Dexaflow\)
+
+Makes a registered version of the DAG the one new runs are created with, by label or by version\_number: a rollback, or a roll forward. The DAG's schedule and metadata become that version's, in the same transaction. Runs that already exist keep their version, and is\_paused is never changed. The version must pass the checks a register of it would pass today. Naming the current version changes nothing \(changed false\). Audited as dag.version.set\_current. Needs deploy or write on dags \(scope dexaflow:deploy\). Under the server setting deploy.require\_digest, a version whose image is not pinned by a full sha256 digest is made current with a warning in warnings \(warn\), or refused with 400 \(enforce\).
+
+Takes a body of the \`application/json\` content type.
+
+Corresponds with PUT /api/v2/dags/\{dag\_id\}/currentVersion \(the \`SetDagCurrentVersion\` operationId\).
+
+<a name="Client.SetDagCurrentVersionWithBody"></a>
+### func \(\*Client\) [SetDagCurrentVersionWithBody](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L2010>)
+
+```go
+func (c *Client) SetDagCurrentVersionWithBody(ctx context.Context, dagId DagID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+```
+
+SetDagCurrentVersionWithBody Make a registered version current \(Dexaflow\)
+
+Makes a registered version of the DAG the one new runs are created with, by label or by version\_number: a rollback, or a roll forward. The DAG's schedule and metadata become that version's, in the same transaction. Runs that already exist keep their version, and is\_paused is never changed. The version must pass the checks a register of it would pass today. Naming the current version changes nothing \(changed false\). Audited as dag.version.set\_current. Needs deploy or write on dags \(scope dexaflow:deploy\). Under the server setting deploy.require\_digest, a version whose image is not pinned by a full sha256 digest is made current with a warning in warnings \(warn\), or refused with 400 \(enforce\).
+
+Takes any type of body and a specified content type.
+
+Corresponds with PUT /api/v2/dags/\{dag\_id\}/currentVersion \(the \`SetDagCurrentVersion\` operationId\).
+
+<a name="Client.StartCLIDeviceLogin"></a>
+### func \(\*Client\) [StartCLIDeviceLogin](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/auth_cli.go#L150>)
+
+```go
+func (c *Client) StartCLIDeviceLogin(ctx context.Context, reqEditors ...RequestEditorFn) (*CLIDeviceAuthorization, error)
+```
+
+StartCLIDeviceLogin starts a device sign\-in with POST /api/v2/auth/cli/device. A server without the route answers 404, which returns ErrDeviceLoginNotServed.
+
 <a name="Client.TriggerDagRun"></a>
-### func \(\*Client\) [TriggerDagRun](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L1150>)
+### func \(\*Client\) [TriggerDagRun](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L2078>)
 
 ```go
 func (c *Client) TriggerDagRun(ctx context.Context, dagId DagID, body TriggerDagRunJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -1406,7 +2666,7 @@ Takes a body of the \`application/json\` content type.
 Corresponds with POST /api/v2/dags/\{dag\_id\}/dagRuns \(the \`TriggerDagRun\` operationId\).
 
 <a name="Client.TriggerDagRunWithBody"></a>
-### func \(\*Client\) [TriggerDagRunWithBody](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L1133>)
+### func \(\*Client\) [TriggerDagRunWithBody](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L2061>)
 
 ```go
 func (c *Client) TriggerDagRunWithBody(ctx context.Context, dagId DagID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -1419,7 +2679,7 @@ Takes any type of body and a specified content type.
 Corresponds with POST /api/v2/dags/\{dag\_id\}/dagRuns \(the \`TriggerDagRun\` operationId\).
 
 <a name="Client.UpdateConnection"></a>
-### func \(\*Client\) [UpdateConnection](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L988>)
+### func \(\*Client\) [UpdateConnection](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L1872>)
 
 ```go
 func (c *Client) UpdateConnection(ctx context.Context, connectionId ConnectionID, body UpdateConnectionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -1432,7 +2692,7 @@ Takes a body of the \`application/json\` content type.
 Corresponds with PATCH /api/v2/connections/\{connection\_id\} \(the \`UpdateConnection\` operationId\).
 
 <a name="Client.UpdateConnectionWithBody"></a>
-### func \(\*Client\) [UpdateConnectionWithBody](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L971>)
+### func \(\*Client\) [UpdateConnectionWithBody](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L1855>)
 
 ```go
 func (c *Client) UpdateConnectionWithBody(ctx context.Context, connectionId ConnectionID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -1445,7 +2705,7 @@ Takes any type of body and a specified content type.
 Corresponds with PATCH /api/v2/connections/\{connection\_id\} \(the \`UpdateConnection\` operationId\).
 
 <a name="Client.UpdateDag"></a>
-### func \(\*Client\) [UpdateDag](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L1067>)
+### func \(\*Client\) [UpdateDag](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L1957>)
 
 ```go
 func (c *Client) UpdateDag(ctx context.Context, dagId DagID, body UpdateDagJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -1453,12 +2713,14 @@ func (c *Client) UpdateDag(ctx context.Context, dagId DagID, body UpdateDagJSONR
 
 UpdateDag Update DAG \(typically pause/unpause\)
 
+Sets is\_paused. A change is audited as dag.pause or dag.unpause with the acting user; asking for the state the DAG is already in records nothing.
+
 Takes a body of the \`application/json\` content type.
 
 Corresponds with PATCH /api/v2/dags/\{dag\_id\} \(the \`UpdateDag\` operationId\).
 
 <a name="Client.UpdateDagWithBody"></a>
-### func \(\*Client\) [UpdateDagWithBody](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L1050>)
+### func \(\*Client\) [UpdateDagWithBody](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L1938>)
 
 ```go
 func (c *Client) UpdateDagWithBody(ctx context.Context, dagId DagID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -1466,21 +2728,55 @@ func (c *Client) UpdateDagWithBody(ctx context.Context, dagId DagID, contentType
 
 UpdateDagWithBody Update DAG \(typically pause/unpause\)
 
+Sets is\_paused. A change is audited as dag.pause or dag.unpause with the acting user; asking for the state the DAG is already in records nothing.
+
 Takes any type of body and a specified content type.
 
 Corresponds with PATCH /api/v2/dags/\{dag\_id\} \(the \`UpdateDag\` operationId\).
 
 <a name="ClientInterface"></a>
-## type [ClientInterface](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L583-L856>)
+## type [ClientInterface](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L1227-L1668>)
 
 The interface specification for the client above.
 
 ```go
 type ClientInterface interface {
 
+    // ListAPITokens List API tokens (Dexaflow)
+    //
+    // Lists the caller's unrevoked API tokens, newest first, expired ones included. A caller who may manage accounts (write:user) sees every token of the tenant. The token itself and its hash are never returned. Not callable with an API token or any other scoped token (ADR 0074).
+    //
+    // Corresponds with GET /api/v2/apiTokens (the `ListAPITokens` operationId).
+    ListAPITokens(ctx context.Context, params *ListAPITokensParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+    // CreateAPITokenWithBody Create an API token (Dexaflow)
+    //
+    // Creates a long-lived, named API token owned by the caller (ADR 0074). The response carries the token once; the server keeps only its SHA-256 hash. The token authenticates as its owner, with the owner's current roles narrowed to the token's scopes: deploy carries dexaflow:deploy alone (it registers versions, sets the current version, and reads the DAG list, DAGs, their details and versions, and nothing else), read carries dexaflow:read. The caller's roles must allow what the scope does (deploy needs deploy or write on dags, read needs read on dags). An account holds at most 50 live tokens. Audited as api_token.create. Reusing the name of an expired token retires that token, audited as api_token.retire_expired. Not callable with an API token or any other scoped token.
+    //
+    // Takes any type of body and a specified content type.
+    //
+    // Corresponds with POST /api/v2/apiTokens (the `CreateAPIToken` operationId).
+    CreateAPITokenWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+    // CreateAPIToken Create an API token (Dexaflow)
+    //
+    // Creates a long-lived, named API token owned by the caller (ADR 0074). The response carries the token once; the server keeps only its SHA-256 hash. The token authenticates as its owner, with the owner's current roles narrowed to the token's scopes: deploy carries dexaflow:deploy alone (it registers versions, sets the current version, and reads the DAG list, DAGs, their details and versions, and nothing else), read carries dexaflow:read. The caller's roles must allow what the scope does (deploy needs deploy or write on dags, read needs read on dags). An account holds at most 50 live tokens. Audited as api_token.create. Reusing the name of an expired token retires that token, audited as api_token.retire_expired. Not callable with an API token or any other scoped token.
+    //
+    // Takes a body of the `application/json` content type.
+    //
+    // Corresponds with POST /api/v2/apiTokens (the `CreateAPIToken` operationId).
+    CreateAPIToken(ctx context.Context, body CreateAPITokenJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+    // RevokeAPIToken Revoke an API token (Dexaflow)
+    //
+    // Revokes one of the caller's API tokens, or any token of the tenant for a caller who may manage accounts (write:user). The token stops working on its next request. Revoking a revoked token succeeds. Audited as api_token.revoke. Not callable with an API token or any other scoped token.
+    //
+    // Corresponds with DELETE /api/v2/apiTokens/{token_id} (the `RevokeAPIToken` operationId).
+    RevokeAPIToken(ctx context.Context, tokenId string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
     // RenewToken Renew a still-valid JWT into a fresh short-lived token
     //
-    // Transparent renewal: given a still-valid user bearer, re-mints the same identity with a fresh short TTL, bounded by a server-side max_lifetime measured from first login. Lets a long CLI/dev session avoid re-logging in every token TTL while keeping the access token short-lived. Returns 401 when the presented token is invalid, expired, or past max_lifetime, in which case the client must log in again.
+    // Transparent renewal: given a still-valid user bearer, re-mints the same identity with a fresh short TTL, bounded by a server-side max_lifetime measured from first login. Lets a long CLI/dev session avoid re-logging in every token TTL while keeping the access token short-lived. Returns 401 when the presented token is invalid, expired, or past max_lifetime, in which case the client must log in again. Returns 503 with Retry-After when the token could not be checked because the user store is unreachable; the token may still be good, so the client waits and retries instead of logging in again.
     //
     // Corresponds with POST /api/v2/auth/token/renew (the `RenewToken` operationId).
     RenewToken(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -1542,6 +2838,8 @@ type ClientInterface interface {
 
     // GetDagSource Get a DAG's source (the dag.py text)
     //
+    // The source registered with one version of the DAG, as in Airflow 3.2: version_number selects the version, and without it (or with 0) the newest version is served. After a rollback the newest version is not the current one. A version the DAG does not have is a 404, and a version_number that is not an integer is a 400.
+    //
     // Corresponds with GET /api/v2/dagSources/{dag_id} (the `GetDagSource` operationId).
     GetDagSource(ctx context.Context, dagId DagID, reqEditors ...RequestEditorFn) (*http.Response, error)
 
@@ -1557,12 +2855,16 @@ type ClientInterface interface {
 
     // UpdateDagWithBody Update DAG (typically pause/unpause)
     //
+    // Sets is_paused. A change is audited as dag.pause or dag.unpause with the acting user; asking for the state the DAG is already in records nothing.
+    //
     // Takes any type of body and a specified content type.
     //
     // Corresponds with PATCH /api/v2/dags/{dag_id} (the `UpdateDag` operationId).
     UpdateDagWithBody(ctx context.Context, dagId DagID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
     // UpdateDag Update DAG (typically pause/unpause)
+    //
+    // Sets is_paused. A change is audited as dag.pause or dag.unpause with the acting user; asking for the state the DAG is already in records nothing.
     //
     // Takes a body of the `application/json` content type.
     //
@@ -1582,6 +2884,24 @@ type ClientInterface interface {
     //
     // Corresponds with POST /api/v2/dags/{dag_id}/clearTaskInstances (the `ClearTaskInstances` operationId).
     ClearTaskInstances(ctx context.Context, dagId DagID, body ClearTaskInstancesJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+    // SetDagCurrentVersionWithBody Make a registered version current (Dexaflow)
+    //
+    // Makes a registered version of the DAG the one new runs are created with, by label or by version_number: a rollback, or a roll forward. The DAG's schedule and metadata become that version's, in the same transaction. Runs that already exist keep their version, and is_paused is never changed. The version must pass the checks a register of it would pass today. Naming the current version changes nothing (changed false). Audited as dag.version.set_current. Needs deploy or write on dags (scope dexaflow:deploy). Under the server setting deploy.require_digest, a version whose image is not pinned by a full sha256 digest is made current with a warning in warnings (warn), or refused with 400 (enforce).
+    //
+    // Takes any type of body and a specified content type.
+    //
+    // Corresponds with PUT /api/v2/dags/{dag_id}/currentVersion (the `SetDagCurrentVersion` operationId).
+    SetDagCurrentVersionWithBody(ctx context.Context, dagId DagID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+    // SetDagCurrentVersion Make a registered version current (Dexaflow)
+    //
+    // Makes a registered version of the DAG the one new runs are created with, by label or by version_number: a rollback, or a roll forward. The DAG's schedule and metadata become that version's, in the same transaction. Runs that already exist keep their version, and is_paused is never changed. The version must pass the checks a register of it would pass today. Naming the current version changes nothing (changed false). Audited as dag.version.set_current. Needs deploy or write on dags (scope dexaflow:deploy). Under the server setting deploy.require_digest, a version whose image is not pinned by a full sha256 digest is made current with a warning in warnings (warn), or refused with 400 (enforce).
+    //
+    // Takes a body of the `application/json` content type.
+    //
+    // Corresponds with PUT /api/v2/dags/{dag_id}/currentVersion (the `SetDagCurrentVersion` operationId).
+    SetDagCurrentVersion(ctx context.Context, dagId DagID, body SetDagCurrentVersionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
     // ListDagRuns List DAG runs
     //
@@ -1607,7 +2927,27 @@ type ClientInterface interface {
     // Corresponds with GET /api/v2/dags/{dag_id}/dagRuns/{dag_run_id} (the `GetDagRun` operationId).
     GetDagRun(ctx context.Context, dagId DagID, dagRunId DagRunID, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+    // ClearDagRunWithBody Clear a whole DAG run (queue its task instances for re-run)
+    //
+    // The run page's Clear action. A dry run (the default) answers the task instances the clear would reset. The clear itself resets them, re-queues the run and answers the run.
+    //
+    // Takes any type of body and a specified content type.
+    //
+    // Corresponds with POST /api/v2/dags/{dag_id}/dagRuns/{dag_run_id}/clear (the `ClearDagRun` operationId).
+    ClearDagRunWithBody(ctx context.Context, dagId DagID, dagRunId DagRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+    // ClearDagRun Clear a whole DAG run (queue its task instances for re-run)
+    //
+    // The run page's Clear action. A dry run (the default) answers the task instances the clear would reset. The clear itself resets them, re-queues the run and answers the run.
+    //
+    // Takes a body of the `application/json` content type.
+    //
+    // Corresponds with POST /api/v2/dags/{dag_id}/dagRuns/{dag_run_id}/clear (the `ClearDagRun` operationId).
+    ClearDagRun(ctx context.Context, dagId DagID, dagRunId DagRunID, body ClearDagRunJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
     // ListTaskInstances List task instances of a DAG run
+    //
+    // Pages with the same limit, offset and cursor query parameters as the DAG run list (they are not declared on this operation so the generated client keeps its signature). A request that carries cursor gets next_cursor and previous_cursor in the body; only the offset cursors this list issues are accepted, any other is refused with 400.
     //
     // Corresponds with GET /api/v2/dags/{dag_id}/dagRuns/{dag_run_id}/taskInstances (the `ListTaskInstances` operationId).
     ListTaskInstances(ctx context.Context, dagId DagID, dagRunId DagRunID, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -1616,6 +2956,42 @@ type ClientInterface interface {
     //
     // Corresponds with GET /api/v2/dags/{dag_id}/dagRuns/{dag_run_id}/taskInstances/{task_id} (the `GetTaskInstance` operationId).
     GetTaskInstance(ctx context.Context, dagId DagID, dagRunId DagRunID, taskId TaskID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+    // PatchTaskInstanceWithBody Mark a task instance as success, failed or skipped
+    //
+    // Sets the task instance's state, as the UI's Mark as action does. The answer is the affected set, a collection holding the updated task instance, as Apache Airflow declares it.
+    //
+    // Takes any type of body and a specified content type.
+    //
+    // Corresponds with PATCH /api/v2/dags/{dag_id}/dagRuns/{dag_run_id}/taskInstances/{task_id} (the `PatchTaskInstance` operationId).
+    PatchTaskInstanceWithBody(ctx context.Context, dagId DagID, dagRunId DagRunID, taskId TaskID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+    // PatchTaskInstance Mark a task instance as success, failed or skipped
+    //
+    // Sets the task instance's state, as the UI's Mark as action does. The answer is the affected set, a collection holding the updated task instance, as Apache Airflow declares it.
+    //
+    // Takes a body of the `application/json` content type.
+    //
+    // Corresponds with PATCH /api/v2/dags/{dag_id}/dagRuns/{dag_run_id}/taskInstances/{task_id} (the `PatchTaskInstance` operationId).
+    PatchTaskInstance(ctx context.Context, dagId DagID, dagRunId DagRunID, taskId TaskID, body PatchTaskInstanceJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+    // PatchTaskInstanceDryRunWithBody Preview marking a task instance
+    //
+    // Answers the task instance with the state the PATCH would set, without changing anything.
+    //
+    // Takes any type of body and a specified content type.
+    //
+    // Corresponds with PATCH /api/v2/dags/{dag_id}/dagRuns/{dag_run_id}/taskInstances/{task_id}/dry_run (the `PatchTaskInstanceDryRun` operationId).
+    PatchTaskInstanceDryRunWithBody(ctx context.Context, dagId DagID, dagRunId DagRunID, taskId TaskID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+    // PatchTaskInstanceDryRun Preview marking a task instance
+    //
+    // Answers the task instance with the state the PATCH would set, without changing anything.
+    //
+    // Takes a body of the `application/json` content type.
+    //
+    // Corresponds with PATCH /api/v2/dags/{dag_id}/dagRuns/{dag_run_id}/taskInstances/{task_id}/dry_run (the `PatchTaskInstanceDryRun` operationId).
+    PatchTaskInstanceDryRun(ctx context.Context, dagId DagID, dagRunId DagRunID, taskId TaskID, body PatchTaskInstanceDryRunJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
     // GetTaskLogs Get task logs
     //
@@ -1636,6 +3012,30 @@ type ClientInterface interface {
     //
     // Corresponds with GET /api/v2/dags/{dag_id}/spec (the `GetDagSpec` operationId).
     GetDagSpec(ctx context.Context, dagId DagID, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+    // RegisterDagVersionWithBody Register a compiled DAG version (Dexaflow)
+    //
+    // Registers a compiled dag.json as a new version of the DAG and makes it current. Re-registering content that is already registered (same spec hash) is a no-op answered with 200 and created false, and leaves the current version as it is. The same label with other content is refused with 409. Needs deploy or write on dags (scope dexaflow:deploy).
+    // Without is_paused, a DAG the register creates starts paused per its is_paused_upon_creation, else the server's dags_are_paused_at_creation, and an existing DAG keeps its state. With is_paused, the DAG ends the register in that state whether it is created, gets a new version or already had this content; a change to an existing DAG is audited as dag.pause or dag.unpause in the same transaction. Pausing is a run-state write: sending is_paused also needs write on dags, and a scoped token needs dexaflow:run as well as dexaflow:deploy, else the register is refused with 403.
+    // Under the server setting deploy.require_digest, an image that is not pinned by a full digest (repository@sha256: and 64 hex characters) is registered with a warning in warnings (warn), or refused with 400 (enforce). Off, the default, accepts any image.
+    // POST /api/v2/dags/{dag_id}/versions/dry_run runs the same checks and writes nothing.
+    //
+    // Takes any type of body and a specified content type.
+    //
+    // Corresponds with POST /api/v2/dags/{dag_id}/versions (the `RegisterDagVersion` operationId).
+    RegisterDagVersionWithBody(ctx context.Context, dagId DagID, params *RegisterDagVersionParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+    // RegisterDagVersion Register a compiled DAG version (Dexaflow)
+    //
+    // Registers a compiled dag.json as a new version of the DAG and makes it current. Re-registering content that is already registered (same spec hash) is a no-op answered with 200 and created false, and leaves the current version as it is. The same label with other content is refused with 409. Needs deploy or write on dags (scope dexaflow:deploy).
+    // Without is_paused, a DAG the register creates starts paused per its is_paused_upon_creation, else the server's dags_are_paused_at_creation, and an existing DAG keeps its state. With is_paused, the DAG ends the register in that state whether it is created, gets a new version or already had this content; a change to an existing DAG is audited as dag.pause or dag.unpause in the same transaction. Pausing is a run-state write: sending is_paused also needs write on dags, and a scoped token needs dexaflow:run as well as dexaflow:deploy, else the register is refused with 403.
+    // Under the server setting deploy.require_digest, an image that is not pinned by a full digest (repository@sha256: and 64 hex characters) is registered with a warning in warnings (warn), or refused with 400 (enforce). Off, the default, accepts any image.
+    // POST /api/v2/dags/{dag_id}/versions/dry_run runs the same checks and writes nothing.
+    //
+    // Takes a body of the `application/json` content type.
+    //
+    // Corresponds with POST /api/v2/dags/{dag_id}/versions (the `RegisterDagVersion` operationId).
+    RegisterDagVersion(ctx context.Context, dagId DagID, params *RegisterDagVersionParams, body RegisterDagVersionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
     // GetMonitorExecutor Executor capability and configuration
     //
@@ -1677,6 +3077,38 @@ type ClientInterface interface {
     //
     // Corresponds with POST /api/v2/users (the `CreateUser` operationId).
     CreateUser(ctx context.Context, body CreateUserJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+    // PatchUserWithBody Activate or deactivate a user
+    //
+    // Admin-only. Deactivates or reactivates an account of the caller's
+    // tenant. A deactivated user's sessions and API tokens stop working at
+    // their next request, their token renewal is refused, and they cannot
+    // sign in; reactivating restores access with a fresh sign-in. The change
+    // and a user.deactivate or user.activate audit entry are written
+    // together. is_active is the only field accepted. An admin cannot
+    // deactivate their own account. A user of another tenant answers 404.
+    // Requires the write:user permission.
+    //
+    // Takes any type of body and a specified content type.
+    //
+    // Corresponds with PATCH /api/v2/users/{user_id} (the `PatchUser` operationId).
+    PatchUserWithBody(ctx context.Context, userId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+    // PatchUser Activate or deactivate a user
+    //
+    // Admin-only. Deactivates or reactivates an account of the caller's
+    // tenant. A deactivated user's sessions and API tokens stop working at
+    // their next request, their token renewal is refused, and they cannot
+    // sign in; reactivating restores access with a fresh sign-in. The change
+    // and a user.deactivate or user.activate audit entry are written
+    // together. is_active is the only field accepted. An admin cannot
+    // deactivate their own account. A user of another tenant answers 404.
+    // Requires the write:user permission.
+    //
+    // Takes a body of the `application/json` content type.
+    //
+    // Corresponds with PATCH /api/v2/users/{user_id} (the `PatchUser` operationId).
+    PatchUser(ctx context.Context, userId string, body PatchUserJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
     // ListVariables List variables
     //
@@ -1753,7 +3185,7 @@ type ClientInterface interface {
 ```
 
 <a name="ClientOption"></a>
-## type [ClientOption](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L539>)
+## type [ClientOption](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L1183>)
 
 ClientOption allows setting custom parameters during construction
 
@@ -1762,7 +3194,7 @@ type ClientOption func(*Client) error
 ```
 
 <a name="WithBaseURL"></a>
-### func [WithBaseURL](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L3018>)
+### func [WithBaseURL](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L4750>)
 
 ```go
 func WithBaseURL(baseURL string) ClientOption
@@ -1771,7 +3203,7 @@ func WithBaseURL(baseURL string) ClientOption
 WithBaseURL overrides the baseURL.
 
 <a name="WithHTTPClient"></a>
-### func [WithHTTPClient](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L566>)
+### func [WithHTTPClient](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L1210>)
 
 ```go
 func WithHTTPClient(doer HttpRequestDoer) ClientOption
@@ -1780,7 +3212,7 @@ func WithHTTPClient(doer HttpRequestDoer) ClientOption
 WithHTTPClient allows overriding the default Doer, which is automatically created using http.Client. This is useful for tests.
 
 <a name="WithRequestEditorFn"></a>
-### func [WithRequestEditorFn](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L575>)
+### func [WithRequestEditorFn](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L1219>)
 
 ```go
 func WithRequestEditorFn(fn RequestEditorFn) ClientOption
@@ -1789,7 +3221,7 @@ func WithRequestEditorFn(fn RequestEditorFn) ClientOption
 WithRequestEditorFn allows setting up a callback function, which will be called right before sending the request. This can be used to mutate the request.
 
 <a name="ClientWithResponses"></a>
-## type [ClientWithResponses](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L3003-L3005>)
+## type [ClientWithResponses](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L4735-L4737>)
 
 ClientWithResponses builds on ClientInterface to offer response payloads
 
@@ -1800,7 +3232,7 @@ type ClientWithResponses struct {
 ```
 
 <a name="New"></a>
-### func [New](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.go#L16>)
+### func [New](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.go#L20>)
 
 ```go
 func New(baseURL, token string, opts ...ClientOption) (*ClientWithResponses, error)
@@ -1809,7 +3241,7 @@ func New(baseURL, token string, opts ...ClientOption) (*ClientWithResponses, err
 New builds a typed /api/v2 client for the control plane at baseURL \(an origin such as "http://localhost:8080", with or without a trailing slash\). When token is non\-empty every request carries "Authorization: Bearer \<token\>"; the MCP and CLI pass the caller's JWT through unchanged and never mint one \(ADR 0050 D9\). An empty token leaves requests unauthenticated, for dev/loopback use. Extra ClientOptions \(e.g. WithHTTPClient\) are applied after the auth editor.
 
 <a name="NewClientWithResponses"></a>
-### func [NewClientWithResponses](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L3009>)
+### func [NewClientWithResponses](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L4741>)
 
 ```go
 func NewClientWithResponses(server string, opts ...ClientOption) (*ClientWithResponses, error)
@@ -1817,8 +3249,38 @@ func NewClientWithResponses(server string, opts ...ClientOption) (*ClientWithRes
 
 NewClientWithResponses creates a new ClientWithResponses, which wraps Client with return type handling
 
+<a name="ClientWithResponses.ClearDagRunWithBodyWithResponse"></a>
+### func \(\*ClientWithResponses\) [ClearDagRunWithBodyWithResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L8304>)
+
+```go
+func (c *ClientWithResponses) ClearDagRunWithBodyWithResponse(ctx context.Context, dagId DagID, dagRunId DagRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ClearDagRunResponse, error)
+```
+
+ClearDagRunWithBodyWithResponse Clear a whole DAG run \(queue its task instances for re\-run\)
+
+The run page's Clear action. A dry run \(the default\) answers the task instances the clear would reset. The clear itself resets them, re\-queues the run and answers the run.
+
+Takes any type of body and a specified content type, and returns a wrapper object for the known response body format\(s\).
+
+Corresponds with POST /api/v2/dags/\{dag\_id\}/dagRuns/\{dag\_run\_id\}/clear \(the \`ClearDagRun\` operationId\).
+
+<a name="ClientWithResponses.ClearDagRunWithResponse"></a>
+### func \(\*ClientWithResponses\) [ClearDagRunWithResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L8319>)
+
+```go
+func (c *ClientWithResponses) ClearDagRunWithResponse(ctx context.Context, dagId DagID, dagRunId DagRunID, body ClearDagRunJSONRequestBody, reqEditors ...RequestEditorFn) (*ClearDagRunResponse, error)
+```
+
+ClearDagRunWithResponse Clear a whole DAG run \(queue its task instances for re\-run\)
+
+The run page's Clear action. A dry run \(the default\) answers the task instances the clear would reset. The clear itself resets them, re\-queues the run and answers the run.
+
+Takes a body of the \`application/json\` content type, and returns a wrapper object for the known response body format\(s\).
+
+Corresponds with POST /api/v2/dags/\{dag\_id\}/dagRuns/\{dag\_run\_id\}/clear \(the \`ClearDagRun\` operationId\).
+
 <a name="ClientWithResponses.ClearTaskInstancesWithBodyWithResponse"></a>
-### func \(\*ClientWithResponses\) [ClearTaskInstancesWithBodyWithResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L5078>)
+### func \(\*ClientWithResponses\) [ClearTaskInstancesWithBodyWithResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L8194>)
 
 ```go
 func (c *ClientWithResponses) ClearTaskInstancesWithBodyWithResponse(ctx context.Context, dagId DagID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ClearTaskInstancesResponse, error)
@@ -1831,7 +3293,7 @@ Takes any type of body and a specified content type, and returns a wrapper objec
 Corresponds with POST /api/v2/dags/\{dag\_id\}/clearTaskInstances \(the \`ClearTaskInstances\` operationId\).
 
 <a name="ClientWithResponses.ClearTaskInstancesWithResponse"></a>
-### func \(\*ClientWithResponses\) [ClearTaskInstancesWithResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L5091>)
+### func \(\*ClientWithResponses\) [ClearTaskInstancesWithResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L8207>)
 
 ```go
 func (c *ClientWithResponses) ClearTaskInstancesWithResponse(ctx context.Context, dagId DagID, body ClearTaskInstancesJSONRequestBody, reqEditors ...RequestEditorFn) (*ClearTaskInstancesResponse, error)
@@ -1843,8 +3305,38 @@ Takes a body of the \`application/json\` content type, and returns a wrapper obj
 
 Corresponds with POST /api/v2/dags/\{dag\_id\}/clearTaskInstances \(the \`ClearTaskInstances\` operationId\).
 
+<a name="ClientWithResponses.CreateAPITokenWithBodyWithResponse"></a>
+### func \(\*ClientWithResponses\) [CreateAPITokenWithBodyWithResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L7962>)
+
+```go
+func (c *ClientWithResponses) CreateAPITokenWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateAPITokenResponse, error)
+```
+
+CreateAPITokenWithBodyWithResponse Create an API token \(Dexaflow\)
+
+Creates a long\-lived, named API token owned by the caller \(ADR 0074\). The response carries the token once; the server keeps only its SHA\-256 hash. The token authenticates as its owner, with the owner's current roles narrowed to the token's scopes: deploy carries dexaflow:deploy alone \(it registers versions, sets the current version, and reads the DAG list, DAGs, their details and versions, and nothing else\), read carries dexaflow:read. The caller's roles must allow what the scope does \(deploy needs deploy or write on dags, read needs read on dags\). An account holds at most 50 live tokens. Audited as api\_token.create. Reusing the name of an expired token retires that token, audited as api\_token.retire\_expired. Not callable with an API token or any other scoped token.
+
+Takes any type of body and a specified content type, and returns a wrapper object for the known response body format\(s\).
+
+Corresponds with POST /api/v2/apiTokens \(the \`CreateAPIToken\` operationId\).
+
+<a name="ClientWithResponses.CreateAPITokenWithResponse"></a>
+### func \(\*ClientWithResponses\) [CreateAPITokenWithResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L7977>)
+
+```go
+func (c *ClientWithResponses) CreateAPITokenWithResponse(ctx context.Context, body CreateAPITokenJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateAPITokenResponse, error)
+```
+
+CreateAPITokenWithResponse Create an API token \(Dexaflow\)
+
+Creates a long\-lived, named API token owned by the caller \(ADR 0074\). The response carries the token once; the server keeps only its SHA\-256 hash. The token authenticates as its owner, with the owner's current roles narrowed to the token's scopes: deploy carries dexaflow:deploy alone \(it registers versions, sets the current version, and reads the DAG list, DAGs, their details and versions, and nothing else\), read carries dexaflow:read. The caller's roles must allow what the scope does \(deploy needs deploy or write on dags, read needs read on dags\). An account holds at most 50 live tokens. Audited as api\_token.create. Reusing the name of an expired token retires that token, audited as api\_token.retire\_expired. Not callable with an API token or any other scoped token.
+
+Takes a body of the \`application/json\` content type, and returns a wrapper object for the known response body format\(s\).
+
+Corresponds with POST /api/v2/apiTokens \(the \`CreateAPIToken\` operationId\).
+
 <a name="ClientWithResponses.CreateConnectionWithBodyWithResponse"></a>
-### func \(\*ClientWithResponses\) [CreateConnectionWithBodyWithResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L4931>)
+### func \(\*ClientWithResponses\) [CreateConnectionWithBodyWithResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L8041>)
 
 ```go
 func (c *ClientWithResponses) CreateConnectionWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateConnectionResponse, error)
@@ -1859,7 +3351,7 @@ Takes any type of body and a specified content type, and returns a wrapper objec
 Corresponds with POST /api/v2/connections \(the \`CreateConnection\` operationId\).
 
 <a name="ClientWithResponses.CreateConnectionWithResponse"></a>
-### func \(\*ClientWithResponses\) [CreateConnectionWithResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L4948>)
+### func \(\*ClientWithResponses\) [CreateConnectionWithResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L8058>)
 
 ```go
 func (c *ClientWithResponses) CreateConnectionWithResponse(ctx context.Context, body CreateConnectionJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateConnectionResponse, error)
@@ -1874,7 +3366,7 @@ Takes a body of the \`application/json\` content type, and returns a wrapper obj
 Corresponds with POST /api/v2/connections \(the \`CreateConnection\` operationId\).
 
 <a name="ClientWithResponses.CreateUserWithBodyWithResponse"></a>
-### func \(\*ClientWithResponses\) [CreateUserWithBodyWithResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L5281>)
+### func \(\*ClientWithResponses\) [CreateUserWithBodyWithResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L8555>)
 
 ```go
 func (c *ClientWithResponses) CreateUserWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateUserResponse, error)
@@ -1889,7 +3381,7 @@ Takes any type of body and a specified content type, and returns a wrapper objec
 Corresponds with POST /api/v2/users \(the \`CreateUser\` operationId\).
 
 <a name="ClientWithResponses.CreateUserWithResponse"></a>
-### func \(\*ClientWithResponses\) [CreateUserWithResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L5298>)
+### func \(\*ClientWithResponses\) [CreateUserWithResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L8572>)
 
 ```go
 func (c *ClientWithResponses) CreateUserWithResponse(ctx context.Context, body CreateUserJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateUserResponse, error)
@@ -1904,7 +3396,7 @@ Takes a body of the \`application/json\` content type, and returns a wrapper obj
 Corresponds with POST /api/v2/users \(the \`CreateUser\` operationId\).
 
 <a name="ClientWithResponses.CreateVariableWithBodyWithResponse"></a>
-### func \(\*ClientWithResponses\) [CreateVariableWithBodyWithResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L5330>)
+### func \(\*ClientWithResponses\) [CreateVariableWithBodyWithResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L8648>)
 
 ```go
 func (c *ClientWithResponses) CreateVariableWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateVariableResponse, error)
@@ -1919,7 +3411,7 @@ Takes any type of body and a specified content type, and returns a wrapper objec
 Corresponds with POST /api/v2/variables \(the \`CreateVariable\` operationId\).
 
 <a name="ClientWithResponses.CreateVariableWithResponse"></a>
-### func \(\*ClientWithResponses\) [CreateVariableWithResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L5346>)
+### func \(\*ClientWithResponses\) [CreateVariableWithResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L8664>)
 
 ```go
 func (c *ClientWithResponses) CreateVariableWithResponse(ctx context.Context, body CreateVariableJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateVariableResponse, error)
@@ -1934,7 +3426,7 @@ Takes a body of the \`application/json\` content type, and returns a wrapper obj
 Corresponds with POST /api/v2/variables \(the \`CreateVariable\` operationId\).
 
 <a name="ClientWithResponses.DeleteConnectionWithResponse"></a>
-### func \(\*ClientWithResponses\) [DeleteConnectionWithResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L4961>)
+### func \(\*ClientWithResponses\) [DeleteConnectionWithResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L8071>)
 
 ```go
 func (c *ClientWithResponses) DeleteConnectionWithResponse(ctx context.Context, connectionId ConnectionID, reqEditors ...RequestEditorFn) (*DeleteConnectionResponse, error)
@@ -1947,7 +3439,7 @@ Returns a wrapper object for the known response body format\(s\).
 Corresponds with DELETE /api/v2/connections/\{connection\_id\} \(the \`DeleteConnection\` operationId\).
 
 <a name="ClientWithResponses.DeleteVariableWithResponse"></a>
-### func \(\*ClientWithResponses\) [DeleteVariableWithResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L5359>)
+### func \(\*ClientWithResponses\) [DeleteVariableWithResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L8677>)
 
 ```go
 func (c *ClientWithResponses) DeleteVariableWithResponse(ctx context.Context, variableKey VariableKey, reqEditors ...RequestEditorFn) (*DeleteVariableResponse, error)
@@ -1960,7 +3452,7 @@ Returns a wrapper object for the known response body format\(s\).
 Corresponds with DELETE /api/v2/variables/\{variable\_key\} \(the \`DeleteVariable\` operationId\).
 
 <a name="ClientWithResponses.GetConnectionWithResponse"></a>
-### func \(\*ClientWithResponses\) [GetConnectionWithResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L4974>)
+### func \(\*ClientWithResponses\) [GetConnectionWithResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L8084>)
 
 ```go
 func (c *ClientWithResponses) GetConnectionWithResponse(ctx context.Context, connectionId ConnectionID, reqEditors ...RequestEditorFn) (*GetConnectionResponse, error)
@@ -1973,7 +3465,7 @@ Returns a wrapper object for the known response body format\(s\).
 Corresponds with GET /api/v2/connections/\{connection\_id\} \(the \`GetConnection\` operationId\).
 
 <a name="ClientWithResponses.GetDagRunWithResponse"></a>
-### func \(\*ClientWithResponses\) [GetDagRunWithResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L5143>)
+### func \(\*ClientWithResponses\) [GetDagRunWithResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L8289>)
 
 ```go
 func (c *ClientWithResponses) GetDagRunWithResponse(ctx context.Context, dagId DagID, dagRunId DagRunID, reqEditors ...RequestEditorFn) (*GetDagRunResponse, error)
@@ -1986,7 +3478,7 @@ Returns a wrapper object for the known response body format\(s\).
 Corresponds with GET /api/v2/dags/\{dag\_id\}/dagRuns/\{dag\_run\_id\} \(the \`GetDagRun\` operationId\).
 
 <a name="ClientWithResponses.GetDagSourceWithResponse"></a>
-### func \(\*ClientWithResponses\) [GetDagSourceWithResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L5013>)
+### func \(\*ClientWithResponses\) [GetDagSourceWithResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L8125>)
 
 ```go
 func (c *ClientWithResponses) GetDagSourceWithResponse(ctx context.Context, dagId DagID, reqEditors ...RequestEditorFn) (*GetDagSourceResponse, error)
@@ -1994,12 +3486,14 @@ func (c *ClientWithResponses) GetDagSourceWithResponse(ctx context.Context, dagI
 
 GetDagSourceWithResponse Get a DAG's source \(the dag.py text\)
 
+The source registered with one version of the DAG, as in Airflow 3.2: version\_number selects the version, and without it \(or with 0\) the newest version is served. After a rollback the newest version is not the current one. A version the DAG does not have is a 404, and a version\_number that is not an integer is a 400.
+
 Returns a wrapper object for the known response body format\(s\).
 
 Corresponds with GET /api/v2/dagSources/\{dag\_id\} \(the \`GetDagSource\` operationId\).
 
 <a name="ClientWithResponses.GetDagSpecWithResponse"></a>
-### func \(\*ClientWithResponses\) [GetDagSpecWithResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L5221>)
+### func \(\*ClientWithResponses\) [GetDagSpecWithResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L8459>)
 
 ```go
 func (c *ClientWithResponses) GetDagSpecWithResponse(ctx context.Context, dagId DagID, reqEditors ...RequestEditorFn) (*GetDagSpecResponse, error)
@@ -2012,7 +3506,7 @@ Returns a wrapper object for the known response body format\(s\).
 Corresponds with GET /api/v2/dags/\{dag\_id\}/spec \(the \`GetDagSpec\` operationId\).
 
 <a name="ClientWithResponses.GetDagVersionWithResponse"></a>
-### func \(\*ClientWithResponses\) [GetDagVersionWithResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L5208>)
+### func \(\*ClientWithResponses\) [GetDagVersionWithResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L8446>)
 
 ```go
 func (c *ClientWithResponses) GetDagVersionWithResponse(ctx context.Context, dagId DagID, versionNumber int, reqEditors ...RequestEditorFn) (*GetDagVersionResponse, error)
@@ -2025,7 +3519,7 @@ Returns a wrapper object for the known response body format\(s\).
 Corresponds with GET /api/v2/dags/\{dag\_id\}/dagVersions/\{version\_number\} \(the \`GetDagVersion\` operationId\).
 
 <a name="ClientWithResponses.GetDagWithResponse"></a>
-### func \(\*ClientWithResponses\) [GetDagWithResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L5039>)
+### func \(\*ClientWithResponses\) [GetDagWithResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L8151>)
 
 ```go
 func (c *ClientWithResponses) GetDagWithResponse(ctx context.Context, dagId DagID, reqEditors ...RequestEditorFn) (*GetDagResponse, error)
@@ -2038,7 +3532,7 @@ Returns a wrapper object for the known response body format\(s\).
 Corresponds with GET /api/v2/dags/\{dag\_id\} \(the \`GetDag\` operationId\).
 
 <a name="ClientWithResponses.GetHealthzWithResponse"></a>
-### func \(\*ClientWithResponses\) [GetHealthzWithResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L5437>)
+### func \(\*ClientWithResponses\) [GetHealthzWithResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L8755>)
 
 ```go
 func (c *ClientWithResponses) GetHealthzWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetHealthzResponse, error)
@@ -2051,7 +3545,7 @@ Returns a wrapper object for the known response body format\(s\).
 Corresponds with GET /healthz \(the \`GetHealthz\` operationId\).
 
 <a name="ClientWithResponses.GetMonitorExecutorWithResponse"></a>
-### func \(\*ClientWithResponses\) [GetMonitorExecutorWithResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L5234>)
+### func \(\*ClientWithResponses\) [GetMonitorExecutorWithResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L8508>)
 
 ```go
 func (c *ClientWithResponses) GetMonitorExecutorWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetMonitorExecutorResponse, error)
@@ -2064,7 +3558,7 @@ Returns a wrapper object for the known response body format\(s\).
 Corresponds with GET /api/v2/monitor/executor \(the \`GetMonitorExecutor\` operationId\).
 
 <a name="ClientWithResponses.GetMonitorHealthWithResponse"></a>
-### func \(\*ClientWithResponses\) [GetMonitorHealthWithResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L5247>)
+### func \(\*ClientWithResponses\) [GetMonitorHealthWithResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L8521>)
 
 ```go
 func (c *ClientWithResponses) GetMonitorHealthWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetMonitorHealthResponse, error)
@@ -2077,7 +3571,7 @@ Returns a wrapper object for the known response body format\(s\).
 Corresponds with GET /api/v2/monitor/health \(the \`GetMonitorHealth\` operationId\).
 
 <a name="ClientWithResponses.GetReadyzWithResponse"></a>
-### func \(\*ClientWithResponses\) [GetReadyzWithResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L5450>)
+### func \(\*ClientWithResponses\) [GetReadyzWithResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L8768>)
 
 ```go
 func (c *ClientWithResponses) GetReadyzWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetReadyzResponse, error)
@@ -2090,7 +3584,7 @@ Returns a wrapper object for the known response body format\(s\).
 Corresponds with GET /readyz \(the \`GetReadyz\` operationId\).
 
 <a name="ClientWithResponses.GetTaskInstanceWithResponse"></a>
-### func \(\*ClientWithResponses\) [GetTaskInstanceWithResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L5169>)
+### func \(\*ClientWithResponses\) [GetTaskInstanceWithResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L8347>)
 
 ```go
 func (c *ClientWithResponses) GetTaskInstanceWithResponse(ctx context.Context, dagId DagID, dagRunId DagRunID, taskId TaskID, reqEditors ...RequestEditorFn) (*GetTaskInstanceResponse, error)
@@ -2103,7 +3597,7 @@ Returns a wrapper object for the known response body format\(s\).
 Corresponds with GET /api/v2/dags/\{dag\_id\}/dagRuns/\{dag\_run\_id\}/taskInstances/\{task\_id\} \(the \`GetTaskInstance\` operationId\).
 
 <a name="ClientWithResponses.GetTaskLogsWithResponse"></a>
-### func \(\*ClientWithResponses\) [GetTaskLogsWithResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L5182>)
+### func \(\*ClientWithResponses\) [GetTaskLogsWithResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L8420>)
 
 ```go
 func (c *ClientWithResponses) GetTaskLogsWithResponse(ctx context.Context, dagId DagID, dagRunId DagRunID, taskId TaskID, tryNumber int, reqEditors ...RequestEditorFn) (*GetTaskLogsResponse, error)
@@ -2116,7 +3610,7 @@ Returns a wrapper object for the known response body format\(s\).
 Corresponds with GET /api/v2/dags/\{dag\_id\}/dagRuns/\{dag\_run\_id\}/taskInstances/\{task\_id\}/logs/\{try\_number\} \(the \`GetTaskLogs\` operationId\).
 
 <a name="ClientWithResponses.GetVariableWithResponse"></a>
-### func \(\*ClientWithResponses\) [GetVariableWithResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L5372>)
+### func \(\*ClientWithResponses\) [GetVariableWithResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L8690>)
 
 ```go
 func (c *ClientWithResponses) GetVariableWithResponse(ctx context.Context, variableKey VariableKey, reqEditors ...RequestEditorFn) (*GetVariableResponse, error)
@@ -2129,7 +3623,7 @@ Returns a wrapper object for the known response body format\(s\).
 Corresponds with GET /api/v2/variables/\{variable\_key\} \(the \`GetVariable\` operationId\).
 
 <a name="ClientWithResponses.GetVersionWithResponse"></a>
-### func \(\*ClientWithResponses\) [GetVersionWithResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L5385>)
+### func \(\*ClientWithResponses\) [GetVersionWithResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L8703>)
 
 ```go
 func (c *ClientWithResponses) GetVersionWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetVersionResponse, error)
@@ -2142,7 +3636,7 @@ Returns a wrapper object for the known response body format\(s\).
 Corresponds with GET /api/v2/version \(the \`GetVersion\` operationId\).
 
 <a name="ClientWithResponses.GetXcomEntryWithResponse"></a>
-### func \(\*ClientWithResponses\) [GetXcomEntryWithResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L5398>)
+### func \(\*ClientWithResponses\) [GetXcomEntryWithResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L8716>)
 
 ```go
 func (c *ClientWithResponses) GetXcomEntryWithResponse(ctx context.Context, dagId DagID, dagRunId DagRunID, taskId TaskID, key string, reqEditors ...RequestEditorFn) (*GetXcomEntryResponse, error)
@@ -2155,7 +3649,7 @@ Returns a wrapper object for the known response body format\(s\).
 Corresponds with GET /api/v2/xcoms/\{dag\_id\}/\{dag\_run\_id\}/\{task\_id\}/\{key\} \(the \`GetXcomEntry\` operationId\).
 
 <a name="ClientWithResponses.IssueTokenWithBodyWithResponse"></a>
-### func \(\*ClientWithResponses\) [IssueTokenWithBodyWithResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L5411>)
+### func \(\*ClientWithResponses\) [IssueTokenWithBodyWithResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L8729>)
 
 ```go
 func (c *ClientWithResponses) IssueTokenWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*IssueTokenResponse, error)
@@ -2168,7 +3662,7 @@ Takes any type of body and a specified content type, and returns a wrapper objec
 Corresponds with POST /auth/token \(the \`IssueToken\` operationId\).
 
 <a name="ClientWithResponses.IssueTokenWithResponse"></a>
-### func \(\*ClientWithResponses\) [IssueTokenWithResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L5424>)
+### func \(\*ClientWithResponses\) [IssueTokenWithResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L8742>)
 
 ```go
 func (c *ClientWithResponses) IssueTokenWithResponse(ctx context.Context, body IssueTokenJSONRequestBody, reqEditors ...RequestEditorFn) (*IssueTokenResponse, error)
@@ -2180,8 +3674,23 @@ Takes a body of the \`application/json\` content type, and returns a wrapper obj
 
 Corresponds with POST /auth/token \(the \`IssueToken\` operationId\).
 
+<a name="ClientWithResponses.ListAPITokensWithResponse"></a>
+### func \(\*ClientWithResponses\) [ListAPITokensWithResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L7947>)
+
+```go
+func (c *ClientWithResponses) ListAPITokensWithResponse(ctx context.Context, params *ListAPITokensParams, reqEditors ...RequestEditorFn) (*ListAPITokensResponse, error)
+```
+
+ListAPITokensWithResponse List API tokens \(Dexaflow\)
+
+Lists the caller's unrevoked API tokens, newest first, expired ones included. A caller who may manage accounts \(write:user\) sees every token of the tenant. The token itself and its hash are never returned. Not callable with an API token or any other scoped token \(ADR 0074\).
+
+Returns a wrapper object for the known response body format\(s\).
+
+Corresponds with GET /api/v2/apiTokens \(the \`ListAPITokens\` operationId\).
+
 <a name="ClientWithResponses.ListConnectionsWithResponse"></a>
-### func \(\*ClientWithResponses\) [ListConnectionsWithResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L4914>)
+### func \(\*ClientWithResponses\) [ListConnectionsWithResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L8024>)
 
 ```go
 func (c *ClientWithResponses) ListConnectionsWithResponse(ctx context.Context, params *ListConnectionsParams, reqEditors ...RequestEditorFn) (*ListConnectionsResponse, error)
@@ -2196,7 +3705,7 @@ Returns a wrapper object for the known response body format\(s\).
 Corresponds with GET /api/v2/connections \(the \`ListConnections\` operationId\).
 
 <a name="ClientWithResponses.ListDagRunsWithResponse"></a>
-### func \(\*ClientWithResponses\) [ListDagRunsWithResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L5104>)
+### func \(\*ClientWithResponses\) [ListDagRunsWithResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L8250>)
 
 ```go
 func (c *ClientWithResponses) ListDagRunsWithResponse(ctx context.Context, dagId DagID, params *ListDagRunsParams, reqEditors ...RequestEditorFn) (*ListDagRunsResponse, error)
@@ -2209,7 +3718,7 @@ Returns a wrapper object for the known response body format\(s\).
 Corresponds with GET /api/v2/dags/\{dag\_id\}/dagRuns \(the \`ListDagRuns\` operationId\).
 
 <a name="ClientWithResponses.ListDagVersionsWithResponse"></a>
-### func \(\*ClientWithResponses\) [ListDagVersionsWithResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L5195>)
+### func \(\*ClientWithResponses\) [ListDagVersionsWithResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L8433>)
 
 ```go
 func (c *ClientWithResponses) ListDagVersionsWithResponse(ctx context.Context, dagId DagID, reqEditors ...RequestEditorFn) (*ListDagVersionsResponse, error)
@@ -2222,7 +3731,7 @@ Returns a wrapper object for the known response body format\(s\).
 Corresponds with GET /api/v2/dags/\{dag\_id\}/dagVersions \(the \`ListDagVersions\` operationId\).
 
 <a name="ClientWithResponses.ListDagsWithResponse"></a>
-### func \(\*ClientWithResponses\) [ListDagsWithResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L5026>)
+### func \(\*ClientWithResponses\) [ListDagsWithResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L8138>)
 
 ```go
 func (c *ClientWithResponses) ListDagsWithResponse(ctx context.Context, params *ListDagsParams, reqEditors ...RequestEditorFn) (*ListDagsResponse, error)
@@ -2235,7 +3744,7 @@ Returns a wrapper object for the known response body format\(s\).
 Corresponds with GET /api/v2/dags \(the \`ListDags\` operationId\).
 
 <a name="ClientWithResponses.ListTaskInstancesWithResponse"></a>
-### func \(\*ClientWithResponses\) [ListTaskInstancesWithResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L5156>)
+### func \(\*ClientWithResponses\) [ListTaskInstancesWithResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L8334>)
 
 ```go
 func (c *ClientWithResponses) ListTaskInstancesWithResponse(ctx context.Context, dagId DagID, dagRunId DagRunID, reqEditors ...RequestEditorFn) (*ListTaskInstancesResponse, error)
@@ -2243,12 +3752,14 @@ func (c *ClientWithResponses) ListTaskInstancesWithResponse(ctx context.Context,
 
 ListTaskInstancesWithResponse List task instances of a DAG run
 
+Pages with the same limit, offset and cursor query parameters as the DAG run list \(they are not declared on this operation so the generated client keeps its signature\). A request that carries cursor gets next\_cursor and previous\_cursor in the body; only the offset cursors this list issues are accepted, any other is refused with 400.
+
 Returns a wrapper object for the known response body format\(s\).
 
 Corresponds with GET /api/v2/dags/\{dag\_id\}/dagRuns/\{dag\_run\_id\}/taskInstances \(the \`ListTaskInstances\` operationId\).
 
 <a name="ClientWithResponses.ListUsersWithResponse"></a>
-### func \(\*ClientWithResponses\) [ListUsersWithResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L5264>)
+### func \(\*ClientWithResponses\) [ListUsersWithResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L8538>)
 
 ```go
 func (c *ClientWithResponses) ListUsersWithResponse(ctx context.Context, params *ListUsersParams, reqEditors ...RequestEditorFn) (*ListUsersResponse, error)
@@ -2263,7 +3774,7 @@ Returns a wrapper object for the known response body format\(s\).
 Corresponds with GET /api/v2/users \(the \`ListUsers\` operationId\).
 
 <a name="ClientWithResponses.ListVariablesWithResponse"></a>
-### func \(\*ClientWithResponses\) [ListVariablesWithResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L5314>)
+### func \(\*ClientWithResponses\) [ListVariablesWithResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L8632>)
 
 ```go
 func (c *ClientWithResponses) ListVariablesWithResponse(ctx context.Context, params *ListVariablesParams, reqEditors ...RequestEditorFn) (*ListVariablesResponse, error)
@@ -2277,8 +3788,128 @@ Returns a wrapper object for the known response body format\(s\).
 
 Corresponds with GET /api/v2/variables \(the \`ListVariables\` operationId\).
 
+<a name="ClientWithResponses.PatchTaskInstanceDryRunWithBodyWithResponse"></a>
+### func \(\*ClientWithResponses\) [PatchTaskInstanceDryRunWithBodyWithResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L8392>)
+
+```go
+func (c *ClientWithResponses) PatchTaskInstanceDryRunWithBodyWithResponse(ctx context.Context, dagId DagID, dagRunId DagRunID, taskId TaskID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PatchTaskInstanceDryRunResponse, error)
+```
+
+PatchTaskInstanceDryRunWithBodyWithResponse Preview marking a task instance
+
+Answers the task instance with the state the PATCH would set, without changing anything.
+
+Takes any type of body and a specified content type, and returns a wrapper object for the known response body format\(s\).
+
+Corresponds with PATCH /api/v2/dags/\{dag\_id\}/dagRuns/\{dag\_run\_id\}/taskInstances/\{task\_id\}/dry\_run \(the \`PatchTaskInstanceDryRun\` operationId\).
+
+<a name="ClientWithResponses.PatchTaskInstanceDryRunWithResponse"></a>
+### func \(\*ClientWithResponses\) [PatchTaskInstanceDryRunWithResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L8407>)
+
+```go
+func (c *ClientWithResponses) PatchTaskInstanceDryRunWithResponse(ctx context.Context, dagId DagID, dagRunId DagRunID, taskId TaskID, body PatchTaskInstanceDryRunJSONRequestBody, reqEditors ...RequestEditorFn) (*PatchTaskInstanceDryRunResponse, error)
+```
+
+PatchTaskInstanceDryRunWithResponse Preview marking a task instance
+
+Answers the task instance with the state the PATCH would set, without changing anything.
+
+Takes a body of the \`application/json\` content type, and returns a wrapper object for the known response body format\(s\).
+
+Corresponds with PATCH /api/v2/dags/\{dag\_id\}/dagRuns/\{dag\_run\_id\}/taskInstances/\{task\_id\}/dry\_run \(the \`PatchTaskInstanceDryRun\` operationId\).
+
+<a name="ClientWithResponses.PatchTaskInstanceWithBodyWithResponse"></a>
+### func \(\*ClientWithResponses\) [PatchTaskInstanceWithBodyWithResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L8362>)
+
+```go
+func (c *ClientWithResponses) PatchTaskInstanceWithBodyWithResponse(ctx context.Context, dagId DagID, dagRunId DagRunID, taskId TaskID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PatchTaskInstanceResponse, error)
+```
+
+PatchTaskInstanceWithBodyWithResponse Mark a task instance as success, failed or skipped
+
+Sets the task instance's state, as the UI's Mark as action does. The answer is the affected set, a collection holding the updated task instance, as Apache Airflow declares it.
+
+Takes any type of body and a specified content type, and returns a wrapper object for the known response body format\(s\).
+
+Corresponds with PATCH /api/v2/dags/\{dag\_id\}/dagRuns/\{dag\_run\_id\}/taskInstances/\{task\_id\} \(the \`PatchTaskInstance\` operationId\).
+
+<a name="ClientWithResponses.PatchTaskInstanceWithResponse"></a>
+### func \(\*ClientWithResponses\) [PatchTaskInstanceWithResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L8377>)
+
+```go
+func (c *ClientWithResponses) PatchTaskInstanceWithResponse(ctx context.Context, dagId DagID, dagRunId DagRunID, taskId TaskID, body PatchTaskInstanceJSONRequestBody, reqEditors ...RequestEditorFn) (*PatchTaskInstanceResponse, error)
+```
+
+PatchTaskInstanceWithResponse Mark a task instance as success, failed or skipped
+
+Sets the task instance's state, as the UI's Mark as action does. The answer is the affected set, a collection holding the updated task instance, as Apache Airflow declares it.
+
+Takes a body of the \`application/json\` content type, and returns a wrapper object for the known response body format\(s\).
+
+Corresponds with PATCH /api/v2/dags/\{dag\_id\}/dagRuns/\{dag\_run\_id\}/taskInstances/\{task\_id\} \(the \`PatchTaskInstance\` operationId\).
+
+<a name="ClientWithResponses.PatchUserWithBodyWithResponse"></a>
+### func \(\*ClientWithResponses\) [PatchUserWithBodyWithResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L8594>)
+
+```go
+func (c *ClientWithResponses) PatchUserWithBodyWithResponse(ctx context.Context, userId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PatchUserResponse, error)
+```
+
+PatchUserWithBodyWithResponse Activate or deactivate a user
+
+Admin\-only. Deactivates or reactivates an account of the caller's tenant. A deactivated user's sessions and API tokens stop working at their next request, their token renewal is refused, and they cannot sign in; reactivating restores access with a fresh sign\-in. The change and a user.deactivate or user.activate audit entry are written together. is\_active is the only field accepted. An admin cannot deactivate their own account. A user of another tenant answers 404. Requires the write:user permission.
+
+Takes any type of body and a specified content type, and returns a wrapper object for the known response body format\(s\).
+
+Corresponds with PATCH /api/v2/users/\{user\_id\} \(the \`PatchUser\` operationId\).
+
+<a name="ClientWithResponses.PatchUserWithResponse"></a>
+### func \(\*ClientWithResponses\) [PatchUserWithResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L8616>)
+
+```go
+func (c *ClientWithResponses) PatchUserWithResponse(ctx context.Context, userId string, body PatchUserJSONRequestBody, reqEditors ...RequestEditorFn) (*PatchUserResponse, error)
+```
+
+PatchUserWithResponse Activate or deactivate a user
+
+Admin\-only. Deactivates or reactivates an account of the caller's tenant. A deactivated user's sessions and API tokens stop working at their next request, their token renewal is refused, and they cannot sign in; reactivating restores access with a fresh sign\-in. The change and a user.deactivate or user.activate audit entry are written together. is\_active is the only field accepted. An admin cannot deactivate their own account. A user of another tenant answers 404. Requires the write:user permission.
+
+Takes a body of the \`application/json\` content type, and returns a wrapper object for the known response body format\(s\).
+
+Corresponds with PATCH /api/v2/users/\{user\_id\} \(the \`PatchUser\` operationId\).
+
+<a name="ClientWithResponses.RegisterDagVersionWithBodyWithResponse"></a>
+### func \(\*ClientWithResponses\) [RegisterDagVersionWithBodyWithResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L8477>)
+
+```go
+func (c *ClientWithResponses) RegisterDagVersionWithBodyWithResponse(ctx context.Context, dagId DagID, params *RegisterDagVersionParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RegisterDagVersionResponse, error)
+```
+
+RegisterDagVersionWithBodyWithResponse Register a compiled DAG version \(Dexaflow\)
+
+Registers a compiled dag.json as a new version of the DAG and makes it current. Re\-registering content that is already registered \(same spec hash\) is a no\-op answered with 200 and created false, and leaves the current version as it is. The same label with other content is refused with 409. Needs deploy or write on dags \(scope dexaflow:deploy\). Without is\_paused, a DAG the register creates starts paused per its is\_paused\_upon\_creation, else the server's dags\_are\_paused\_at\_creation, and an existing DAG keeps its state. With is\_paused, the DAG ends the register in that state whether it is created, gets a new version or already had this content; a change to an existing DAG is audited as dag.pause or dag.unpause in the same transaction. Pausing is a run\-state write: sending is\_paused also needs write on dags, and a scoped token needs dexaflow:run as well as dexaflow:deploy, else the register is refused with 403. Under the server setting deploy.require\_digest, an image that is not pinned by a full digest \(repository@sha256: and 64 hex characters\) is registered with a warning in warnings \(warn\), or refused with 400 \(enforce\). Off, the default, accepts any image. POST /api/v2/dags/\{dag\_id\}/versions/dry\_run runs the same checks and writes nothing.
+
+Takes any type of body and a specified content type, and returns a wrapper object for the known response body format\(s\).
+
+Corresponds with POST /api/v2/dags/\{dag\_id\}/versions \(the \`RegisterDagVersion\` operationId\).
+
+<a name="ClientWithResponses.RegisterDagVersionWithResponse"></a>
+### func \(\*ClientWithResponses\) [RegisterDagVersionWithResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L8495>)
+
+```go
+func (c *ClientWithResponses) RegisterDagVersionWithResponse(ctx context.Context, dagId DagID, params *RegisterDagVersionParams, body RegisterDagVersionJSONRequestBody, reqEditors ...RequestEditorFn) (*RegisterDagVersionResponse, error)
+```
+
+RegisterDagVersionWithResponse Register a compiled DAG version \(Dexaflow\)
+
+Registers a compiled dag.json as a new version of the DAG and makes it current. Re\-registering content that is already registered \(same spec hash\) is a no\-op answered with 200 and created false, and leaves the current version as it is. The same label with other content is refused with 409. Needs deploy or write on dags \(scope dexaflow:deploy\). Without is\_paused, a DAG the register creates starts paused per its is\_paused\_upon\_creation, else the server's dags\_are\_paused\_at\_creation, and an existing DAG keeps its state. With is\_paused, the DAG ends the register in that state whether it is created, gets a new version or already had this content; a change to an existing DAG is audited as dag.pause or dag.unpause in the same transaction. Pausing is a run\-state write: sending is\_paused also needs write on dags, and a scoped token needs dexaflow:run as well as dexaflow:deploy, else the register is refused with 403. Under the server setting deploy.require\_digest, an image that is not pinned by a full digest \(repository@sha256: and 64 hex characters\) is registered with a warning in warnings \(warn\), or refused with 400 \(enforce\). Off, the default, accepts any image. POST /api/v2/dags/\{dag\_id\}/versions/dry\_run runs the same checks and writes nothing.
+
+Takes a body of the \`application/json\` content type, and returns a wrapper object for the known response body format\(s\).
+
+Corresponds with POST /api/v2/dags/\{dag\_id\}/versions \(the \`RegisterDagVersion\` operationId\).
+
 <a name="ClientWithResponses.RenewTokenWithResponse"></a>
-### func \(\*ClientWithResponses\) [RenewTokenWithResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L4897>)
+### func \(\*ClientWithResponses\) [RenewTokenWithResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L8007>)
 
 ```go
 func (c *ClientWithResponses) RenewTokenWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*RenewTokenResponse, error)
@@ -2286,14 +3917,59 @@ func (c *ClientWithResponses) RenewTokenWithResponse(ctx context.Context, reqEdi
 
 RenewTokenWithResponse Renew a still\-valid JWT into a fresh short\-lived token
 
-Transparent renewal: given a still\-valid user bearer, re\-mints the same identity with a fresh short TTL, bounded by a server\-side max\_lifetime measured from first login. Lets a long CLI/dev session avoid re\-logging in every token TTL while keeping the access token short\-lived. Returns 401 when the presented token is invalid, expired, or past max\_lifetime, in which case the client must log in again.
+Transparent renewal: given a still\-valid user bearer, re\-mints the same identity with a fresh short TTL, bounded by a server\-side max\_lifetime measured from first login. Lets a long CLI/dev session avoid re\-logging in every token TTL while keeping the access token short\-lived. Returns 401 when the presented token is invalid, expired, or past max\_lifetime, in which case the client must log in again. Returns 503 with Retry\-After when the token could not be checked because the user store is unreachable; the token may still be good, so the client waits and retries instead of logging in again.
 
 Returns a wrapper object for the known response body format\(s\).
 
 Corresponds with POST /api/v2/auth/token/renew \(the \`RenewToken\` operationId\).
 
+<a name="ClientWithResponses.RevokeAPITokenWithResponse"></a>
+### func \(\*ClientWithResponses\) [RevokeAPITokenWithResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L7992>)
+
+```go
+func (c *ClientWithResponses) RevokeAPITokenWithResponse(ctx context.Context, tokenId string, reqEditors ...RequestEditorFn) (*RevokeAPITokenResponse, error)
+```
+
+RevokeAPITokenWithResponse Revoke an API token \(Dexaflow\)
+
+Revokes one of the caller's API tokens, or any token of the tenant for a caller who may manage accounts \(write:user\). The token stops working on its next request. Revoking a revoked token succeeds. Audited as api\_token.revoke. Not callable with an API token or any other scoped token.
+
+Returns a wrapper object for the known response body format\(s\).
+
+Corresponds with DELETE /api/v2/apiTokens/\{token\_id\} \(the \`RevokeAPIToken\` operationId\).
+
+<a name="ClientWithResponses.SetDagCurrentVersionWithBodyWithResponse"></a>
+### func \(\*ClientWithResponses\) [SetDagCurrentVersionWithBodyWithResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L8222>)
+
+```go
+func (c *ClientWithResponses) SetDagCurrentVersionWithBodyWithResponse(ctx context.Context, dagId DagID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SetDagCurrentVersionResponse, error)
+```
+
+SetDagCurrentVersionWithBodyWithResponse Make a registered version current \(Dexaflow\)
+
+Makes a registered version of the DAG the one new runs are created with, by label or by version\_number: a rollback, or a roll forward. The DAG's schedule and metadata become that version's, in the same transaction. Runs that already exist keep their version, and is\_paused is never changed. The version must pass the checks a register of it would pass today. Naming the current version changes nothing \(changed false\). Audited as dag.version.set\_current. Needs deploy or write on dags \(scope dexaflow:deploy\). Under the server setting deploy.require\_digest, a version whose image is not pinned by a full sha256 digest is made current with a warning in warnings \(warn\), or refused with 400 \(enforce\).
+
+Takes any type of body and a specified content type, and returns a wrapper object for the known response body format\(s\).
+
+Corresponds with PUT /api/v2/dags/\{dag\_id\}/currentVersion \(the \`SetDagCurrentVersion\` operationId\).
+
+<a name="ClientWithResponses.SetDagCurrentVersionWithResponse"></a>
+### func \(\*ClientWithResponses\) [SetDagCurrentVersionWithResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L8237>)
+
+```go
+func (c *ClientWithResponses) SetDagCurrentVersionWithResponse(ctx context.Context, dagId DagID, body SetDagCurrentVersionJSONRequestBody, reqEditors ...RequestEditorFn) (*SetDagCurrentVersionResponse, error)
+```
+
+SetDagCurrentVersionWithResponse Make a registered version current \(Dexaflow\)
+
+Makes a registered version of the DAG the one new runs are created with, by label or by version\_number: a rollback, or a roll forward. The DAG's schedule and metadata become that version's, in the same transaction. Runs that already exist keep their version, and is\_paused is never changed. The version must pass the checks a register of it would pass today. Naming the current version changes nothing \(changed false\). Audited as dag.version.set\_current. Needs deploy or write on dags \(scope dexaflow:deploy\). Under the server setting deploy.require\_digest, a version whose image is not pinned by a full sha256 digest is made current with a warning in warnings \(warn\), or refused with 400 \(enforce\).
+
+Takes a body of the \`application/json\` content type, and returns a wrapper object for the known response body format\(s\).
+
+Corresponds with PUT /api/v2/dags/\{dag\_id\}/currentVersion \(the \`SetDagCurrentVersion\` operationId\).
+
 <a name="ClientWithResponses.TriggerDagRunWithBodyWithResponse"></a>
-### func \(\*ClientWithResponses\) [TriggerDagRunWithBodyWithResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L5117>)
+### func \(\*ClientWithResponses\) [TriggerDagRunWithBodyWithResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L8263>)
 
 ```go
 func (c *ClientWithResponses) TriggerDagRunWithBodyWithResponse(ctx context.Context, dagId DagID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*TriggerDagRunResponse, error)
@@ -2306,7 +3982,7 @@ Takes any type of body and a specified content type, and returns a wrapper objec
 Corresponds with POST /api/v2/dags/\{dag\_id\}/dagRuns \(the \`TriggerDagRun\` operationId\).
 
 <a name="ClientWithResponses.TriggerDagRunWithResponse"></a>
-### func \(\*ClientWithResponses\) [TriggerDagRunWithResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L5130>)
+### func \(\*ClientWithResponses\) [TriggerDagRunWithResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L8276>)
 
 ```go
 func (c *ClientWithResponses) TriggerDagRunWithResponse(ctx context.Context, dagId DagID, body TriggerDagRunJSONRequestBody, reqEditors ...RequestEditorFn) (*TriggerDagRunResponse, error)
@@ -2319,7 +3995,7 @@ Takes a body of the \`application/json\` content type, and returns a wrapper obj
 Corresponds with POST /api/v2/dags/\{dag\_id\}/dagRuns \(the \`TriggerDagRun\` operationId\).
 
 <a name="ClientWithResponses.UpdateConnectionWithBodyWithResponse"></a>
-### func \(\*ClientWithResponses\) [UpdateConnectionWithBodyWithResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L4987>)
+### func \(\*ClientWithResponses\) [UpdateConnectionWithBodyWithResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L8097>)
 
 ```go
 func (c *ClientWithResponses) UpdateConnectionWithBodyWithResponse(ctx context.Context, connectionId ConnectionID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdateConnectionResponse, error)
@@ -2332,7 +4008,7 @@ Takes any type of body and a specified content type, and returns a wrapper objec
 Corresponds with PATCH /api/v2/connections/\{connection\_id\} \(the \`UpdateConnection\` operationId\).
 
 <a name="ClientWithResponses.UpdateConnectionWithResponse"></a>
-### func \(\*ClientWithResponses\) [UpdateConnectionWithResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L5000>)
+### func \(\*ClientWithResponses\) [UpdateConnectionWithResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L8110>)
 
 ```go
 func (c *ClientWithResponses) UpdateConnectionWithResponse(ctx context.Context, connectionId ConnectionID, body UpdateConnectionJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateConnectionResponse, error)
@@ -2345,7 +4021,7 @@ Takes a body of the \`application/json\` content type, and returns a wrapper obj
 Corresponds with PATCH /api/v2/connections/\{connection\_id\} \(the \`UpdateConnection\` operationId\).
 
 <a name="ClientWithResponses.UpdateDagWithBodyWithResponse"></a>
-### func \(\*ClientWithResponses\) [UpdateDagWithBodyWithResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L5052>)
+### func \(\*ClientWithResponses\) [UpdateDagWithBodyWithResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L8166>)
 
 ```go
 func (c *ClientWithResponses) UpdateDagWithBodyWithResponse(ctx context.Context, dagId DagID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdateDagResponse, error)
@@ -2353,12 +4029,14 @@ func (c *ClientWithResponses) UpdateDagWithBodyWithResponse(ctx context.Context,
 
 UpdateDagWithBodyWithResponse Update DAG \(typically pause/unpause\)
 
+Sets is\_paused. A change is audited as dag.pause or dag.unpause with the acting user; asking for the state the DAG is already in records nothing.
+
 Takes any type of body and a specified content type, and returns a wrapper object for the known response body format\(s\).
 
 Corresponds with PATCH /api/v2/dags/\{dag\_id\} \(the \`UpdateDag\` operationId\).
 
 <a name="ClientWithResponses.UpdateDagWithResponse"></a>
-### func \(\*ClientWithResponses\) [UpdateDagWithResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L5065>)
+### func \(\*ClientWithResponses\) [UpdateDagWithResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L8181>)
 
 ```go
 func (c *ClientWithResponses) UpdateDagWithResponse(ctx context.Context, dagId DagID, body UpdateDagJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateDagResponse, error)
@@ -2366,21 +4044,59 @@ func (c *ClientWithResponses) UpdateDagWithResponse(ctx context.Context, dagId D
 
 UpdateDagWithResponse Update DAG \(typically pause/unpause\)
 
+Sets is\_paused. A change is audited as dag.pause or dag.unpause with the acting user; asking for the state the DAG is already in records nothing.
+
 Takes a body of the \`application/json\` content type, and returns a wrapper object for the known response body format\(s\).
 
 Corresponds with PATCH /api/v2/dags/\{dag\_id\} \(the \`UpdateDag\` operationId\).
 
 <a name="ClientWithResponsesInterface"></a>
-## type [ClientWithResponsesInterface](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L3030-L3353>)
+## type [ClientWithResponsesInterface](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L4762-L5257>)
 
 ClientWithResponsesInterface is the interface specification for the client with responses above.
 
 ```go
 type ClientWithResponsesInterface interface {
 
+    // ListAPITokensWithResponse List API tokens (Dexaflow)
+    //
+    // Lists the caller's unrevoked API tokens, newest first, expired ones included. A caller who may manage accounts (write:user) sees every token of the tenant. The token itself and its hash are never returned. Not callable with an API token or any other scoped token (ADR 0074).
+    //
+    // Returns a wrapper object for the known response body format(s).
+    //
+    // Corresponds with GET /api/v2/apiTokens (the `ListAPITokens` operationId).
+    ListAPITokensWithResponse(ctx context.Context, params *ListAPITokensParams, reqEditors ...RequestEditorFn) (*ListAPITokensResponse, error)
+
+    // CreateAPITokenWithBodyWithResponse Create an API token (Dexaflow)
+    //
+    // Creates a long-lived, named API token owned by the caller (ADR 0074). The response carries the token once; the server keeps only its SHA-256 hash. The token authenticates as its owner, with the owner's current roles narrowed to the token's scopes: deploy carries dexaflow:deploy alone (it registers versions, sets the current version, and reads the DAG list, DAGs, their details and versions, and nothing else), read carries dexaflow:read. The caller's roles must allow what the scope does (deploy needs deploy or write on dags, read needs read on dags). An account holds at most 50 live tokens. Audited as api_token.create. Reusing the name of an expired token retires that token, audited as api_token.retire_expired. Not callable with an API token or any other scoped token.
+    //
+    // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+    //
+    // Corresponds with POST /api/v2/apiTokens (the `CreateAPIToken` operationId).
+    CreateAPITokenWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateAPITokenResponse, error)
+
+    // CreateAPITokenWithResponse Create an API token (Dexaflow)
+    //
+    // Creates a long-lived, named API token owned by the caller (ADR 0074). The response carries the token once; the server keeps only its SHA-256 hash. The token authenticates as its owner, with the owner's current roles narrowed to the token's scopes: deploy carries dexaflow:deploy alone (it registers versions, sets the current version, and reads the DAG list, DAGs, their details and versions, and nothing else), read carries dexaflow:read. The caller's roles must allow what the scope does (deploy needs deploy or write on dags, read needs read on dags). An account holds at most 50 live tokens. Audited as api_token.create. Reusing the name of an expired token retires that token, audited as api_token.retire_expired. Not callable with an API token or any other scoped token.
+    //
+    // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+    //
+    // Corresponds with POST /api/v2/apiTokens (the `CreateAPIToken` operationId).
+    CreateAPITokenWithResponse(ctx context.Context, body CreateAPITokenJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateAPITokenResponse, error)
+
+    // RevokeAPITokenWithResponse Revoke an API token (Dexaflow)
+    //
+    // Revokes one of the caller's API tokens, or any token of the tenant for a caller who may manage accounts (write:user). The token stops working on its next request. Revoking a revoked token succeeds. Audited as api_token.revoke. Not callable with an API token or any other scoped token.
+    //
+    // Returns a wrapper object for the known response body format(s).
+    //
+    // Corresponds with DELETE /api/v2/apiTokens/{token_id} (the `RevokeAPIToken` operationId).
+    RevokeAPITokenWithResponse(ctx context.Context, tokenId string, reqEditors ...RequestEditorFn) (*RevokeAPITokenResponse, error)
+
     // RenewTokenWithResponse Renew a still-valid JWT into a fresh short-lived token
     //
-    // Transparent renewal: given a still-valid user bearer, re-mints the same identity with a fresh short TTL, bounded by a server-side max_lifetime measured from first login. Lets a long CLI/dev session avoid re-logging in every token TTL while keeping the access token short-lived. Returns 401 when the presented token is invalid, expired, or past max_lifetime, in which case the client must log in again.
+    // Transparent renewal: given a still-valid user bearer, re-mints the same identity with a fresh short TTL, bounded by a server-side max_lifetime measured from first login. Lets a long CLI/dev session avoid re-logging in every token TTL while keeping the access token short-lived. Returns 401 when the presented token is invalid, expired, or past max_lifetime, in which case the client must log in again. Returns 503 with Retry-After when the token could not be checked because the user store is unreachable; the token may still be good, so the client waits and retries instead of logging in again.
     //
     // Returns a wrapper object for the known response body format(s).
     //
@@ -2450,6 +4166,8 @@ type ClientWithResponsesInterface interface {
 
     // GetDagSourceWithResponse Get a DAG's source (the dag.py text)
     //
+    // The source registered with one version of the DAG, as in Airflow 3.2: version_number selects the version, and without it (or with 0) the newest version is served. After a rollback the newest version is not the current one. A version the DAG does not have is a 404, and a version_number that is not an integer is a 400.
+    //
     // Returns a wrapper object for the known response body format(s).
     //
     // Corresponds with GET /api/v2/dagSources/{dag_id} (the `GetDagSource` operationId).
@@ -2471,12 +4189,16 @@ type ClientWithResponsesInterface interface {
 
     // UpdateDagWithBodyWithResponse Update DAG (typically pause/unpause)
     //
+    // Sets is_paused. A change is audited as dag.pause or dag.unpause with the acting user; asking for the state the DAG is already in records nothing.
+    //
     // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
     //
     // Corresponds with PATCH /api/v2/dags/{dag_id} (the `UpdateDag` operationId).
     UpdateDagWithBodyWithResponse(ctx context.Context, dagId DagID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdateDagResponse, error)
 
     // UpdateDagWithResponse Update DAG (typically pause/unpause)
+    //
+    // Sets is_paused. A change is audited as dag.pause or dag.unpause with the acting user; asking for the state the DAG is already in records nothing.
     //
     // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
     //
@@ -2496,6 +4218,24 @@ type ClientWithResponsesInterface interface {
     //
     // Corresponds with POST /api/v2/dags/{dag_id}/clearTaskInstances (the `ClearTaskInstances` operationId).
     ClearTaskInstancesWithResponse(ctx context.Context, dagId DagID, body ClearTaskInstancesJSONRequestBody, reqEditors ...RequestEditorFn) (*ClearTaskInstancesResponse, error)
+
+    // SetDagCurrentVersionWithBodyWithResponse Make a registered version current (Dexaflow)
+    //
+    // Makes a registered version of the DAG the one new runs are created with, by label or by version_number: a rollback, or a roll forward. The DAG's schedule and metadata become that version's, in the same transaction. Runs that already exist keep their version, and is_paused is never changed. The version must pass the checks a register of it would pass today. Naming the current version changes nothing (changed false). Audited as dag.version.set_current. Needs deploy or write on dags (scope dexaflow:deploy). Under the server setting deploy.require_digest, a version whose image is not pinned by a full sha256 digest is made current with a warning in warnings (warn), or refused with 400 (enforce).
+    //
+    // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+    //
+    // Corresponds with PUT /api/v2/dags/{dag_id}/currentVersion (the `SetDagCurrentVersion` operationId).
+    SetDagCurrentVersionWithBodyWithResponse(ctx context.Context, dagId DagID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SetDagCurrentVersionResponse, error)
+
+    // SetDagCurrentVersionWithResponse Make a registered version current (Dexaflow)
+    //
+    // Makes a registered version of the DAG the one new runs are created with, by label or by version_number: a rollback, or a roll forward. The DAG's schedule and metadata become that version's, in the same transaction. Runs that already exist keep their version, and is_paused is never changed. The version must pass the checks a register of it would pass today. Naming the current version changes nothing (changed false). Audited as dag.version.set_current. Needs deploy or write on dags (scope dexaflow:deploy). Under the server setting deploy.require_digest, a version whose image is not pinned by a full sha256 digest is made current with a warning in warnings (warn), or refused with 400 (enforce).
+    //
+    // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+    //
+    // Corresponds with PUT /api/v2/dags/{dag_id}/currentVersion (the `SetDagCurrentVersion` operationId).
+    SetDagCurrentVersionWithResponse(ctx context.Context, dagId DagID, body SetDagCurrentVersionJSONRequestBody, reqEditors ...RequestEditorFn) (*SetDagCurrentVersionResponse, error)
 
     // ListDagRunsWithResponse List DAG runs
     //
@@ -2525,7 +4265,27 @@ type ClientWithResponsesInterface interface {
     // Corresponds with GET /api/v2/dags/{dag_id}/dagRuns/{dag_run_id} (the `GetDagRun` operationId).
     GetDagRunWithResponse(ctx context.Context, dagId DagID, dagRunId DagRunID, reqEditors ...RequestEditorFn) (*GetDagRunResponse, error)
 
+    // ClearDagRunWithBodyWithResponse Clear a whole DAG run (queue its task instances for re-run)
+    //
+    // The run page's Clear action. A dry run (the default) answers the task instances the clear would reset. The clear itself resets them, re-queues the run and answers the run.
+    //
+    // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+    //
+    // Corresponds with POST /api/v2/dags/{dag_id}/dagRuns/{dag_run_id}/clear (the `ClearDagRun` operationId).
+    ClearDagRunWithBodyWithResponse(ctx context.Context, dagId DagID, dagRunId DagRunID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ClearDagRunResponse, error)
+
+    // ClearDagRunWithResponse Clear a whole DAG run (queue its task instances for re-run)
+    //
+    // The run page's Clear action. A dry run (the default) answers the task instances the clear would reset. The clear itself resets them, re-queues the run and answers the run.
+    //
+    // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+    //
+    // Corresponds with POST /api/v2/dags/{dag_id}/dagRuns/{dag_run_id}/clear (the `ClearDagRun` operationId).
+    ClearDagRunWithResponse(ctx context.Context, dagId DagID, dagRunId DagRunID, body ClearDagRunJSONRequestBody, reqEditors ...RequestEditorFn) (*ClearDagRunResponse, error)
+
     // ListTaskInstancesWithResponse List task instances of a DAG run
+    //
+    // Pages with the same limit, offset and cursor query parameters as the DAG run list (they are not declared on this operation so the generated client keeps its signature). A request that carries cursor gets next_cursor and previous_cursor in the body; only the offset cursors this list issues are accepted, any other is refused with 400.
     //
     // Returns a wrapper object for the known response body format(s).
     //
@@ -2538,6 +4298,42 @@ type ClientWithResponsesInterface interface {
     //
     // Corresponds with GET /api/v2/dags/{dag_id}/dagRuns/{dag_run_id}/taskInstances/{task_id} (the `GetTaskInstance` operationId).
     GetTaskInstanceWithResponse(ctx context.Context, dagId DagID, dagRunId DagRunID, taskId TaskID, reqEditors ...RequestEditorFn) (*GetTaskInstanceResponse, error)
+
+    // PatchTaskInstanceWithBodyWithResponse Mark a task instance as success, failed or skipped
+    //
+    // Sets the task instance's state, as the UI's Mark as action does. The answer is the affected set, a collection holding the updated task instance, as Apache Airflow declares it.
+    //
+    // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+    //
+    // Corresponds with PATCH /api/v2/dags/{dag_id}/dagRuns/{dag_run_id}/taskInstances/{task_id} (the `PatchTaskInstance` operationId).
+    PatchTaskInstanceWithBodyWithResponse(ctx context.Context, dagId DagID, dagRunId DagRunID, taskId TaskID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PatchTaskInstanceResponse, error)
+
+    // PatchTaskInstanceWithResponse Mark a task instance as success, failed or skipped
+    //
+    // Sets the task instance's state, as the UI's Mark as action does. The answer is the affected set, a collection holding the updated task instance, as Apache Airflow declares it.
+    //
+    // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+    //
+    // Corresponds with PATCH /api/v2/dags/{dag_id}/dagRuns/{dag_run_id}/taskInstances/{task_id} (the `PatchTaskInstance` operationId).
+    PatchTaskInstanceWithResponse(ctx context.Context, dagId DagID, dagRunId DagRunID, taskId TaskID, body PatchTaskInstanceJSONRequestBody, reqEditors ...RequestEditorFn) (*PatchTaskInstanceResponse, error)
+
+    // PatchTaskInstanceDryRunWithBodyWithResponse Preview marking a task instance
+    //
+    // Answers the task instance with the state the PATCH would set, without changing anything.
+    //
+    // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+    //
+    // Corresponds with PATCH /api/v2/dags/{dag_id}/dagRuns/{dag_run_id}/taskInstances/{task_id}/dry_run (the `PatchTaskInstanceDryRun` operationId).
+    PatchTaskInstanceDryRunWithBodyWithResponse(ctx context.Context, dagId DagID, dagRunId DagRunID, taskId TaskID, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PatchTaskInstanceDryRunResponse, error)
+
+    // PatchTaskInstanceDryRunWithResponse Preview marking a task instance
+    //
+    // Answers the task instance with the state the PATCH would set, without changing anything.
+    //
+    // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+    //
+    // Corresponds with PATCH /api/v2/dags/{dag_id}/dagRuns/{dag_run_id}/taskInstances/{task_id}/dry_run (the `PatchTaskInstanceDryRun` operationId).
+    PatchTaskInstanceDryRunWithResponse(ctx context.Context, dagId DagID, dagRunId DagRunID, taskId TaskID, body PatchTaskInstanceDryRunJSONRequestBody, reqEditors ...RequestEditorFn) (*PatchTaskInstanceDryRunResponse, error)
 
     // GetTaskLogsWithResponse Get task logs
     //
@@ -2566,6 +4362,30 @@ type ClientWithResponsesInterface interface {
     //
     // Corresponds with GET /api/v2/dags/{dag_id}/spec (the `GetDagSpec` operationId).
     GetDagSpecWithResponse(ctx context.Context, dagId DagID, reqEditors ...RequestEditorFn) (*GetDagSpecResponse, error)
+
+    // RegisterDagVersionWithBodyWithResponse Register a compiled DAG version (Dexaflow)
+    //
+    // Registers a compiled dag.json as a new version of the DAG and makes it current. Re-registering content that is already registered (same spec hash) is a no-op answered with 200 and created false, and leaves the current version as it is. The same label with other content is refused with 409. Needs deploy or write on dags (scope dexaflow:deploy).
+    // Without is_paused, a DAG the register creates starts paused per its is_paused_upon_creation, else the server's dags_are_paused_at_creation, and an existing DAG keeps its state. With is_paused, the DAG ends the register in that state whether it is created, gets a new version or already had this content; a change to an existing DAG is audited as dag.pause or dag.unpause in the same transaction. Pausing is a run-state write: sending is_paused also needs write on dags, and a scoped token needs dexaflow:run as well as dexaflow:deploy, else the register is refused with 403.
+    // Under the server setting deploy.require_digest, an image that is not pinned by a full digest (repository@sha256: and 64 hex characters) is registered with a warning in warnings (warn), or refused with 400 (enforce). Off, the default, accepts any image.
+    // POST /api/v2/dags/{dag_id}/versions/dry_run runs the same checks and writes nothing.
+    //
+    // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+    //
+    // Corresponds with POST /api/v2/dags/{dag_id}/versions (the `RegisterDagVersion` operationId).
+    RegisterDagVersionWithBodyWithResponse(ctx context.Context, dagId DagID, params *RegisterDagVersionParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RegisterDagVersionResponse, error)
+
+    // RegisterDagVersionWithResponse Register a compiled DAG version (Dexaflow)
+    //
+    // Registers a compiled dag.json as a new version of the DAG and makes it current. Re-registering content that is already registered (same spec hash) is a no-op answered with 200 and created false, and leaves the current version as it is. The same label with other content is refused with 409. Needs deploy or write on dags (scope dexaflow:deploy).
+    // Without is_paused, a DAG the register creates starts paused per its is_paused_upon_creation, else the server's dags_are_paused_at_creation, and an existing DAG keeps its state. With is_paused, the DAG ends the register in that state whether it is created, gets a new version or already had this content; a change to an existing DAG is audited as dag.pause or dag.unpause in the same transaction. Pausing is a run-state write: sending is_paused also needs write on dags, and a scoped token needs dexaflow:run as well as dexaflow:deploy, else the register is refused with 403.
+    // Under the server setting deploy.require_digest, an image that is not pinned by a full digest (repository@sha256: and 64 hex characters) is registered with a warning in warnings (warn), or refused with 400 (enforce). Off, the default, accepts any image.
+    // POST /api/v2/dags/{dag_id}/versions/dry_run runs the same checks and writes nothing.
+    //
+    // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+    //
+    // Corresponds with POST /api/v2/dags/{dag_id}/versions (the `RegisterDagVersion` operationId).
+    RegisterDagVersionWithResponse(ctx context.Context, dagId DagID, params *RegisterDagVersionParams, body RegisterDagVersionJSONRequestBody, reqEditors ...RequestEditorFn) (*RegisterDagVersionResponse, error)
 
     // GetMonitorExecutorWithResponse Executor capability and configuration
     //
@@ -2613,6 +4433,38 @@ type ClientWithResponsesInterface interface {
     //
     // Corresponds with POST /api/v2/users (the `CreateUser` operationId).
     CreateUserWithResponse(ctx context.Context, body CreateUserJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateUserResponse, error)
+
+    // PatchUserWithBodyWithResponse Activate or deactivate a user
+    //
+    // Admin-only. Deactivates or reactivates an account of the caller's
+    // tenant. A deactivated user's sessions and API tokens stop working at
+    // their next request, their token renewal is refused, and they cannot
+    // sign in; reactivating restores access with a fresh sign-in. The change
+    // and a user.deactivate or user.activate audit entry are written
+    // together. is_active is the only field accepted. An admin cannot
+    // deactivate their own account. A user of another tenant answers 404.
+    // Requires the write:user permission.
+    //
+    // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+    //
+    // Corresponds with PATCH /api/v2/users/{user_id} (the `PatchUser` operationId).
+    PatchUserWithBodyWithResponse(ctx context.Context, userId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PatchUserResponse, error)
+
+    // PatchUserWithResponse Activate or deactivate a user
+    //
+    // Admin-only. Deactivates or reactivates an account of the caller's
+    // tenant. A deactivated user's sessions and API tokens stop working at
+    // their next request, their token renewal is refused, and they cannot
+    // sign in; reactivating restores access with a fresh sign-in. The change
+    // and a user.deactivate or user.activate audit entry are written
+    // together. is_active is the only field accepted. An admin cannot
+    // deactivate their own account. A user of another tenant answers 404.
+    // Requires the write:user permission.
+    //
+    // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+    //
+    // Corresponds with PATCH /api/v2/users/{user_id} (the `PatchUser` operationId).
+    PatchUserWithResponse(ctx context.Context, userId string, body PatchUserJSONRequestBody, reqEditors ...RequestEditorFn) (*PatchUserResponse, error)
 
     // ListVariablesWithResponse List variables
     //
@@ -2703,7 +4555,7 @@ type ClientWithResponsesInterface interface {
 ```
 
 <a name="ComponentHealth"></a>
-## type [ComponentHealth](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L141-L146>)
+## type [ComponentHealth](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L303-L308>)
 
 ComponentHealth defines model for ComponentHealth.
 
@@ -2717,7 +4569,7 @@ type ComponentHealth struct {
 ```
 
 <a name="Connection"></a>
-## type [Connection](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L149-L158>)
+## type [Connection](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L311-L323>)
 
 Connection An Airflow\-style connection. The password is write\-only and never returned; secret\-bearing keys inside \`extra\` are masked server\-side.
 
@@ -2727,17 +4579,20 @@ type Connection struct {
     ConnectionId string  `json:"connection_id"`
     Description  *string `json:"description,omitempty"`
     Extra        *string `json:"extra,omitempty"`
-    Host         *string `json:"host,omitempty"`
-    Login        *string `json:"login,omitempty"`
-    Port         *int    `json:"port,omitempty"`
-    Schema       *string `json:"schema,omitempty"`
+
+    // ExtraUnreadable Present and true in a listing when the extra is encrypted with a secret key the server does not have (for example after a key rotation that dropped the old key). The extra is then null, so a client that parses it as JSON still can. Reading the connection alone, or updating it, answers 500 with a message naming it, and the stored extra is kept.
+    ExtraUnreadable *bool   `json:"extra_unreadable,omitempty"`
+    Host            *string `json:"host,omitempty"`
+    Login           *string `json:"login,omitempty"`
+    Port            *int    `json:"port,omitempty"`
+    Schema          *string `json:"schema,omitempty"`
 }
 ```
 
 <a name="ConnectionBody"></a>
-## type [ConnectionBody](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L161-L171>)
+## type [ConnectionBody](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L326-L336>)
 
-ConnectionBody Connection create/replace payload. connection\_id is required on POST \(taken from the path on PATCH\). password and extra are write\-only. Every optional field is tri\-state: omit the key to preserve the stored value \(a partial write never wipes a field it does not mention, so the unreadable password survives a \`\-\-host\`\-only edit\), send an empty string to clear the field, or send a value to set it. A password equal to the mask \`\*\*\*\`, and any key inside \`extra\` whose value is exactly \`\*\*\*\`, is treated as "unchanged" — so re\-submitting a connection read back from GET \(whose secrets are masked\) never overwrites the real secret with the mask.
+ConnectionBody Connection create/replace payload. connection\_id is required on POST \(taken from the path on PATCH\). password and extra are write\-only. Every optional field is tri\-state: omit the key to preserve the stored value \(a partial write never wipes a field it does not mention, so the unreadable password survives a \`\-\-host\`\-only edit\), send an empty string to clear the field, or send a value to set it. A password equal to the mask \`\*\*\*\`, and any key inside \`extra\` whose value is exactly \`\*\*\*\`, is treated as "unchanged", so re\-submitting a connection read back from GET \(whose secrets are masked\) never overwrites the real secret with the mask.
 
 ```go
 type ConnectionBody struct {
@@ -2754,7 +4609,7 @@ type ConnectionBody struct {
 ```
 
 <a name="ConnectionCollection"></a>
-## type [ConnectionCollection](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L174-L177>)
+## type [ConnectionCollection](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L339-L342>)
 
 ConnectionCollection defines model for ConnectionCollection.
 
@@ -2766,7 +4621,7 @@ type ConnectionCollection struct {
 ```
 
 <a name="ConnectionID"></a>
-## type [ConnectionID](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L421>)
+## type [ConnectionID](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L812>)
 
 ConnectionID defines model for ConnectionID.
 
@@ -2774,8 +4629,198 @@ ConnectionID defines model for ConnectionID.
 type ConnectionID = string
 ```
 
+<a name="CreateAPITokenJSONRequestBody"></a>
+## type [CreateAPITokenJSONRequestBody](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L929>)
+
+CreateAPITokenJSONRequestBody defines body for CreateAPIToken for application/json ContentType.
+
+```go
+type CreateAPITokenJSONRequestBody = CreateAPITokenRequest
+```
+
+<a name="CreateAPITokenRequest"></a>
+## type [CreateAPITokenRequest](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L345-L354>)
+
+CreateAPITokenRequest defines model for CreateAPITokenRequest.
+
+```go
+type CreateAPITokenRequest struct {
+    // ExpiresInSeconds Lifetime of the token. Defaults to 7776000 (90 days).
+    ExpiresInSeconds *int64 `json:"expires_in_seconds,omitempty"`
+
+    // Name A name for the token, unique among the caller's live tokens: 1 to 64 letters, digits, dots, dashes or underscores, starting with a letter or digit.
+    Name string `json:"name"`
+
+    // Scope deploy registers versions, sets the current version and reads DAGs; read only reads.
+    Scope CreateAPITokenRequestScope `json:"scope"`
+}
+```
+
+<a name="CreateAPITokenRequestScope"></a>
+## type [CreateAPITokenRequestScope](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L357>)
+
+CreateAPITokenRequestScope deploy registers versions, sets the current version and reads DAGs; read only reads.
+
+```go
+type CreateAPITokenRequestScope string
+```
+
+<a name="Deploy"></a>Defines values for CreateAPITokenRequestScope.
+
+```go
+const (
+    Deploy CreateAPITokenRequestScope = "deploy"
+    Read   CreateAPITokenRequestScope = "read"
+)
+```
+
+<a name="CreateAPITokenRequestScope.Valid"></a>
+### func \(CreateAPITokenRequestScope\) [Valid](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L27>)
+
+```go
+func (e CreateAPITokenRequestScope) Valid() bool
+```
+
+Valid indicates whether the value is a known member of the CreateAPITokenRequestScope enum.
+
+<a name="CreateAPITokenResponse"></a>
+## type [CreateAPITokenResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L5333-L5350>)
+
+
+
+```go
+type CreateAPITokenResponse struct {
+    Body         []byte
+    HTTPResponse *http.Response
+    // JSON201 the response for an HTTP 201 `application/json` response
+    JSON201 *CreatedAPIToken
+    // JSON400 the response for an HTTP 400 `application/json` response
+    JSON400 *Error
+    // JSON401 the response for an HTTP 401 `application/json` response
+    JSON401 *Unauthorized
+    // JSON403 the response for an HTTP 403 `application/json` response
+    JSON403 *Error
+    // JSON409 the response for an HTTP 409 `application/json` response
+    JSON409 *Error
+    // ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+    ApplicationproblemJSON503 *AuthUnavailable
+    // Headers503 the parsed response headers for an HTTP 503 response
+    Headers503 *CreateAPITokenResponse503Headers
+}
+```
+
+<a name="ParseCreateAPITokenResponse"></a>
+### func [ParseCreateAPITokenResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L8837>)
+
+```go
+func ParseCreateAPITokenResponse(rsp *http.Response) (*CreateAPITokenResponse, error)
+```
+
+ParseCreateAPITokenResponse parses an HTTP response from a CreateAPITokenWithResponse call
+
+<a name="CreateAPITokenResponse.ContentType"></a>
+### func \(CreateAPITokenResponse\) [ContentType](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L5404>)
+
+```go
+func (r CreateAPITokenResponse) ContentType() string
+```
+
+ContentType is a convenience method to retrieve the Content\-Type value from the HTTP response headers
+
+<a name="CreateAPITokenResponse.GetApplicationproblemJSON503"></a>
+### func \(CreateAPITokenResponse\) [GetApplicationproblemJSON503](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L5378>)
+
+```go
+func (r CreateAPITokenResponse) GetApplicationproblemJSON503() *AuthUnavailable
+```
+
+GetApplicationproblemJSON503 returns the response for an HTTP 503 \`application/problem\+json\` response
+
+<a name="CreateAPITokenResponse.GetBody"></a>
+### func \(CreateAPITokenResponse\) [GetBody](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L5383>)
+
+```go
+func (r CreateAPITokenResponse) GetBody() []byte
+```
+
+GetBody returns the raw response body bytes
+
+<a name="CreateAPITokenResponse.GetJSON201"></a>
+### func \(CreateAPITokenResponse\) [GetJSON201](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L5353>)
+
+```go
+func (r CreateAPITokenResponse) GetJSON201() *CreatedAPIToken
+```
+
+GetJSON201 returns the response for an HTTP 201 \`application/json\` response
+
+<a name="CreateAPITokenResponse.GetJSON400"></a>
+### func \(CreateAPITokenResponse\) [GetJSON400](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L5358>)
+
+```go
+func (r CreateAPITokenResponse) GetJSON400() *Error
+```
+
+GetJSON400 returns the response for an HTTP 400 \`application/json\` response
+
+<a name="CreateAPITokenResponse.GetJSON401"></a>
+### func \(CreateAPITokenResponse\) [GetJSON401](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L5363>)
+
+```go
+func (r CreateAPITokenResponse) GetJSON401() *Unauthorized
+```
+
+GetJSON401 returns the response for an HTTP 401 \`application/json\` response
+
+<a name="CreateAPITokenResponse.GetJSON403"></a>
+### func \(CreateAPITokenResponse\) [GetJSON403](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L5368>)
+
+```go
+func (r CreateAPITokenResponse) GetJSON403() *Error
+```
+
+GetJSON403 returns the response for an HTTP 403 \`application/json\` response
+
+<a name="CreateAPITokenResponse.GetJSON409"></a>
+### func \(CreateAPITokenResponse\) [GetJSON409](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L5373>)
+
+```go
+func (r CreateAPITokenResponse) GetJSON409() *Error
+```
+
+GetJSON409 returns the response for an HTTP 409 \`application/json\` response
+
+<a name="CreateAPITokenResponse.Status"></a>
+### func \(CreateAPITokenResponse\) [Status](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L5388>)
+
+```go
+func (r CreateAPITokenResponse) Status() string
+```
+
+Status returns HTTPResponse.Status
+
+<a name="CreateAPITokenResponse.StatusCode"></a>
+### func \(CreateAPITokenResponse\) [StatusCode](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L5396>)
+
+```go
+func (r CreateAPITokenResponse) StatusCode() int
+```
+
+StatusCode returns HTTPResponse.StatusCode
+
+<a name="CreateAPITokenResponse503Headers"></a>
+## type [CreateAPITokenResponse503Headers](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L5329-L5331>)
+
+CreateAPITokenResponse503Headers the declared response headers of an HTTP 503 response for CreateAPIToken
+
+```go
+type CreateAPITokenResponse503Headers struct {
+    RetryAfter *int
+}
+```
+
 <a name="CreateConnectionJSONRequestBody"></a>
-## type [CreateConnectionJSONRequestBody](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L488>)
+## type [CreateConnectionJSONRequestBody](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L932>)
 
 CreateConnectionJSONRequestBody defines body for CreateConnection for application/json ContentType.
 
@@ -2784,7 +4829,7 @@ type CreateConnectionJSONRequestBody = ConnectionBody
 ```
 
 <a name="CreateConnectionResponse"></a>
-## type [CreateConnectionResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L3451-L3462>)
+## type [CreateConnectionResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L5604-L5615>)
 
 
 
@@ -2804,7 +4849,7 @@ type CreateConnectionResponse struct {
 ```
 
 <a name="ParseCreateConnectionResponse"></a>
-### func [ParseCreateConnectionResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L5525>)
+### func [ParseCreateConnectionResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L9080>)
 
 ```go
 func ParseCreateConnectionResponse(rsp *http.Response) (*CreateConnectionResponse, error)
@@ -2813,7 +4858,7 @@ func ParseCreateConnectionResponse(rsp *http.Response) (*CreateConnectionRespons
 ParseCreateConnectionResponse parses an HTTP response from a CreateConnectionWithResponse call
 
 <a name="CreateConnectionResponse.ContentType"></a>
-### func \(CreateConnectionResponse\) [ContentType](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L3506>)
+### func \(CreateConnectionResponse\) [ContentType](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L5659>)
 
 ```go
 func (r CreateConnectionResponse) ContentType() string
@@ -2822,7 +4867,7 @@ func (r CreateConnectionResponse) ContentType() string
 ContentType is a convenience method to retrieve the Content\-Type value from the HTTP response headers
 
 <a name="CreateConnectionResponse.GetBody"></a>
-### func \(CreateConnectionResponse\) [GetBody](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L3485>)
+### func \(CreateConnectionResponse\) [GetBody](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L5638>)
 
 ```go
 func (r CreateConnectionResponse) GetBody() []byte
@@ -2831,7 +4876,7 @@ func (r CreateConnectionResponse) GetBody() []byte
 GetBody returns the raw response body bytes
 
 <a name="CreateConnectionResponse.GetJSON201"></a>
-### func \(CreateConnectionResponse\) [GetJSON201](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L3465>)
+### func \(CreateConnectionResponse\) [GetJSON201](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L5618>)
 
 ```go
 func (r CreateConnectionResponse) GetJSON201() *Connection
@@ -2840,7 +4885,7 @@ func (r CreateConnectionResponse) GetJSON201() *Connection
 GetJSON201 returns the response for an HTTP 201 \`application/json\` response
 
 <a name="CreateConnectionResponse.GetJSON400"></a>
-### func \(CreateConnectionResponse\) [GetJSON400](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L3470>)
+### func \(CreateConnectionResponse\) [GetJSON400](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L5623>)
 
 ```go
 func (r CreateConnectionResponse) GetJSON400() *Error
@@ -2849,7 +4894,7 @@ func (r CreateConnectionResponse) GetJSON400() *Error
 GetJSON400 returns the response for an HTTP 400 \`application/json\` response
 
 <a name="CreateConnectionResponse.GetJSON401"></a>
-### func \(CreateConnectionResponse\) [GetJSON401](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L3475>)
+### func \(CreateConnectionResponse\) [GetJSON401](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L5628>)
 
 ```go
 func (r CreateConnectionResponse) GetJSON401() *Unauthorized
@@ -2858,7 +4903,7 @@ func (r CreateConnectionResponse) GetJSON401() *Unauthorized
 GetJSON401 returns the response for an HTTP 401 \`application/json\` response
 
 <a name="CreateConnectionResponse.GetJSON503"></a>
-### func \(CreateConnectionResponse\) [GetJSON503](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L3480>)
+### func \(CreateConnectionResponse\) [GetJSON503](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L5633>)
 
 ```go
 func (r CreateConnectionResponse) GetJSON503() *EncryptionUnavailable
@@ -2867,7 +4912,7 @@ func (r CreateConnectionResponse) GetJSON503() *EncryptionUnavailable
 GetJSON503 returns the response for an HTTP 503 \`application/json\` response
 
 <a name="CreateConnectionResponse.Status"></a>
-### func \(CreateConnectionResponse\) [Status](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L3490>)
+### func \(CreateConnectionResponse\) [Status](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L5643>)
 
 ```go
 func (r CreateConnectionResponse) Status() string
@@ -2876,7 +4921,7 @@ func (r CreateConnectionResponse) Status() string
 Status returns HTTPResponse.Status
 
 <a name="CreateConnectionResponse.StatusCode"></a>
-### func \(CreateConnectionResponse\) [StatusCode](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L3498>)
+### func \(CreateConnectionResponse\) [StatusCode](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L5651>)
 
 ```go
 func (r CreateConnectionResponse) StatusCode() int
@@ -2885,7 +4930,7 @@ func (r CreateConnectionResponse) StatusCode() int
 StatusCode returns HTTPResponse.StatusCode
 
 <a name="CreateUserJSONRequestBody"></a>
-## type [CreateUserJSONRequestBody](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L503>)
+## type [CreateUserJSONRequestBody](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L962>)
 
 CreateUserJSONRequestBody defines body for CreateUser for application/json ContentType.
 
@@ -2894,7 +4939,7 @@ type CreateUserJSONRequestBody = CreateUserRequest
 ```
 
 <a name="CreateUserRequest"></a>
-## type [CreateUserRequest](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L180-L189>)
+## type [CreateUserRequest](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L360-L369>)
 
 CreateUserRequest defines model for CreateUserRequest.
 
@@ -2903,7 +4948,7 @@ type CreateUserRequest struct {
     // Email Login email. Normalized to lowercase, so it is unique case-insensitively within the tenant.
     Email string `json:"email"`
 
-    // Password Plaintext password (write-only; never returned). Must be at least 8 characters — the server rejects anything shorter with 400.
+    // Password Plaintext password (write-only; never returned). Must be at least 8 characters; the server rejects anything shorter with 400.
     Password *string `json:"password,omitempty"`
 
     // Roles Names of existing roles to grant; omit or empty to grant none.
@@ -2912,7 +4957,7 @@ type CreateUserRequest struct {
 ```
 
 <a name="CreateUserResponse"></a>
-## type [CreateUserResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L4417-L4428>)
+## type [CreateUserResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L7270-L7285>)
 
 
 
@@ -2928,11 +4973,15 @@ type CreateUserResponse struct {
     JSON401 *Unauthorized
     // JSON409 the response for an HTTP 409 `application/json` response
     JSON409 *Error
+    // ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+    ApplicationproblemJSON503 *AuthUnavailable
+    // Headers503 the parsed response headers for an HTTP 503 response
+    Headers503 *CreateUserResponse503Headers
 }
 ```
 
 <a name="ParseCreateUserResponse"></a>
-### func [ParseCreateUserResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L6176>)
+### func [ParseCreateUserResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L10504>)
 
 ```go
 func ParseCreateUserResponse(rsp *http.Response) (*CreateUserResponse, error)
@@ -2941,7 +4990,7 @@ func ParseCreateUserResponse(rsp *http.Response) (*CreateUserResponse, error)
 ParseCreateUserResponse parses an HTTP response from a CreateUserWithResponse call
 
 <a name="CreateUserResponse.ContentType"></a>
-### func \(CreateUserResponse\) [ContentType](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L4472>)
+### func \(CreateUserResponse\) [ContentType](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L7334>)
 
 ```go
 func (r CreateUserResponse) ContentType() string
@@ -2949,8 +4998,17 @@ func (r CreateUserResponse) ContentType() string
 
 ContentType is a convenience method to retrieve the Content\-Type value from the HTTP response headers
 
+<a name="CreateUserResponse.GetApplicationproblemJSON503"></a>
+### func \(CreateUserResponse\) [GetApplicationproblemJSON503](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L7308>)
+
+```go
+func (r CreateUserResponse) GetApplicationproblemJSON503() *AuthUnavailable
+```
+
+GetApplicationproblemJSON503 returns the response for an HTTP 503 \`application/problem\+json\` response
+
 <a name="CreateUserResponse.GetBody"></a>
-### func \(CreateUserResponse\) [GetBody](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L4451>)
+### func \(CreateUserResponse\) [GetBody](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L7313>)
 
 ```go
 func (r CreateUserResponse) GetBody() []byte
@@ -2959,7 +5017,7 @@ func (r CreateUserResponse) GetBody() []byte
 GetBody returns the raw response body bytes
 
 <a name="CreateUserResponse.GetJSON201"></a>
-### func \(CreateUserResponse\) [GetJSON201](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L4431>)
+### func \(CreateUserResponse\) [GetJSON201](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L7288>)
 
 ```go
 func (r CreateUserResponse) GetJSON201() *User
@@ -2968,7 +5026,7 @@ func (r CreateUserResponse) GetJSON201() *User
 GetJSON201 returns the response for an HTTP 201 \`application/json\` response
 
 <a name="CreateUserResponse.GetJSON400"></a>
-### func \(CreateUserResponse\) [GetJSON400](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L4436>)
+### func \(CreateUserResponse\) [GetJSON400](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L7293>)
 
 ```go
 func (r CreateUserResponse) GetJSON400() *Error
@@ -2977,7 +5035,7 @@ func (r CreateUserResponse) GetJSON400() *Error
 GetJSON400 returns the response for an HTTP 400 \`application/json\` response
 
 <a name="CreateUserResponse.GetJSON401"></a>
-### func \(CreateUserResponse\) [GetJSON401](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L4441>)
+### func \(CreateUserResponse\) [GetJSON401](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L7298>)
 
 ```go
 func (r CreateUserResponse) GetJSON401() *Unauthorized
@@ -2986,7 +5044,7 @@ func (r CreateUserResponse) GetJSON401() *Unauthorized
 GetJSON401 returns the response for an HTTP 401 \`application/json\` response
 
 <a name="CreateUserResponse.GetJSON409"></a>
-### func \(CreateUserResponse\) [GetJSON409](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L4446>)
+### func \(CreateUserResponse\) [GetJSON409](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L7303>)
 
 ```go
 func (r CreateUserResponse) GetJSON409() *Error
@@ -2995,7 +5053,7 @@ func (r CreateUserResponse) GetJSON409() *Error
 GetJSON409 returns the response for an HTTP 409 \`application/json\` response
 
 <a name="CreateUserResponse.Status"></a>
-### func \(CreateUserResponse\) [Status](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L4456>)
+### func \(CreateUserResponse\) [Status](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L7318>)
 
 ```go
 func (r CreateUserResponse) Status() string
@@ -3004,7 +5062,7 @@ func (r CreateUserResponse) Status() string
 Status returns HTTPResponse.Status
 
 <a name="CreateUserResponse.StatusCode"></a>
-### func \(CreateUserResponse\) [StatusCode](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L4464>)
+### func \(CreateUserResponse\) [StatusCode](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L7326>)
 
 ```go
 func (r CreateUserResponse) StatusCode() int
@@ -3012,8 +5070,19 @@ func (r CreateUserResponse) StatusCode() int
 
 StatusCode returns HTTPResponse.StatusCode
 
+<a name="CreateUserResponse503Headers"></a>
+## type [CreateUserResponse503Headers](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L7266-L7268>)
+
+CreateUserResponse503Headers the declared response headers of an HTTP 503 response for CreateUser
+
+```go
+type CreateUserResponse503Headers struct {
+    RetryAfter *int
+}
+```
+
 <a name="CreateVariableJSONRequestBody"></a>
-## type [CreateVariableJSONRequestBody](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L506>)
+## type [CreateVariableJSONRequestBody](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L968>)
 
 CreateVariableJSONRequestBody defines body for CreateVariable for application/json ContentType.
 
@@ -3022,7 +5091,7 @@ type CreateVariableJSONRequestBody = VariableBody
 ```
 
 <a name="CreateVariableResponse"></a>
-## type [CreateVariableResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L4527-L4536>)
+## type [CreateVariableResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L7491-L7504>)
 
 
 
@@ -3036,11 +5105,15 @@ type CreateVariableResponse struct {
     JSON400 *Error
     // JSON401 the response for an HTTP 401 `application/json` response
     JSON401 *Unauthorized
+    // ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+    ApplicationproblemJSON503 *AuthUnavailable
+    // Headers503 the parsed response headers for an HTTP 503 response
+    Headers503 *CreateVariableResponse503Headers
 }
 ```
 
 <a name="ParseCreateVariableResponse"></a>
-### func [ParseCreateVariableResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L6256>)
+### func [ParseCreateVariableResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L10698>)
 
 ```go
 func ParseCreateVariableResponse(rsp *http.Response) (*CreateVariableResponse, error)
@@ -3049,7 +5122,7 @@ func ParseCreateVariableResponse(rsp *http.Response) (*CreateVariableResponse, e
 ParseCreateVariableResponse parses an HTTP response from a CreateVariableWithResponse call
 
 <a name="CreateVariableResponse.ContentType"></a>
-### func \(CreateVariableResponse\) [ContentType](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L4575>)
+### func \(CreateVariableResponse\) [ContentType](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L7548>)
 
 ```go
 func (r CreateVariableResponse) ContentType() string
@@ -3057,8 +5130,17 @@ func (r CreateVariableResponse) ContentType() string
 
 ContentType is a convenience method to retrieve the Content\-Type value from the HTTP response headers
 
+<a name="CreateVariableResponse.GetApplicationproblemJSON503"></a>
+### func \(CreateVariableResponse\) [GetApplicationproblemJSON503](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L7522>)
+
+```go
+func (r CreateVariableResponse) GetApplicationproblemJSON503() *AuthUnavailable
+```
+
+GetApplicationproblemJSON503 returns the response for an HTTP 503 \`application/problem\+json\` response
+
 <a name="CreateVariableResponse.GetBody"></a>
-### func \(CreateVariableResponse\) [GetBody](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L4554>)
+### func \(CreateVariableResponse\) [GetBody](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L7527>)
 
 ```go
 func (r CreateVariableResponse) GetBody() []byte
@@ -3067,7 +5149,7 @@ func (r CreateVariableResponse) GetBody() []byte
 GetBody returns the raw response body bytes
 
 <a name="CreateVariableResponse.GetJSON201"></a>
-### func \(CreateVariableResponse\) [GetJSON201](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L4539>)
+### func \(CreateVariableResponse\) [GetJSON201](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L7507>)
 
 ```go
 func (r CreateVariableResponse) GetJSON201() *Variable
@@ -3076,7 +5158,7 @@ func (r CreateVariableResponse) GetJSON201() *Variable
 GetJSON201 returns the response for an HTTP 201 \`application/json\` response
 
 <a name="CreateVariableResponse.GetJSON400"></a>
-### func \(CreateVariableResponse\) [GetJSON400](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L4544>)
+### func \(CreateVariableResponse\) [GetJSON400](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L7512>)
 
 ```go
 func (r CreateVariableResponse) GetJSON400() *Error
@@ -3085,7 +5167,7 @@ func (r CreateVariableResponse) GetJSON400() *Error
 GetJSON400 returns the response for an HTTP 400 \`application/json\` response
 
 <a name="CreateVariableResponse.GetJSON401"></a>
-### func \(CreateVariableResponse\) [GetJSON401](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L4549>)
+### func \(CreateVariableResponse\) [GetJSON401](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L7517>)
 
 ```go
 func (r CreateVariableResponse) GetJSON401() *Unauthorized
@@ -3094,7 +5176,7 @@ func (r CreateVariableResponse) GetJSON401() *Unauthorized
 GetJSON401 returns the response for an HTTP 401 \`application/json\` response
 
 <a name="CreateVariableResponse.Status"></a>
-### func \(CreateVariableResponse\) [Status](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L4559>)
+### func \(CreateVariableResponse\) [Status](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L7532>)
 
 ```go
 func (r CreateVariableResponse) Status() string
@@ -3103,7 +5185,7 @@ func (r CreateVariableResponse) Status() string
 Status returns HTTPResponse.Status
 
 <a name="CreateVariableResponse.StatusCode"></a>
-### func \(CreateVariableResponse\) [StatusCode](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L4567>)
+### func \(CreateVariableResponse\) [StatusCode](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L7540>)
 
 ```go
 func (r CreateVariableResponse) StatusCode() int
@@ -3111,8 +5193,52 @@ func (r CreateVariableResponse) StatusCode() int
 
 StatusCode returns HTTPResponse.StatusCode
 
+<a name="CreateVariableResponse503Headers"></a>
+## type [CreateVariableResponse503Headers](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L7487-L7489>)
+
+CreateVariableResponse503Headers the declared response headers of an HTTP 503 response for CreateVariable
+
+```go
+type CreateVariableResponse503Headers struct {
+    RetryAfter *int
+}
+```
+
+<a name="CreatedAPIToken"></a>
+## type [CreatedAPIToken](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L372-L387>)
+
+CreatedAPIToken defines model for CreatedAPIToken.
+
+```go
+type CreatedAPIToken struct {
+    CreatedAt time.Time `json:"created_at"`
+    ExpiresAt time.Time `json:"expires_at"`
+    Id        string    `json:"id"`
+
+    // LastUsedAt When the token last authenticated a request, recorded at most once every five minutes; null when it was never used.
+    LastUsedAt *time.Time `json:"last_used_at,omitempty"`
+    Name       string     `json:"name"`
+
+    // OwnerEmail Email of the token's owner (in lists).
+    OwnerEmail *string  `json:"owner_email,omitempty"`
+    Scopes     []string `json:"scopes"`
+
+    // Token The token, starting with dxf_. It is shown only in this response and cannot be read again.
+    Token string `json:"token"`
+}
+```
+
+<a name="Cursor"></a>
+## type [Cursor](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L815>)
+
+Cursor defines model for Cursor.
+
+```go
+type Cursor = string
+```
+
 <a name="DAG"></a>
-## type [DAG](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L192-L209>)
+## type [DAG](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L390-L408>)
 
 DAG defines model for DAG.
 
@@ -3122,6 +5248,7 @@ type DAG struct {
     DagDisplayName           *string                 `json:"dag_display_name,omitempty"`
     DagId                    *string                 `json:"dag_id,omitempty"`
     Description              *string                 `json:"description,omitempty"`
+    Fileloc                  *string                 `json:"fileloc,omitempty"`
     HasTaskConcurrencyLimits *bool                   `json:"has_task_concurrency_limits,omitempty"`
     IsActive                 *bool                   `json:"is_active,omitempty"`
     IsPaused                 *bool                   `json:"is_paused,omitempty"`
@@ -3138,7 +5265,7 @@ type DAG struct {
 ```
 
 <a name="DAGCollection"></a>
-## type [DAGCollection](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L212-L215>)
+## type [DAGCollection](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L411-L414>)
 
 DAGCollection defines model for DAGCollection.
 
@@ -3150,7 +5277,7 @@ type DAGCollection struct {
 ```
 
 <a name="DAGRun"></a>
-## type [DAGRun](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L218-L231>)
+## type [DAGRun](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L417-L433>)
 
 DAGRun defines model for DAGRun.
 
@@ -3165,26 +5292,59 @@ type DAGRun struct {
     LogicalDate       *time.Time              `json:"logical_date,omitempty"`
     Note              *string                 `json:"note,omitempty"`
     QueuedAt          *time.Time              `json:"queued_at,omitempty"`
-    RunType           *DAGRunRunType          `json:"run_type,omitempty"`
-    StartDate         *time.Time              `json:"start_date,omitempty"`
-    State             *DAGRunState            `json:"state,omitempty"`
+
+    // RunOnLatestVersionNotApplied Dexaflow-only. The runs a clear with run_on_latest_version keeps on their own version, each with the reason (ADR 0086): only a finished run with no task instance queued or running moves to the current version. The clear still applies to these runs, on their version. Left out when every run moved or the option was not asked, and on every response other than the two clear routes.
+    RunOnLatestVersionNotApplied *ClearVersionNotApplied `json:"run_on_latest_version_not_applied,omitempty"`
+    RunType                      *DAGRunRunType          `json:"run_type,omitempty"`
+    StartDate                    *time.Time              `json:"start_date,omitempty"`
+    State                        *DAGRunState            `json:"state,omitempty"`
+}
+```
+
+<a name="DAGRunClearRequest"></a>
+## type [DAGRunClearRequest](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L442-L457>)
+
+DAGRunClearRequest defines model for DAGRunClearRequest.
+
+```go
+type DAGRunClearRequest struct {
+    // DryRun Return the task instances that WOULD be cleared, without clearing them. Defaults to true, matching Apache Airflow. Send false to execute.
+    DryRun *bool `json:"dry_run,omitempty"`
+
+    // Note Accepted and not stored (run notes are not editable yet).
+    Note *string `json:"note,omitempty"`
+
+    // OnlyFailed Restrict the clear to the run's task instances in a failed state. false (the default, matching Apache Airflow) takes every task instance of the run.
+    OnlyFailed *bool `json:"only_failed,omitempty"`
+
+    // OnlyNew Not supported. Sending true is refused with 400: Dexaflow cannot yet tell which tasks a newer DAG version added.
+    OnlyNew *bool `json:"only_new,omitempty"`
+
+    // RunOnLatestVersion Which version the re-run executes. Unset or false keeps the version the run was created with. true moves a finished run (success or failed, with no task instance queued or running) to the DAG's current registered version, creating the task instances of the tasks that version adds and marking removed the ones of the tasks it dropped. A run that has not finished keeps its version, as in Airflow; the response then lists it in run_on_latest_version_not_applied with the reason (ADR 0086).
+    RunOnLatestVersion *bool `json:"run_on_latest_version,omitempty"`
 }
 ```
 
 <a name="DAGRunCollection"></a>
-## type [DAGRunCollection](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L240-L243>)
+## type [DAGRunCollection](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L460-L469>)
 
 DAGRunCollection defines model for DAGRunCollection.
 
 ```go
 type DAGRunCollection struct {
-    DagRuns      *[]DAGRun `json:"dag_runs,omitempty"`
-    TotalEntries *int      `json:"total_entries,omitempty"`
+    DagRuns *[]DAGRun `json:"dag_runs,omitempty"`
+
+    // NextCursor Cursor of the next page. Present only when the request carried cursor and a next page exists.
+    NextCursor *string `json:"next_cursor,omitempty"`
+
+    // PreviousCursor Cursor of the previous page. Present only when the request carried cursor and the page is not the first.
+    PreviousCursor *string `json:"previous_cursor,omitempty"`
+    TotalEntries   *int    `json:"total_entries,omitempty"`
 }
 ```
 
 <a name="DAGRunCreate"></a>
-## type [DAGRunCreate](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L246-L251>)
+## type [DAGRunCreate](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L472-L477>)
 
 DAGRunCreate defines model for DAGRunCreate.
 
@@ -3198,7 +5358,7 @@ type DAGRunCreate struct {
 ```
 
 <a name="DAGRunRunType"></a>
-## type [DAGRunRunType](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L234>)
+## type [DAGRunRunType](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L436>)
 
 DAGRunRunType defines model for DAGRun.RunType.
 
@@ -3218,7 +5378,7 @@ const (
 ```
 
 <a name="DAGRunRunType.Valid"></a>
-### func \(DAGRunRunType\) [Valid](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L29>)
+### func \(DAGRunRunType\) [Valid](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L47>)
 
 ```go
 func (e DAGRunRunType) Valid() bool
@@ -3227,7 +5387,7 @@ func (e DAGRunRunType) Valid() bool
 Valid indicates whether the value is a known member of the DAGRunRunType enum.
 
 <a name="DAGRunState"></a>
-## type [DAGRunState](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L237>)
+## type [DAGRunState](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L439>)
 
 DAGRunState defines model for DAGRun.State.
 
@@ -3247,7 +5407,7 @@ const (
 ```
 
 <a name="DAGRunState.Valid"></a>
-### func \(DAGRunState\) [Valid](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L53>)
+### func \(DAGRunState\) [Valid](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L71>)
 
 ```go
 func (e DAGRunState) Valid() bool
@@ -3256,9 +5416,9 @@ func (e DAGRunState) Valid() bool
 Valid indicates whether the value is a known member of the DAGRunState enum.
 
 <a name="DAGUpdate"></a>
-## type [DAGUpdate](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L254-L256>)
+## type [DAGUpdate](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L480-L482>)
 
-DAGUpdate defines model for DAGUpdate.
+DAGUpdate is\_paused must be present; a body without it is refused with 400. It is not listed under required so the generated Go client keeps the field a pointer.
 
 ```go
 type DAGUpdate struct {
@@ -3266,8 +5426,41 @@ type DAGUpdate struct {
 }
 ```
 
+<a name="DagCurrentVersionChange"></a>
+## type [DagCurrentVersionChange](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L485-L496>)
+
+DagCurrentVersionChange defines model for DagCurrentVersionChange.
+
+```go
+type DagCurrentVersionChange struct {
+    // Changed False when the version was already current.
+    Changed bool   `json:"changed"`
+    DagId   string `json:"dag_id"`
+
+    // From The version that was current before; null when none was.
+    From *DagVersion `json:"from"`
+    To   DagVersion  `json:"to"`
+
+    // Warnings What the change let through with a warning (a task that does not fit its size under executor.unit.enforce=warn, an image not pinned by digest under deploy.require_digest=warn). Absent when there is none.
+    Warnings *[]string `json:"warnings,omitempty"`
+}
+```
+
+<a name="DagCurrentVersionRequest"></a>
+## type [DagCurrentVersionRequest](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L499-L503>)
+
+DagCurrentVersionRequest Exactly one of version and version\_number.
+
+```go
+type DagCurrentVersionRequest struct {
+    // Version The version label (bundle_version).
+    Version       *string `json:"version,omitempty"`
+    VersionNumber *int    `json:"version_number,omitempty"`
+}
+```
+
 <a name="DagID"></a>
-## type [DagID](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L424>)
+## type [DagID](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L818>)
 
 DagID defines model for DagID.
 
@@ -3276,7 +5469,7 @@ type DagID = string
 ```
 
 <a name="DagRunID"></a>
-## type [DagRunID](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L427>)
+## type [DagRunID](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L821>)
 
 DagRunID defines model for DagRunID.
 
@@ -3285,7 +5478,7 @@ type DagRunID = string
 ```
 
 <a name="DagSource"></a>
-## type [DagSource](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L259-L265>)
+## type [DagSource](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L506-L514>)
 
 DagSource defines model for DagSource.
 
@@ -3295,30 +5488,98 @@ type DagSource struct {
     Content        *string `json:"content,omitempty"`
     DagDisplayName *string `json:"dag_display_name,omitempty"`
     DagId          *string `json:"dag_id,omitempty"`
-    VersionNumber  *int    `json:"version_number,omitempty"`
+
+    // VersionNumber The version whose source this is.
+    VersionNumber *int `json:"version_number,omitempty"`
 }
 ```
 
+<a name="DagSpec"></a>
+## type [DagSpec](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L517-L524>)
+
+DagSpec A compiled dag.json, as described by docs/api/dag\-schema.json.
+
+```go
+type DagSpec struct {
+    DagId                string                   `json:"dag_id"`
+    DagVersion           string                   `json:"dag_version"`
+    Image                string                   `json:"image"`
+    SchemaVersion        string                   `json:"schema_version"`
+    Tasks                []map[string]interface{} `json:"tasks"`
+    AdditionalProperties map[string]interface{}   `json:"-"`
+}
+```
+
+<a name="DagSpec.Get"></a>
+### func \(DagSpec\) [Get](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L975>)
+
+```go
+func (a DagSpec) Get(fieldName string) (value interface{}, found bool)
+```
+
+Getter for additional properties for DagSpec. Returns the specified element and whether it was found
+
+<a name="DagSpec.MarshalJSON"></a>
+### func \(DagSpec\) [MarshalJSON](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L1053>)
+
+```go
+func (a DagSpec) MarshalJSON() ([]byte, error)
+```
+
+Override default JSON handling for DagSpec to handle AdditionalProperties
+
+<a name="DagSpec.Set"></a>
+### func \(\*DagSpec\) [Set](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L983>)
+
+```go
+func (a *DagSpec) Set(fieldName string, value interface{})
+```
+
+Setter for additional properties for DagSpec
+
+<a name="DagSpec.UnmarshalJSON"></a>
+### func \(\*DagSpec\) [UnmarshalJSON](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L991>)
+
+```go
+func (a *DagSpec) UnmarshalJSON(b []byte) error
+```
+
+Override default JSON handling for DagSpec to handle AdditionalProperties
+
 <a name="DagVersion"></a>
-## type [DagVersion](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L268-L277>)
+## type [DagVersion](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L527-L550>)
 
 DagVersion defines model for DagVersion.
 
 ```go
 type DagVersion struct {
-    BundleName     *string    `json:"bundle_name,omitempty"`
-    BundleUrl      *string    `json:"bundle_url,omitempty"`
-    BundleVersion  *string    `json:"bundle_version,omitempty"`
-    CreatedAt      *time.Time `json:"created_at,omitempty"`
-    DagDisplayName *string    `json:"dag_display_name,omitempty"`
-    DagId          *string    `json:"dag_id,omitempty"`
-    Id             *string    `json:"id,omitempty"`
-    VersionNumber  *int       `json:"version_number,omitempty"`
+    // BuildInfo Dexaflow. Where the version was built, as its register sent it in the build_* parameters; null when it sent none. Served by the dagVersions routes and the currentVersion answer; the dag_version copies embedded in task instance, run and DAG details answers leave it out.
+    BuildInfo     *BuildInfo `json:"build_info,omitempty"`
+    BundleName    *string    `json:"bundle_name,omitempty"`
+    BundleUrl     *string    `json:"bundle_url,omitempty"`
+    BundleVersion *string    `json:"bundle_version,omitempty"`
+    CreatedAt     *time.Time `json:"created_at,omitempty"`
+
+    // CreatedBy Dexaflow. Id of the user who registered the version (not an email, since every reader of the DAG sees it); null when none was recorded.
+    CreatedBy      *string `json:"created_by,omitempty"`
+    DagDisplayName *string `json:"dag_display_name,omitempty"`
+    DagId          *string `json:"dag_id,omitempty"`
+    Id             *string `json:"id,omitempty"`
+
+    // Image Dexaflow. The image the version runs, pinned by digest when the deploy resolved one.
+    Image *string `json:"image,omitempty"`
+
+    // IsCurrent Dexaflow. Whether new runs are created with this version.
+    IsCurrent *bool `json:"is_current,omitempty"`
+
+    // SpecHash Dexaflow. The canonical hash of the version's dag.json.
+    SpecHash      *string `json:"spec_hash,omitempty"`
+    VersionNumber *int    `json:"version_number,omitempty"`
 }
 ```
 
 <a name="DagVersionCollection"></a>
-## type [DagVersionCollection](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L280-L283>)
+## type [DagVersionCollection](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L553-L556>)
 
 DagVersionCollection defines model for DagVersionCollection.
 
@@ -3330,7 +5591,7 @@ type DagVersionCollection struct {
 ```
 
 <a name="DeleteConnectionResponse"></a>
-## type [DeleteConnectionResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L3513-L3520>)
+## type [DeleteConnectionResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L5671-L5682>)
 
 
 
@@ -3342,11 +5603,15 @@ type DeleteConnectionResponse struct {
     JSON401 *Unauthorized
     // JSON404 the response for an HTTP 404 `application/json` response
     JSON404 *NotFound
+    // ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+    ApplicationproblemJSON503 *AuthUnavailable
+    // Headers503 the parsed response headers for an HTTP 503 response
+    Headers503 *DeleteConnectionResponse503Headers
 }
 ```
 
 <a name="ParseDeleteConnectionResponse"></a>
-### func [ParseDeleteConnectionResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L5572>)
+### func [ParseDeleteConnectionResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L9127>)
 
 ```go
 func ParseDeleteConnectionResponse(rsp *http.Response) (*DeleteConnectionResponse, error)
@@ -3355,7 +5620,7 @@ func ParseDeleteConnectionResponse(rsp *http.Response) (*DeleteConnectionRespons
 ParseDeleteConnectionResponse parses an HTTP response from a DeleteConnectionWithResponse call
 
 <a name="DeleteConnectionResponse.ContentType"></a>
-### func \(DeleteConnectionResponse\) [ContentType](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L3554>)
+### func \(DeleteConnectionResponse\) [ContentType](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L5721>)
 
 ```go
 func (r DeleteConnectionResponse) ContentType() string
@@ -3363,8 +5628,17 @@ func (r DeleteConnectionResponse) ContentType() string
 
 ContentType is a convenience method to retrieve the Content\-Type value from the HTTP response headers
 
+<a name="DeleteConnectionResponse.GetApplicationproblemJSON503"></a>
+### func \(DeleteConnectionResponse\) [GetApplicationproblemJSON503](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L5695>)
+
+```go
+func (r DeleteConnectionResponse) GetApplicationproblemJSON503() *AuthUnavailable
+```
+
+GetApplicationproblemJSON503 returns the response for an HTTP 503 \`application/problem\+json\` response
+
 <a name="DeleteConnectionResponse.GetBody"></a>
-### func \(DeleteConnectionResponse\) [GetBody](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L3533>)
+### func \(DeleteConnectionResponse\) [GetBody](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L5700>)
 
 ```go
 func (r DeleteConnectionResponse) GetBody() []byte
@@ -3373,7 +5647,7 @@ func (r DeleteConnectionResponse) GetBody() []byte
 GetBody returns the raw response body bytes
 
 <a name="DeleteConnectionResponse.GetJSON401"></a>
-### func \(DeleteConnectionResponse\) [GetJSON401](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L3523>)
+### func \(DeleteConnectionResponse\) [GetJSON401](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L5685>)
 
 ```go
 func (r DeleteConnectionResponse) GetJSON401() *Unauthorized
@@ -3382,7 +5656,7 @@ func (r DeleteConnectionResponse) GetJSON401() *Unauthorized
 GetJSON401 returns the response for an HTTP 401 \`application/json\` response
 
 <a name="DeleteConnectionResponse.GetJSON404"></a>
-### func \(DeleteConnectionResponse\) [GetJSON404](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L3528>)
+### func \(DeleteConnectionResponse\) [GetJSON404](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L5690>)
 
 ```go
 func (r DeleteConnectionResponse) GetJSON404() *NotFound
@@ -3391,7 +5665,7 @@ func (r DeleteConnectionResponse) GetJSON404() *NotFound
 GetJSON404 returns the response for an HTTP 404 \`application/json\` response
 
 <a name="DeleteConnectionResponse.Status"></a>
-### func \(DeleteConnectionResponse\) [Status](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L3538>)
+### func \(DeleteConnectionResponse\) [Status](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L5705>)
 
 ```go
 func (r DeleteConnectionResponse) Status() string
@@ -3400,7 +5674,7 @@ func (r DeleteConnectionResponse) Status() string
 Status returns HTTPResponse.Status
 
 <a name="DeleteConnectionResponse.StatusCode"></a>
-### func \(DeleteConnectionResponse\) [StatusCode](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L3546>)
+### func \(DeleteConnectionResponse\) [StatusCode](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L5713>)
 
 ```go
 func (r DeleteConnectionResponse) StatusCode() int
@@ -3408,8 +5682,19 @@ func (r DeleteConnectionResponse) StatusCode() int
 
 StatusCode returns HTTPResponse.StatusCode
 
+<a name="DeleteConnectionResponse503Headers"></a>
+## type [DeleteConnectionResponse503Headers](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L5667-L5669>)
+
+DeleteConnectionResponse503Headers the declared response headers of an HTTP 503 response for DeleteConnection
+
+```go
+type DeleteConnectionResponse503Headers struct {
+    RetryAfter *int
+}
+```
+
 <a name="DeleteVariableResponse"></a>
-## type [DeleteVariableResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L4582-L4589>)
+## type [DeleteVariableResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L7560-L7571>)
 
 
 
@@ -3421,11 +5706,15 @@ type DeleteVariableResponse struct {
     JSON401 *Unauthorized
     // JSON404 the response for an HTTP 404 `application/json` response
     JSON404 *NotFound
+    // ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+    ApplicationproblemJSON503 *AuthUnavailable
+    // Headers503 the parsed response headers for an HTTP 503 response
+    Headers503 *DeleteVariableResponse503Headers
 }
 ```
 
 <a name="ParseDeleteVariableResponse"></a>
-### func [ParseDeleteVariableResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L6296>)
+### func [ParseDeleteVariableResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L10758>)
 
 ```go
 func ParseDeleteVariableResponse(rsp *http.Response) (*DeleteVariableResponse, error)
@@ -3434,7 +5723,7 @@ func ParseDeleteVariableResponse(rsp *http.Response) (*DeleteVariableResponse, e
 ParseDeleteVariableResponse parses an HTTP response from a DeleteVariableWithResponse call
 
 <a name="DeleteVariableResponse.ContentType"></a>
-### func \(DeleteVariableResponse\) [ContentType](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L4623>)
+### func \(DeleteVariableResponse\) [ContentType](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L7610>)
 
 ```go
 func (r DeleteVariableResponse) ContentType() string
@@ -3442,8 +5731,17 @@ func (r DeleteVariableResponse) ContentType() string
 
 ContentType is a convenience method to retrieve the Content\-Type value from the HTTP response headers
 
+<a name="DeleteVariableResponse.GetApplicationproblemJSON503"></a>
+### func \(DeleteVariableResponse\) [GetApplicationproblemJSON503](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L7584>)
+
+```go
+func (r DeleteVariableResponse) GetApplicationproblemJSON503() *AuthUnavailable
+```
+
+GetApplicationproblemJSON503 returns the response for an HTTP 503 \`application/problem\+json\` response
+
 <a name="DeleteVariableResponse.GetBody"></a>
-### func \(DeleteVariableResponse\) [GetBody](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L4602>)
+### func \(DeleteVariableResponse\) [GetBody](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L7589>)
 
 ```go
 func (r DeleteVariableResponse) GetBody() []byte
@@ -3452,7 +5750,7 @@ func (r DeleteVariableResponse) GetBody() []byte
 GetBody returns the raw response body bytes
 
 <a name="DeleteVariableResponse.GetJSON401"></a>
-### func \(DeleteVariableResponse\) [GetJSON401](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L4592>)
+### func \(DeleteVariableResponse\) [GetJSON401](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L7574>)
 
 ```go
 func (r DeleteVariableResponse) GetJSON401() *Unauthorized
@@ -3461,7 +5759,7 @@ func (r DeleteVariableResponse) GetJSON401() *Unauthorized
 GetJSON401 returns the response for an HTTP 401 \`application/json\` response
 
 <a name="DeleteVariableResponse.GetJSON404"></a>
-### func \(DeleteVariableResponse\) [GetJSON404](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L4597>)
+### func \(DeleteVariableResponse\) [GetJSON404](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L7579>)
 
 ```go
 func (r DeleteVariableResponse) GetJSON404() *NotFound
@@ -3470,7 +5768,7 @@ func (r DeleteVariableResponse) GetJSON404() *NotFound
 GetJSON404 returns the response for an HTTP 404 \`application/json\` response
 
 <a name="DeleteVariableResponse.Status"></a>
-### func \(DeleteVariableResponse\) [Status](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L4607>)
+### func \(DeleteVariableResponse\) [Status](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L7594>)
 
 ```go
 func (r DeleteVariableResponse) Status() string
@@ -3479,7 +5777,7 @@ func (r DeleteVariableResponse) Status() string
 Status returns HTTPResponse.Status
 
 <a name="DeleteVariableResponse.StatusCode"></a>
-### func \(DeleteVariableResponse\) [StatusCode](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L4615>)
+### func \(DeleteVariableResponse\) [StatusCode](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L7602>)
 
 ```go
 func (r DeleteVariableResponse) StatusCode() int
@@ -3487,8 +5785,147 @@ func (r DeleteVariableResponse) StatusCode() int
 
 StatusCode returns HTTPResponse.StatusCode
 
+<a name="DeleteVariableResponse503Headers"></a>
+## type [DeleteVariableResponse503Headers](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L7556-L7558>)
+
+DeleteVariableResponse503Headers the declared response headers of an HTTP 503 response for DeleteVariable
+
+```go
+type DeleteVariableResponse503Headers struct {
+    RetryAfter *int
+}
+```
+
+<a name="DeployBuildKit"></a>
+## type [DeployBuildKit](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.go#L155-L161>)
+
+DeployBuildKit is the in\-cluster BuildKit backend of DeployRemoteBuilder.
+
+```go
+type DeployBuildKit struct {
+    // Namespace is the namespace of the builder.
+    Namespace string `json:"namespace,omitempty"`
+    // PodSelector is the label selector of the builder pod; empty selects
+    // app.kubernetes.io/component=builder.
+    PodSelector string `json:"pod_selector,omitempty"`
+}
+```
+
+<a name="DeployCIOIDC"></a>
+## type [DeployCIOIDC](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.go#L130-L133>)
+
+DeployCIOIDC is the ci\_oidc of DeployDefaults.
+
+```go
+type DeployCIOIDC struct {
+    // Issuers are the entries, in the server's order.
+    Issuers []DeployCIOIDCIssuer `json:"issuers"`
+}
+```
+
+<a name="DeployCIOIDCIssuer"></a>
+## type [DeployCIOIDCIssuer](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.go#L138-L143>)
+
+DeployCIOIDCIssuer is one CI OIDC issuer: its entry name, its provider \(github, gitlab, cloudbuild or other\), the iss of its tokens and the audience a pipeline asks its token for.
+
+```go
+type DeployCIOIDCIssuer struct {
+    Name     string `json:"name"`
+    Provider string `json:"provider"`
+    Issuer   string `json:"issuer"`
+    Audience string `json:"audience"`
+}
+```
+
+<a name="DeployCloudBuild"></a>
+## type [DeployCloudBuild](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.go#L165-L176>)
+
+DeployCloudBuild is the Cloud Build backend of DeployRemoteBuilder. An unset field is empty.
+
+```go
+type DeployCloudBuild struct {
+    // Project is the Google Cloud project the build runs in.
+    Project string `json:"project,omitempty"`
+    // Region is the Cloud Build region, such as us-central1.
+    Region string `json:"region,omitempty"`
+    // WorkerPool is a private pool,
+    // projects/<project>/locations/<region>/workerPools/<name>.
+    WorkerPool string `json:"worker_pool,omitempty"`
+    // ServiceAccount is the account the build runs as,
+    // projects/<project>/serviceAccounts/<email>.
+    ServiceAccount string `json:"service_account,omitempty"`
+}
+```
+
+<a name="DeployDefaults"></a>
+## type [DeployDefaults](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.go#L100-L127>)
+
+DeployDefaults are the cluster deploy defaults GET /api/v2/deployDefaults serves: what a deploy uses for the registry prefix, the build platforms, the base image, the source mode runtime image and the remote builder when nothing local sets them, and what it reports about the task service account and the warm pools. An unset field is empty or nil.
+
+```go
+type DeployDefaults struct {
+    // Registry is the image prefix a deploy pushes to, such as ghcr.io/acme.
+    Registry string `json:"registry"`
+    // Platforms are the platforms a deploy builds for (os/arch[/variant]).
+    Platforms []string `json:"platforms"`
+    // BaseImage is the base image for projects that set none.
+    BaseImage string `json:"base_image"`
+    // SourceModeImage is the runtime image a deploy registers a DAG's
+    // dag.py on, with no build, when nothing local names one (source mode,
+    // #1772). Empty when the cluster advertises none, or from a server
+    // that predates the field.
+    SourceModeImage string `json:"source_mode_image,omitempty"`
+    // RemoteBuilder is the remote builder a deploy uses for builds no
+    // daemonless path covers, when nothing local names one (#1890). Nil when
+    // the cluster advertises none, or from a server that predates the field.
+    RemoteBuilder *DeployRemoteBuilder `json:"remote_builder,omitempty"`
+    // TaskServiceAccount is the ServiceAccount task pods run as when a task
+    // sets no execution.service_account (#1890). Empty when the cluster
+    // advertises none, or from a server that predates the field.
+    TaskServiceAccount string `json:"task_service_account,omitempty"`
+    // WarmPools are the cluster's warm pool settings (#1890). Nil when the
+    // cluster advertises none, or from a server that predates the field.
+    WarmPools *DeployWarmPools `json:"warm_pools,omitempty"`
+    // CIOIDC lists the CI OIDC issuers of the caller's tenant (ADR 0092),
+    // which `dexaflow ci init` writes a tokenless pipeline for. Nil when the
+    // tenant has none, or from a server that predates the field.
+    CIOIDC *DeployCIOIDC `json:"ci_oidc,omitempty"`
+}
+```
+
+<a name="DeployRemoteBuilder"></a>
+## type [DeployRemoteBuilder](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.go#L146-L152>)
+
+DeployRemoteBuilder is the remote\_builder of DeployDefaults: its backend.
+
+```go
+type DeployRemoteBuilder struct {
+    // CloudBuild builds on Google Cloud Build.
+    CloudBuild *DeployCloudBuild `json:"cloud_build,omitempty"`
+    // BuildKit builds on the in-cluster BuildKit daemon the Helm chart runs
+    // (builder.enabled, #1883). Nil from a server that predates it.
+    BuildKit *DeployBuildKit `json:"buildkit,omitempty"`
+}
+```
+
+<a name="DeployWarmPools"></a>
+## type [DeployWarmPools](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.go#L181-L188>)
+
+DeployWarmPools is the warm\_pools of DeployDefaults: a DAG that declares no min\_idle\_workers gets MinIdleWorkers, every value is capped at MaxPoolSize \(0 sets no cap\), and nothing is kept warm unless Enabled.
+
+```go
+type DeployWarmPools struct {
+    // Enabled says whether the cluster keeps warm workers at all.
+    Enabled bool `json:"enabled"`
+    // MinIdleWorkers is the cluster's idle worker floor per version.
+    MinIdleWorkers int `json:"min_idle_workers"`
+    // MaxPoolSize caps one version's pool.
+    MaxPoolSize int `json:"max_pool_size"`
+}
+```
+
 <a name="EncryptionUnavailable"></a>
-## type [EncryptionUnavailable](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L442>)
+## type [EncryptionUnavailable](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L839>)
 
 EncryptionUnavailable defines model for EncryptionUnavailable.
 
@@ -3497,7 +5934,7 @@ type EncryptionUnavailable = Error
 ```
 
 <a name="Error"></a>
-## type [Error](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L286-L292>)
+## type [Error](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L559-L565>)
 
 Error defines model for Error.
 
@@ -3511,8 +5948,23 @@ type Error struct {
 }
 ```
 
+<a name="ExecutionReport"></a>
+## type [ExecutionReport](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L568-L574>)
+
+ExecutionReport Where the version's tasks run \(Dexaflow\), from the same decision dispatch places an attempt with: on a warm worker of the version \(warm pools, ADR 0058\) or on a dedicated pod. Sent by the register and its dry run. A task is warm\-eligible; it still takes a dedicated pod when no warm worker is free. A task the dispatcher would offer to a warm worker is reported dedicated when no warm worker of its version can exist \(no idle worker kept, or a server that runs none\).
+
+```go
+type ExecutionReport struct {
+    Pool  WarmPoolReport  `json:"pool"`
+    Tasks []TaskExecution `json:"tasks"`
+
+    // WarmPools execution.warm_pools_enabled on the server.
+    WarmPools bool `json:"warm_pools"`
+}
+```
+
 <a name="ExecutorInfo"></a>
-## type [ExecutorInfo](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L295-L300>)
+## type [ExecutorInfo](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L577-L582>)
 
 ExecutorInfo defines model for ExecutorInfo.
 
@@ -3526,7 +5978,7 @@ type ExecutorInfo struct {
 ```
 
 <a name="GetConnectionResponse"></a>
-## type [GetConnectionResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L3561-L3570>)
+## type [GetConnectionResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L5733-L5746>)
 
 
 
@@ -3540,11 +5992,15 @@ type GetConnectionResponse struct {
     JSON401 *Unauthorized
     // JSON404 the response for an HTTP 404 `application/json` response
     JSON404 *NotFound
+    // ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+    ApplicationproblemJSON503 *AuthUnavailable
+    // Headers503 the parsed response headers for an HTTP 503 response
+    Headers503 *GetConnectionResponse503Headers
 }
 ```
 
 <a name="ParseGetConnectionResponse"></a>
-### func [ParseGetConnectionResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L5608>)
+### func [ParseGetConnectionResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L9183>)
 
 ```go
 func ParseGetConnectionResponse(rsp *http.Response) (*GetConnectionResponse, error)
@@ -3553,7 +6009,7 @@ func ParseGetConnectionResponse(rsp *http.Response) (*GetConnectionResponse, err
 ParseGetConnectionResponse parses an HTTP response from a GetConnectionWithResponse call
 
 <a name="GetConnectionResponse.ContentType"></a>
-### func \(GetConnectionResponse\) [ContentType](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L3609>)
+### func \(GetConnectionResponse\) [ContentType](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L5790>)
 
 ```go
 func (r GetConnectionResponse) ContentType() string
@@ -3561,8 +6017,17 @@ func (r GetConnectionResponse) ContentType() string
 
 ContentType is a convenience method to retrieve the Content\-Type value from the HTTP response headers
 
+<a name="GetConnectionResponse.GetApplicationproblemJSON503"></a>
+### func \(GetConnectionResponse\) [GetApplicationproblemJSON503](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L5764>)
+
+```go
+func (r GetConnectionResponse) GetApplicationproblemJSON503() *AuthUnavailable
+```
+
+GetApplicationproblemJSON503 returns the response for an HTTP 503 \`application/problem\+json\` response
+
 <a name="GetConnectionResponse.GetBody"></a>
-### func \(GetConnectionResponse\) [GetBody](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L3588>)
+### func \(GetConnectionResponse\) [GetBody](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L5769>)
 
 ```go
 func (r GetConnectionResponse) GetBody() []byte
@@ -3571,7 +6036,7 @@ func (r GetConnectionResponse) GetBody() []byte
 GetBody returns the raw response body bytes
 
 <a name="GetConnectionResponse.GetJSON200"></a>
-### func \(GetConnectionResponse\) [GetJSON200](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L3573>)
+### func \(GetConnectionResponse\) [GetJSON200](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L5749>)
 
 ```go
 func (r GetConnectionResponse) GetJSON200() *Connection
@@ -3580,7 +6045,7 @@ func (r GetConnectionResponse) GetJSON200() *Connection
 GetJSON200 returns the response for an HTTP 200 \`application/json\` response
 
 <a name="GetConnectionResponse.GetJSON401"></a>
-### func \(GetConnectionResponse\) [GetJSON401](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L3578>)
+### func \(GetConnectionResponse\) [GetJSON401](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L5754>)
 
 ```go
 func (r GetConnectionResponse) GetJSON401() *Unauthorized
@@ -3589,7 +6054,7 @@ func (r GetConnectionResponse) GetJSON401() *Unauthorized
 GetJSON401 returns the response for an HTTP 401 \`application/json\` response
 
 <a name="GetConnectionResponse.GetJSON404"></a>
-### func \(GetConnectionResponse\) [GetJSON404](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L3583>)
+### func \(GetConnectionResponse\) [GetJSON404](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L5759>)
 
 ```go
 func (r GetConnectionResponse) GetJSON404() *NotFound
@@ -3598,7 +6063,7 @@ func (r GetConnectionResponse) GetJSON404() *NotFound
 GetJSON404 returns the response for an HTTP 404 \`application/json\` response
 
 <a name="GetConnectionResponse.Status"></a>
-### func \(GetConnectionResponse\) [Status](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L3593>)
+### func \(GetConnectionResponse\) [Status](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L5774>)
 
 ```go
 func (r GetConnectionResponse) Status() string
@@ -3607,7 +6072,7 @@ func (r GetConnectionResponse) Status() string
 Status returns HTTPResponse.Status
 
 <a name="GetConnectionResponse.StatusCode"></a>
-### func \(GetConnectionResponse\) [StatusCode](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L3601>)
+### func \(GetConnectionResponse\) [StatusCode](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L5782>)
 
 ```go
 func (r GetConnectionResponse) StatusCode() int
@@ -3615,8 +6080,19 @@ func (r GetConnectionResponse) StatusCode() int
 
 StatusCode returns HTTPResponse.StatusCode
 
+<a name="GetConnectionResponse503Headers"></a>
+## type [GetConnectionResponse503Headers](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L5729-L5731>)
+
+GetConnectionResponse503Headers the declared response headers of an HTTP 503 response for GetConnection
+
+```go
+type GetConnectionResponse503Headers struct {
+    RetryAfter *int
+}
+```
+
 <a name="GetDagResponse"></a>
-## type [GetDagResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L3774-L3781>)
+## type [GetDagResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L5995-L6006>)
 
 
 
@@ -3628,11 +6104,15 @@ type GetDagResponse struct {
     JSON200 *DAG
     // JSON404 the response for an HTTP 404 `application/json` response
     JSON404 *NotFound
+    // ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+    ApplicationproblemJSON503 *AuthUnavailable
+    // Headers503 the parsed response headers for an HTTP 503 response
+    Headers503 *GetDagResponse503Headers
 }
 ```
 
 <a name="ParseGetDagResponse"></a>
-### func [ParseGetDagResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L5761>)
+### func [ParseGetDagResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L9403>)
 
 ```go
 func ParseGetDagResponse(rsp *http.Response) (*GetDagResponse, error)
@@ -3641,7 +6121,7 @@ func ParseGetDagResponse(rsp *http.Response) (*GetDagResponse, error)
 ParseGetDagResponse parses an HTTP response from a GetDagWithResponse call
 
 <a name="GetDagResponse.ContentType"></a>
-### func \(GetDagResponse\) [ContentType](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L3815>)
+### func \(GetDagResponse\) [ContentType](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L6045>)
 
 ```go
 func (r GetDagResponse) ContentType() string
@@ -3649,8 +6129,17 @@ func (r GetDagResponse) ContentType() string
 
 ContentType is a convenience method to retrieve the Content\-Type value from the HTTP response headers
 
+<a name="GetDagResponse.GetApplicationproblemJSON503"></a>
+### func \(GetDagResponse\) [GetApplicationproblemJSON503](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L6019>)
+
+```go
+func (r GetDagResponse) GetApplicationproblemJSON503() *AuthUnavailable
+```
+
+GetApplicationproblemJSON503 returns the response for an HTTP 503 \`application/problem\+json\` response
+
 <a name="GetDagResponse.GetBody"></a>
-### func \(GetDagResponse\) [GetBody](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L3794>)
+### func \(GetDagResponse\) [GetBody](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L6024>)
 
 ```go
 func (r GetDagResponse) GetBody() []byte
@@ -3659,7 +6148,7 @@ func (r GetDagResponse) GetBody() []byte
 GetBody returns the raw response body bytes
 
 <a name="GetDagResponse.GetJSON200"></a>
-### func \(GetDagResponse\) [GetJSON200](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L3784>)
+### func \(GetDagResponse\) [GetJSON200](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L6009>)
 
 ```go
 func (r GetDagResponse) GetJSON200() *DAG
@@ -3668,7 +6157,7 @@ func (r GetDagResponse) GetJSON200() *DAG
 GetJSON200 returns the response for an HTTP 200 \`application/json\` response
 
 <a name="GetDagResponse.GetJSON404"></a>
-### func \(GetDagResponse\) [GetJSON404](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L3789>)
+### func \(GetDagResponse\) [GetJSON404](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L6014>)
 
 ```go
 func (r GetDagResponse) GetJSON404() *NotFound
@@ -3677,7 +6166,7 @@ func (r GetDagResponse) GetJSON404() *NotFound
 GetJSON404 returns the response for an HTTP 404 \`application/json\` response
 
 <a name="GetDagResponse.Status"></a>
-### func \(GetDagResponse\) [Status](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L3799>)
+### func \(GetDagResponse\) [Status](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L6029>)
 
 ```go
 func (r GetDagResponse) Status() string
@@ -3686,7 +6175,7 @@ func (r GetDagResponse) Status() string
 Status returns HTTPResponse.Status
 
 <a name="GetDagResponse.StatusCode"></a>
-### func \(GetDagResponse\) [StatusCode](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L3807>)
+### func \(GetDagResponse\) [StatusCode](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L6037>)
 
 ```go
 func (r GetDagResponse) StatusCode() int
@@ -3694,8 +6183,19 @@ func (r GetDagResponse) StatusCode() int
 
 StatusCode returns HTTPResponse.StatusCode
 
+<a name="GetDagResponse503Headers"></a>
+## type [GetDagResponse503Headers](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L5991-L5993>)
+
+GetDagResponse503Headers the declared response headers of an HTTP 503 response for GetDag
+
+```go
+type GetDagResponse503Headers struct {
+    RetryAfter *int
+}
+```
+
 <a name="GetDagRunResponse"></a>
-## type [GetDagRunResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L3986-L3993>)
+## type [GetDagRunResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L6381-L6392>)
 
 
 
@@ -3707,11 +6207,15 @@ type GetDagRunResponse struct {
     JSON200 *DAGRun
     // JSON404 the response for an HTTP 404 `application/json` response
     JSON404 *NotFound
+    // ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+    ApplicationproblemJSON503 *AuthUnavailable
+    // Headers503 the parsed response headers for an HTTP 503 response
+    Headers503 *GetDagRunResponse503Headers
 }
 ```
 
 <a name="ParseGetDagRunResponse"></a>
-### func [ParseGetDagRunResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L5898>)
+### func [ParseGetDagRunResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L9738>)
 
 ```go
 func ParseGetDagRunResponse(rsp *http.Response) (*GetDagRunResponse, error)
@@ -3720,7 +6224,7 @@ func ParseGetDagRunResponse(rsp *http.Response) (*GetDagRunResponse, error)
 ParseGetDagRunResponse parses an HTTP response from a GetDagRunWithResponse call
 
 <a name="GetDagRunResponse.ContentType"></a>
-### func \(GetDagRunResponse\) [ContentType](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L4027>)
+### func \(GetDagRunResponse\) [ContentType](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L6431>)
 
 ```go
 func (r GetDagRunResponse) ContentType() string
@@ -3728,8 +6232,17 @@ func (r GetDagRunResponse) ContentType() string
 
 ContentType is a convenience method to retrieve the Content\-Type value from the HTTP response headers
 
+<a name="GetDagRunResponse.GetApplicationproblemJSON503"></a>
+### func \(GetDagRunResponse\) [GetApplicationproblemJSON503](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L6405>)
+
+```go
+func (r GetDagRunResponse) GetApplicationproblemJSON503() *AuthUnavailable
+```
+
+GetApplicationproblemJSON503 returns the response for an HTTP 503 \`application/problem\+json\` response
+
 <a name="GetDagRunResponse.GetBody"></a>
-### func \(GetDagRunResponse\) [GetBody](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L4006>)
+### func \(GetDagRunResponse\) [GetBody](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L6410>)
 
 ```go
 func (r GetDagRunResponse) GetBody() []byte
@@ -3738,7 +6251,7 @@ func (r GetDagRunResponse) GetBody() []byte
 GetBody returns the raw response body bytes
 
 <a name="GetDagRunResponse.GetJSON200"></a>
-### func \(GetDagRunResponse\) [GetJSON200](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L3996>)
+### func \(GetDagRunResponse\) [GetJSON200](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L6395>)
 
 ```go
 func (r GetDagRunResponse) GetJSON200() *DAGRun
@@ -3747,7 +6260,7 @@ func (r GetDagRunResponse) GetJSON200() *DAGRun
 GetJSON200 returns the response for an HTTP 200 \`application/json\` response
 
 <a name="GetDagRunResponse.GetJSON404"></a>
-### func \(GetDagRunResponse\) [GetJSON404](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L4001>)
+### func \(GetDagRunResponse\) [GetJSON404](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L6400>)
 
 ```go
 func (r GetDagRunResponse) GetJSON404() *NotFound
@@ -3756,7 +6269,7 @@ func (r GetDagRunResponse) GetJSON404() *NotFound
 GetJSON404 returns the response for an HTTP 404 \`application/json\` response
 
 <a name="GetDagRunResponse.Status"></a>
-### func \(GetDagRunResponse\) [Status](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L4011>)
+### func \(GetDagRunResponse\) [Status](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L6415>)
 
 ```go
 func (r GetDagRunResponse) Status() string
@@ -3765,7 +6278,7 @@ func (r GetDagRunResponse) Status() string
 Status returns HTTPResponse.Status
 
 <a name="GetDagRunResponse.StatusCode"></a>
-### func \(GetDagRunResponse\) [StatusCode](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L4019>)
+### func \(GetDagRunResponse\) [StatusCode](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L6423>)
 
 ```go
 func (r GetDagRunResponse) StatusCode() int
@@ -3773,8 +6286,19 @@ func (r GetDagRunResponse) StatusCode() int
 
 StatusCode returns HTTPResponse.StatusCode
 
+<a name="GetDagRunResponse503Headers"></a>
+## type [GetDagRunResponse503Headers](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L6377-L6379>)
+
+GetDagRunResponse503Headers the declared response headers of an HTTP 503 response for GetDagRun
+
+```go
+type GetDagRunResponse503Headers struct {
+    RetryAfter *int
+}
+```
+
 <a name="GetDagSourceResponse"></a>
-## type [GetDagSourceResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L3685-L3692>)
+## type [GetDagSourceResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L5871-L5884>)
 
 
 
@@ -3784,13 +6308,19 @@ type GetDagSourceResponse struct {
     HTTPResponse *http.Response
     // JSON200 the response for an HTTP 200 `application/json` response
     JSON200 *DagSource
+    // JSON400 the response for an HTTP 400 `application/json` response
+    JSON400 *Error
     // JSON404 the response for an HTTP 404 `application/json` response
     JSON404 *NotFound
+    // ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+    ApplicationproblemJSON503 *AuthUnavailable
+    // Headers503 the parsed response headers for an HTTP 503 response
+    Headers503 *GetDagSourceResponse503Headers
 }
 ```
 
 <a name="ParseGetDagSourceResponse"></a>
-### func [ParseGetDagSourceResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L5702>)
+### func [ParseGetDagSourceResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L9297>)
 
 ```go
 func ParseGetDagSourceResponse(rsp *http.Response) (*GetDagSourceResponse, error)
@@ -3799,7 +6329,7 @@ func ParseGetDagSourceResponse(rsp *http.Response) (*GetDagSourceResponse, error
 ParseGetDagSourceResponse parses an HTTP response from a GetDagSourceWithResponse call
 
 <a name="GetDagSourceResponse.ContentType"></a>
-### func \(GetDagSourceResponse\) [ContentType](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L3726>)
+### func \(GetDagSourceResponse\) [ContentType](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L5928>)
 
 ```go
 func (r GetDagSourceResponse) ContentType() string
@@ -3807,8 +6337,17 @@ func (r GetDagSourceResponse) ContentType() string
 
 ContentType is a convenience method to retrieve the Content\-Type value from the HTTP response headers
 
+<a name="GetDagSourceResponse.GetApplicationproblemJSON503"></a>
+### func \(GetDagSourceResponse\) [GetApplicationproblemJSON503](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L5902>)
+
+```go
+func (r GetDagSourceResponse) GetApplicationproblemJSON503() *AuthUnavailable
+```
+
+GetApplicationproblemJSON503 returns the response for an HTTP 503 \`application/problem\+json\` response
+
 <a name="GetDagSourceResponse.GetBody"></a>
-### func \(GetDagSourceResponse\) [GetBody](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L3705>)
+### func \(GetDagSourceResponse\) [GetBody](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L5907>)
 
 ```go
 func (r GetDagSourceResponse) GetBody() []byte
@@ -3817,7 +6356,7 @@ func (r GetDagSourceResponse) GetBody() []byte
 GetBody returns the raw response body bytes
 
 <a name="GetDagSourceResponse.GetJSON200"></a>
-### func \(GetDagSourceResponse\) [GetJSON200](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L3695>)
+### func \(GetDagSourceResponse\) [GetJSON200](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L5887>)
 
 ```go
 func (r GetDagSourceResponse) GetJSON200() *DagSource
@@ -3825,8 +6364,17 @@ func (r GetDagSourceResponse) GetJSON200() *DagSource
 
 GetJSON200 returns the response for an HTTP 200 \`application/json\` response
 
+<a name="GetDagSourceResponse.GetJSON400"></a>
+### func \(GetDagSourceResponse\) [GetJSON400](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L5892>)
+
+```go
+func (r GetDagSourceResponse) GetJSON400() *Error
+```
+
+GetJSON400 returns the response for an HTTP 400 \`application/json\` response
+
 <a name="GetDagSourceResponse.GetJSON404"></a>
-### func \(GetDagSourceResponse\) [GetJSON404](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L3700>)
+### func \(GetDagSourceResponse\) [GetJSON404](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L5897>)
 
 ```go
 func (r GetDagSourceResponse) GetJSON404() *NotFound
@@ -3835,7 +6383,7 @@ func (r GetDagSourceResponse) GetJSON404() *NotFound
 GetJSON404 returns the response for an HTTP 404 \`application/json\` response
 
 <a name="GetDagSourceResponse.Status"></a>
-### func \(GetDagSourceResponse\) [Status](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L3710>)
+### func \(GetDagSourceResponse\) [Status](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L5912>)
 
 ```go
 func (r GetDagSourceResponse) Status() string
@@ -3844,7 +6392,7 @@ func (r GetDagSourceResponse) Status() string
 Status returns HTTPResponse.Status
 
 <a name="GetDagSourceResponse.StatusCode"></a>
-### func \(GetDagSourceResponse\) [StatusCode](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L3718>)
+### func \(GetDagSourceResponse\) [StatusCode](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L5920>)
 
 ```go
 func (r GetDagSourceResponse) StatusCode() int
@@ -3852,8 +6400,19 @@ func (r GetDagSourceResponse) StatusCode() int
 
 StatusCode returns HTTPResponse.StatusCode
 
+<a name="GetDagSourceResponse503Headers"></a>
+## type [GetDagSourceResponse503Headers](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L5867-L5869>)
+
+GetDagSourceResponse503Headers the declared response headers of an HTTP 503 response for GetDagSource
+
+```go
+type GetDagSourceResponse503Headers struct {
+    RetryAfter *int
+}
+```
+
 <a name="GetDagSpecResponse"></a>
-## type [GetDagSpecResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L4239-L4246>)
+## type [GetDagSpecResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L6939-L6950>)
 
 
 
@@ -3865,11 +6424,15 @@ type GetDagSpecResponse struct {
     JSON200 *map[string]interface{}
     // JSON404 the response for an HTTP 404 `application/json` response
     JSON404 *NotFound
+    // ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+    ApplicationproblemJSON503 *AuthUnavailable
+    // Headers503 the parsed response headers for an HTTP 503 response
+    Headers503 *GetDagSpecResponse503Headers
 }
 ```
 
 <a name="ParseGetDagSpecResponse"></a>
-### func [ParseGetDagSpecResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L6058>)
+### func [ParseGetDagSpecResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L10215>)
 
 ```go
 func ParseGetDagSpecResponse(rsp *http.Response) (*GetDagSpecResponse, error)
@@ -3878,7 +6441,7 @@ func ParseGetDagSpecResponse(rsp *http.Response) (*GetDagSpecResponse, error)
 ParseGetDagSpecResponse parses an HTTP response from a GetDagSpecWithResponse call
 
 <a name="GetDagSpecResponse.ContentType"></a>
-### func \(GetDagSpecResponse\) [ContentType](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L4280>)
+### func \(GetDagSpecResponse\) [ContentType](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L6989>)
 
 ```go
 func (r GetDagSpecResponse) ContentType() string
@@ -3886,8 +6449,17 @@ func (r GetDagSpecResponse) ContentType() string
 
 ContentType is a convenience method to retrieve the Content\-Type value from the HTTP response headers
 
+<a name="GetDagSpecResponse.GetApplicationproblemJSON503"></a>
+### func \(GetDagSpecResponse\) [GetApplicationproblemJSON503](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L6963>)
+
+```go
+func (r GetDagSpecResponse) GetApplicationproblemJSON503() *AuthUnavailable
+```
+
+GetApplicationproblemJSON503 returns the response for an HTTP 503 \`application/problem\+json\` response
+
 <a name="GetDagSpecResponse.GetBody"></a>
-### func \(GetDagSpecResponse\) [GetBody](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L4259>)
+### func \(GetDagSpecResponse\) [GetBody](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L6968>)
 
 ```go
 func (r GetDagSpecResponse) GetBody() []byte
@@ -3896,7 +6468,7 @@ func (r GetDagSpecResponse) GetBody() []byte
 GetBody returns the raw response body bytes
 
 <a name="GetDagSpecResponse.GetJSON200"></a>
-### func \(GetDagSpecResponse\) [GetJSON200](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L4249>)
+### func \(GetDagSpecResponse\) [GetJSON200](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L6953>)
 
 ```go
 func (r GetDagSpecResponse) GetJSON200() *map[string]interface{}
@@ -3905,7 +6477,7 @@ func (r GetDagSpecResponse) GetJSON200() *map[string]interface{}
 GetJSON200 returns the response for an HTTP 200 \`application/json\` response
 
 <a name="GetDagSpecResponse.GetJSON404"></a>
-### func \(GetDagSpecResponse\) [GetJSON404](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L4254>)
+### func \(GetDagSpecResponse\) [GetJSON404](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L6958>)
 
 ```go
 func (r GetDagSpecResponse) GetJSON404() *NotFound
@@ -3914,7 +6486,7 @@ func (r GetDagSpecResponse) GetJSON404() *NotFound
 GetJSON404 returns the response for an HTTP 404 \`application/json\` response
 
 <a name="GetDagSpecResponse.Status"></a>
-### func \(GetDagSpecResponse\) [Status](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L4264>)
+### func \(GetDagSpecResponse\) [Status](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L6973>)
 
 ```go
 func (r GetDagSpecResponse) Status() string
@@ -3923,7 +6495,7 @@ func (r GetDagSpecResponse) Status() string
 Status returns HTTPResponse.Status
 
 <a name="GetDagSpecResponse.StatusCode"></a>
-### func \(GetDagSpecResponse\) [StatusCode](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L4272>)
+### func \(GetDagSpecResponse\) [StatusCode](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L6981>)
 
 ```go
 func (r GetDagSpecResponse) StatusCode() int
@@ -3931,8 +6503,19 @@ func (r GetDagSpecResponse) StatusCode() int
 
 StatusCode returns HTTPResponse.StatusCode
 
+<a name="GetDagSpecResponse503Headers"></a>
+## type [GetDagSpecResponse503Headers](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L6935-L6937>)
+
+GetDagSpecResponse503Headers the declared response headers of an HTTP 503 response for GetDagSpec
+
+```go
+type GetDagSpecResponse503Headers struct {
+    RetryAfter *int
+}
+```
+
 <a name="GetDagVersionResponse"></a>
-## type [GetDagVersionResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L4191-L4198>)
+## type [GetDagVersionResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L6877-L6888>)
 
 
 
@@ -3944,11 +6527,15 @@ type GetDagVersionResponse struct {
     JSON200 *DagVersion
     // JSON404 the response for an HTTP 404 `application/json` response
     JSON404 *NotFound
+    // ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+    ApplicationproblemJSON503 *AuthUnavailable
+    // Headers503 the parsed response headers for an HTTP 503 response
+    Headers503 *GetDagVersionResponse503Headers
 }
 ```
 
 <a name="ParseGetDagVersionResponse"></a>
-### func [ParseGetDagVersionResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L6025>)
+### func [ParseGetDagVersionResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L10162>)
 
 ```go
 func ParseGetDagVersionResponse(rsp *http.Response) (*GetDagVersionResponse, error)
@@ -3957,7 +6544,7 @@ func ParseGetDagVersionResponse(rsp *http.Response) (*GetDagVersionResponse, err
 ParseGetDagVersionResponse parses an HTTP response from a GetDagVersionWithResponse call
 
 <a name="GetDagVersionResponse.ContentType"></a>
-### func \(GetDagVersionResponse\) [ContentType](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L4232>)
+### func \(GetDagVersionResponse\) [ContentType](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L6927>)
 
 ```go
 func (r GetDagVersionResponse) ContentType() string
@@ -3965,8 +6552,17 @@ func (r GetDagVersionResponse) ContentType() string
 
 ContentType is a convenience method to retrieve the Content\-Type value from the HTTP response headers
 
+<a name="GetDagVersionResponse.GetApplicationproblemJSON503"></a>
+### func \(GetDagVersionResponse\) [GetApplicationproblemJSON503](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L6901>)
+
+```go
+func (r GetDagVersionResponse) GetApplicationproblemJSON503() *AuthUnavailable
+```
+
+GetApplicationproblemJSON503 returns the response for an HTTP 503 \`application/problem\+json\` response
+
 <a name="GetDagVersionResponse.GetBody"></a>
-### func \(GetDagVersionResponse\) [GetBody](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L4211>)
+### func \(GetDagVersionResponse\) [GetBody](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L6906>)
 
 ```go
 func (r GetDagVersionResponse) GetBody() []byte
@@ -3975,7 +6571,7 @@ func (r GetDagVersionResponse) GetBody() []byte
 GetBody returns the raw response body bytes
 
 <a name="GetDagVersionResponse.GetJSON200"></a>
-### func \(GetDagVersionResponse\) [GetJSON200](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L4201>)
+### func \(GetDagVersionResponse\) [GetJSON200](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L6891>)
 
 ```go
 func (r GetDagVersionResponse) GetJSON200() *DagVersion
@@ -3984,7 +6580,7 @@ func (r GetDagVersionResponse) GetJSON200() *DagVersion
 GetJSON200 returns the response for an HTTP 200 \`application/json\` response
 
 <a name="GetDagVersionResponse.GetJSON404"></a>
-### func \(GetDagVersionResponse\) [GetJSON404](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L4206>)
+### func \(GetDagVersionResponse\) [GetJSON404](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L6896>)
 
 ```go
 func (r GetDagVersionResponse) GetJSON404() *NotFound
@@ -3993,7 +6589,7 @@ func (r GetDagVersionResponse) GetJSON404() *NotFound
 GetJSON404 returns the response for an HTTP 404 \`application/json\` response
 
 <a name="GetDagVersionResponse.Status"></a>
-### func \(GetDagVersionResponse\) [Status](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L4216>)
+### func \(GetDagVersionResponse\) [Status](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L6911>)
 
 ```go
 func (r GetDagVersionResponse) Status() string
@@ -4002,7 +6598,7 @@ func (r GetDagVersionResponse) Status() string
 Status returns HTTPResponse.Status
 
 <a name="GetDagVersionResponse.StatusCode"></a>
-### func \(GetDagVersionResponse\) [StatusCode](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L4224>)
+### func \(GetDagVersionResponse\) [StatusCode](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L6919>)
 
 ```go
 func (r GetDagVersionResponse) StatusCode() int
@@ -4010,8 +6606,19 @@ func (r GetDagVersionResponse) StatusCode() int
 
 StatusCode returns HTTPResponse.StatusCode
 
+<a name="GetDagVersionResponse503Headers"></a>
+## type [GetDagVersionResponse503Headers](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L6873-L6875>)
+
+GetDagVersionResponse503Headers the declared response headers of an HTTP 503 response for GetDagVersion
+
+```go
+type GetDagVersionResponse503Headers struct {
+    RetryAfter *int
+}
+```
+
 <a name="GetHealthzResponse"></a>
-## type [GetHealthzResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L4822-L4825>)
+## type [GetHealthzResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L7872-L7875>)
 
 
 
@@ -4023,7 +6630,7 @@ type GetHealthzResponse struct {
 ```
 
 <a name="ParseGetHealthzResponse"></a>
-### func [ParseGetHealthzResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L6464>)
+### func [ParseGetHealthzResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L11036>)
 
 ```go
 func ParseGetHealthzResponse(rsp *http.Response) (*GetHealthzResponse, error)
@@ -4032,7 +6639,7 @@ func ParseGetHealthzResponse(rsp *http.Response) (*GetHealthzResponse, error)
 ParseGetHealthzResponse parses an HTTP response from a GetHealthzWithResponse call
 
 <a name="GetHealthzResponse.ContentType"></a>
-### func \(GetHealthzResponse\) [ContentType](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L4849>)
+### func \(GetHealthzResponse\) [ContentType](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L7899>)
 
 ```go
 func (r GetHealthzResponse) ContentType() string
@@ -4041,7 +6648,7 @@ func (r GetHealthzResponse) ContentType() string
 ContentType is a convenience method to retrieve the Content\-Type value from the HTTP response headers
 
 <a name="GetHealthzResponse.GetBody"></a>
-### func \(GetHealthzResponse\) [GetBody](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L4828>)
+### func \(GetHealthzResponse\) [GetBody](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L7878>)
 
 ```go
 func (r GetHealthzResponse) GetBody() []byte
@@ -4050,7 +6657,7 @@ func (r GetHealthzResponse) GetBody() []byte
 GetBody returns the raw response body bytes
 
 <a name="GetHealthzResponse.Status"></a>
-### func \(GetHealthzResponse\) [Status](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L4833>)
+### func \(GetHealthzResponse\) [Status](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L7883>)
 
 ```go
 func (r GetHealthzResponse) Status() string
@@ -4059,7 +6666,7 @@ func (r GetHealthzResponse) Status() string
 Status returns HTTPResponse.Status
 
 <a name="GetHealthzResponse.StatusCode"></a>
-### func \(GetHealthzResponse\) [StatusCode](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L4841>)
+### func \(GetHealthzResponse\) [StatusCode](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L7891>)
 
 ```go
 func (r GetHealthzResponse) StatusCode() int
@@ -4068,7 +6675,7 @@ func (r GetHealthzResponse) StatusCode() int
 StatusCode returns HTTPResponse.StatusCode
 
 <a name="GetMonitorExecutorResponse"></a>
-## type [GetMonitorExecutorResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L4287-L4292>)
+## type [GetMonitorExecutorResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L7098-L7107>)
 
 
 
@@ -4078,11 +6685,15 @@ type GetMonitorExecutorResponse struct {
     HTTPResponse *http.Response
     // JSON200 the response for an HTTP 200 `application/json` response
     JSON200 *ExecutorInfo
+    // ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+    ApplicationproblemJSON503 *AuthUnavailable
+    // Headers503 the parsed response headers for an HTTP 503 response
+    Headers503 *GetMonitorExecutorResponse503Headers
 }
 ```
 
 <a name="ParseGetMonitorExecutorResponse"></a>
-### func [ParseGetMonitorExecutorResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L6091>)
+### func [ParseGetMonitorExecutorResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L10359>)
 
 ```go
 func ParseGetMonitorExecutorResponse(rsp *http.Response) (*GetMonitorExecutorResponse, error)
@@ -4091,7 +6702,7 @@ func ParseGetMonitorExecutorResponse(rsp *http.Response) (*GetMonitorExecutorRes
 ParseGetMonitorExecutorResponse parses an HTTP response from a GetMonitorExecutorWithResponse call
 
 <a name="GetMonitorExecutorResponse.ContentType"></a>
-### func \(GetMonitorExecutorResponse\) [ContentType](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L4321>)
+### func \(GetMonitorExecutorResponse\) [ContentType](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L7141>)
 
 ```go
 func (r GetMonitorExecutorResponse) ContentType() string
@@ -4099,8 +6710,17 @@ func (r GetMonitorExecutorResponse) ContentType() string
 
 ContentType is a convenience method to retrieve the Content\-Type value from the HTTP response headers
 
+<a name="GetMonitorExecutorResponse.GetApplicationproblemJSON503"></a>
+### func \(GetMonitorExecutorResponse\) [GetApplicationproblemJSON503](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L7115>)
+
+```go
+func (r GetMonitorExecutorResponse) GetApplicationproblemJSON503() *AuthUnavailable
+```
+
+GetApplicationproblemJSON503 returns the response for an HTTP 503 \`application/problem\+json\` response
+
 <a name="GetMonitorExecutorResponse.GetBody"></a>
-### func \(GetMonitorExecutorResponse\) [GetBody](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L4300>)
+### func \(GetMonitorExecutorResponse\) [GetBody](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L7120>)
 
 ```go
 func (r GetMonitorExecutorResponse) GetBody() []byte
@@ -4109,7 +6729,7 @@ func (r GetMonitorExecutorResponse) GetBody() []byte
 GetBody returns the raw response body bytes
 
 <a name="GetMonitorExecutorResponse.GetJSON200"></a>
-### func \(GetMonitorExecutorResponse\) [GetJSON200](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L4295>)
+### func \(GetMonitorExecutorResponse\) [GetJSON200](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L7110>)
 
 ```go
 func (r GetMonitorExecutorResponse) GetJSON200() *ExecutorInfo
@@ -4118,7 +6738,7 @@ func (r GetMonitorExecutorResponse) GetJSON200() *ExecutorInfo
 GetJSON200 returns the response for an HTTP 200 \`application/json\` response
 
 <a name="GetMonitorExecutorResponse.Status"></a>
-### func \(GetMonitorExecutorResponse\) [Status](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L4305>)
+### func \(GetMonitorExecutorResponse\) [Status](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L7125>)
 
 ```go
 func (r GetMonitorExecutorResponse) Status() string
@@ -4127,7 +6747,7 @@ func (r GetMonitorExecutorResponse) Status() string
 Status returns HTTPResponse.Status
 
 <a name="GetMonitorExecutorResponse.StatusCode"></a>
-### func \(GetMonitorExecutorResponse\) [StatusCode](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L4313>)
+### func \(GetMonitorExecutorResponse\) [StatusCode](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L7133>)
 
 ```go
 func (r GetMonitorExecutorResponse) StatusCode() int
@@ -4135,8 +6755,19 @@ func (r GetMonitorExecutorResponse) StatusCode() int
 
 StatusCode returns HTTPResponse.StatusCode
 
+<a name="GetMonitorExecutorResponse503Headers"></a>
+## type [GetMonitorExecutorResponse503Headers](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L7094-L7096>)
+
+GetMonitorExecutorResponse503Headers the declared response headers of an HTTP 503 response for GetMonitorExecutor
+
+```go
+type GetMonitorExecutorResponse503Headers struct {
+    RetryAfter *int
+}
+```
+
 <a name="GetMonitorHealthResponse"></a>
-## type [GetMonitorHealthResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L4328-L4333>)
+## type [GetMonitorHealthResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L7153-L7162>)
 
 
 
@@ -4146,11 +6777,15 @@ type GetMonitorHealthResponse struct {
     HTTPResponse *http.Response
     // JSON200 the response for an HTTP 200 `application/json` response
     JSON200 *HealthInfo
+    // ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+    ApplicationproblemJSON503 *AuthUnavailable
+    // Headers503 the parsed response headers for an HTTP 503 response
+    Headers503 *GetMonitorHealthResponse503Headers
 }
 ```
 
 <a name="ParseGetMonitorHealthResponse"></a>
-### func [ParseGetMonitorHealthResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L6117>)
+### func [ParseGetMonitorHealthResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L10405>)
 
 ```go
 func ParseGetMonitorHealthResponse(rsp *http.Response) (*GetMonitorHealthResponse, error)
@@ -4159,7 +6794,7 @@ func ParseGetMonitorHealthResponse(rsp *http.Response) (*GetMonitorHealthRespons
 ParseGetMonitorHealthResponse parses an HTTP response from a GetMonitorHealthWithResponse call
 
 <a name="GetMonitorHealthResponse.ContentType"></a>
-### func \(GetMonitorHealthResponse\) [ContentType](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L4362>)
+### func \(GetMonitorHealthResponse\) [ContentType](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L7196>)
 
 ```go
 func (r GetMonitorHealthResponse) ContentType() string
@@ -4167,8 +6802,17 @@ func (r GetMonitorHealthResponse) ContentType() string
 
 ContentType is a convenience method to retrieve the Content\-Type value from the HTTP response headers
 
+<a name="GetMonitorHealthResponse.GetApplicationproblemJSON503"></a>
+### func \(GetMonitorHealthResponse\) [GetApplicationproblemJSON503](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L7170>)
+
+```go
+func (r GetMonitorHealthResponse) GetApplicationproblemJSON503() *AuthUnavailable
+```
+
+GetApplicationproblemJSON503 returns the response for an HTTP 503 \`application/problem\+json\` response
+
 <a name="GetMonitorHealthResponse.GetBody"></a>
-### func \(GetMonitorHealthResponse\) [GetBody](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L4341>)
+### func \(GetMonitorHealthResponse\) [GetBody](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L7175>)
 
 ```go
 func (r GetMonitorHealthResponse) GetBody() []byte
@@ -4177,7 +6821,7 @@ func (r GetMonitorHealthResponse) GetBody() []byte
 GetBody returns the raw response body bytes
 
 <a name="GetMonitorHealthResponse.GetJSON200"></a>
-### func \(GetMonitorHealthResponse\) [GetJSON200](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L4336>)
+### func \(GetMonitorHealthResponse\) [GetJSON200](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L7165>)
 
 ```go
 func (r GetMonitorHealthResponse) GetJSON200() *HealthInfo
@@ -4186,7 +6830,7 @@ func (r GetMonitorHealthResponse) GetJSON200() *HealthInfo
 GetJSON200 returns the response for an HTTP 200 \`application/json\` response
 
 <a name="GetMonitorHealthResponse.Status"></a>
-### func \(GetMonitorHealthResponse\) [Status](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L4346>)
+### func \(GetMonitorHealthResponse\) [Status](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L7180>)
 
 ```go
 func (r GetMonitorHealthResponse) Status() string
@@ -4195,7 +6839,7 @@ func (r GetMonitorHealthResponse) Status() string
 Status returns HTTPResponse.Status
 
 <a name="GetMonitorHealthResponse.StatusCode"></a>
-### func \(GetMonitorHealthResponse\) [StatusCode](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L4354>)
+### func \(GetMonitorHealthResponse\) [StatusCode](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L7188>)
 
 ```go
 func (r GetMonitorHealthResponse) StatusCode() int
@@ -4203,8 +6847,19 @@ func (r GetMonitorHealthResponse) StatusCode() int
 
 StatusCode returns HTTPResponse.StatusCode
 
+<a name="GetMonitorHealthResponse503Headers"></a>
+## type [GetMonitorHealthResponse503Headers](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L7149-L7151>)
+
+GetMonitorHealthResponse503Headers the declared response headers of an HTTP 503 response for GetMonitorHealth
+
+```go
+type GetMonitorHealthResponse503Headers struct {
+    RetryAfter *int
+}
+```
+
 <a name="GetReadyzResponse"></a>
-## type [GetReadyzResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L4856-L4859>)
+## type [GetReadyzResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L7906-L7909>)
 
 
 
@@ -4216,7 +6871,7 @@ type GetReadyzResponse struct {
 ```
 
 <a name="ParseGetReadyzResponse"></a>
-### func [ParseGetReadyzResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L6480>)
+### func [ParseGetReadyzResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L11052>)
 
 ```go
 func ParseGetReadyzResponse(rsp *http.Response) (*GetReadyzResponse, error)
@@ -4225,7 +6880,7 @@ func ParseGetReadyzResponse(rsp *http.Response) (*GetReadyzResponse, error)
 ParseGetReadyzResponse parses an HTTP response from a GetReadyzWithResponse call
 
 <a name="GetReadyzResponse.ContentType"></a>
-### func \(GetReadyzResponse\) [ContentType](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L4883>)
+### func \(GetReadyzResponse\) [ContentType](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L7933>)
 
 ```go
 func (r GetReadyzResponse) ContentType() string
@@ -4234,7 +6889,7 @@ func (r GetReadyzResponse) ContentType() string
 ContentType is a convenience method to retrieve the Content\-Type value from the HTTP response headers
 
 <a name="GetReadyzResponse.GetBody"></a>
-### func \(GetReadyzResponse\) [GetBody](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L4862>)
+### func \(GetReadyzResponse\) [GetBody](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L7912>)
 
 ```go
 func (r GetReadyzResponse) GetBody() []byte
@@ -4243,7 +6898,7 @@ func (r GetReadyzResponse) GetBody() []byte
 GetBody returns the raw response body bytes
 
 <a name="GetReadyzResponse.Status"></a>
-### func \(GetReadyzResponse\) [Status](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L4867>)
+### func \(GetReadyzResponse\) [Status](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L7917>)
 
 ```go
 func (r GetReadyzResponse) Status() string
@@ -4252,7 +6907,7 @@ func (r GetReadyzResponse) Status() string
 Status returns HTTPResponse.Status
 
 <a name="GetReadyzResponse.StatusCode"></a>
-### func \(GetReadyzResponse\) [StatusCode](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L4875>)
+### func \(GetReadyzResponse\) [StatusCode](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L7925>)
 
 ```go
 func (r GetReadyzResponse) StatusCode() int
@@ -4261,7 +6916,7 @@ func (r GetReadyzResponse) StatusCode() int
 StatusCode returns HTTPResponse.StatusCode
 
 <a name="GetTaskInstanceResponse"></a>
-## type [GetTaskInstanceResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L4075-L4080>)
+## type [GetTaskInstanceResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L6581-L6590>)
 
 
 
@@ -4271,11 +6926,15 @@ type GetTaskInstanceResponse struct {
     HTTPResponse *http.Response
     // JSON200 the response for an HTTP 200 `application/json` response
     JSON200 *TaskInstance
+    // ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+    ApplicationproblemJSON503 *AuthUnavailable
+    // Headers503 the parsed response headers for an HTTP 503 response
+    Headers503 *GetTaskInstanceResponse503Headers
 }
 ```
 
 <a name="ParseGetTaskInstanceResponse"></a>
-### func [ParseGetTaskInstanceResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L5957>)
+### func [ParseGetTaskInstanceResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L9911>)
 
 ```go
 func ParseGetTaskInstanceResponse(rsp *http.Response) (*GetTaskInstanceResponse, error)
@@ -4284,7 +6943,7 @@ func ParseGetTaskInstanceResponse(rsp *http.Response) (*GetTaskInstanceResponse,
 ParseGetTaskInstanceResponse parses an HTTP response from a GetTaskInstanceWithResponse call
 
 <a name="GetTaskInstanceResponse.ContentType"></a>
-### func \(GetTaskInstanceResponse\) [ContentType](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L4109>)
+### func \(GetTaskInstanceResponse\) [ContentType](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L6624>)
 
 ```go
 func (r GetTaskInstanceResponse) ContentType() string
@@ -4292,8 +6951,17 @@ func (r GetTaskInstanceResponse) ContentType() string
 
 ContentType is a convenience method to retrieve the Content\-Type value from the HTTP response headers
 
+<a name="GetTaskInstanceResponse.GetApplicationproblemJSON503"></a>
+### func \(GetTaskInstanceResponse\) [GetApplicationproblemJSON503](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L6598>)
+
+```go
+func (r GetTaskInstanceResponse) GetApplicationproblemJSON503() *AuthUnavailable
+```
+
+GetApplicationproblemJSON503 returns the response for an HTTP 503 \`application/problem\+json\` response
+
 <a name="GetTaskInstanceResponse.GetBody"></a>
-### func \(GetTaskInstanceResponse\) [GetBody](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L4088>)
+### func \(GetTaskInstanceResponse\) [GetBody](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L6603>)
 
 ```go
 func (r GetTaskInstanceResponse) GetBody() []byte
@@ -4302,7 +6970,7 @@ func (r GetTaskInstanceResponse) GetBody() []byte
 GetBody returns the raw response body bytes
 
 <a name="GetTaskInstanceResponse.GetJSON200"></a>
-### func \(GetTaskInstanceResponse\) [GetJSON200](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L4083>)
+### func \(GetTaskInstanceResponse\) [GetJSON200](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L6593>)
 
 ```go
 func (r GetTaskInstanceResponse) GetJSON200() *TaskInstance
@@ -4311,7 +6979,7 @@ func (r GetTaskInstanceResponse) GetJSON200() *TaskInstance
 GetJSON200 returns the response for an HTTP 200 \`application/json\` response
 
 <a name="GetTaskInstanceResponse.Status"></a>
-### func \(GetTaskInstanceResponse\) [Status](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L4093>)
+### func \(GetTaskInstanceResponse\) [Status](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L6608>)
 
 ```go
 func (r GetTaskInstanceResponse) Status() string
@@ -4320,7 +6988,7 @@ func (r GetTaskInstanceResponse) Status() string
 Status returns HTTPResponse.Status
 
 <a name="GetTaskInstanceResponse.StatusCode"></a>
-### func \(GetTaskInstanceResponse\) [StatusCode](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L4101>)
+### func \(GetTaskInstanceResponse\) [StatusCode](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L6616>)
 
 ```go
 func (r GetTaskInstanceResponse) StatusCode() int
@@ -4328,8 +6996,19 @@ func (r GetTaskInstanceResponse) StatusCode() int
 
 StatusCode returns HTTPResponse.StatusCode
 
+<a name="GetTaskInstanceResponse503Headers"></a>
+## type [GetTaskInstanceResponse503Headers](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L6577-L6579>)
+
+GetTaskInstanceResponse503Headers the declared response headers of an HTTP 503 response for GetTaskInstance
+
+```go
+type GetTaskInstanceResponse503Headers struct {
+    RetryAfter *int
+}
+```
+
 <a name="GetTaskLogsResponse"></a>
-## type [GetTaskLogsResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L4116-L4119>)
+## type [GetTaskLogsResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L6774-L6781>)
 
 
 
@@ -4337,11 +7016,15 @@ StatusCode returns HTTPResponse.StatusCode
 type GetTaskLogsResponse struct {
     Body         []byte
     HTTPResponse *http.Response
+    // ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+    ApplicationproblemJSON503 *AuthUnavailable
+    // Headers503 the parsed response headers for an HTTP 503 response
+    Headers503 *GetTaskLogsResponse503Headers
 }
 ```
 
 <a name="ParseGetTaskLogsResponse"></a>
-### func [ParseGetTaskLogsResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L5983>)
+### func [ParseGetTaskLogsResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L10077>)
 
 ```go
 func ParseGetTaskLogsResponse(rsp *http.Response) (*GetTaskLogsResponse, error)
@@ -4350,7 +7033,7 @@ func ParseGetTaskLogsResponse(rsp *http.Response) (*GetTaskLogsResponse, error)
 ParseGetTaskLogsResponse parses an HTTP response from a GetTaskLogsWithResponse call
 
 <a name="GetTaskLogsResponse.ContentType"></a>
-### func \(GetTaskLogsResponse\) [ContentType](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L4143>)
+### func \(GetTaskLogsResponse\) [ContentType](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L6810>)
 
 ```go
 func (r GetTaskLogsResponse) ContentType() string
@@ -4358,8 +7041,17 @@ func (r GetTaskLogsResponse) ContentType() string
 
 ContentType is a convenience method to retrieve the Content\-Type value from the HTTP response headers
 
+<a name="GetTaskLogsResponse.GetApplicationproblemJSON503"></a>
+### func \(GetTaskLogsResponse\) [GetApplicationproblemJSON503](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L6784>)
+
+```go
+func (r GetTaskLogsResponse) GetApplicationproblemJSON503() *AuthUnavailable
+```
+
+GetApplicationproblemJSON503 returns the response for an HTTP 503 \`application/problem\+json\` response
+
 <a name="GetTaskLogsResponse.GetBody"></a>
-### func \(GetTaskLogsResponse\) [GetBody](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L4122>)
+### func \(GetTaskLogsResponse\) [GetBody](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L6789>)
 
 ```go
 func (r GetTaskLogsResponse) GetBody() []byte
@@ -4368,7 +7060,7 @@ func (r GetTaskLogsResponse) GetBody() []byte
 GetBody returns the raw response body bytes
 
 <a name="GetTaskLogsResponse.Status"></a>
-### func \(GetTaskLogsResponse\) [Status](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L4127>)
+### func \(GetTaskLogsResponse\) [Status](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L6794>)
 
 ```go
 func (r GetTaskLogsResponse) Status() string
@@ -4377,7 +7069,7 @@ func (r GetTaskLogsResponse) Status() string
 Status returns HTTPResponse.Status
 
 <a name="GetTaskLogsResponse.StatusCode"></a>
-### func \(GetTaskLogsResponse\) [StatusCode](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L4135>)
+### func \(GetTaskLogsResponse\) [StatusCode](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L6802>)
 
 ```go
 func (r GetTaskLogsResponse) StatusCode() int
@@ -4385,8 +7077,19 @@ func (r GetTaskLogsResponse) StatusCode() int
 
 StatusCode returns HTTPResponse.StatusCode
 
+<a name="GetTaskLogsResponse503Headers"></a>
+## type [GetTaskLogsResponse503Headers](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L6770-L6772>)
+
+GetTaskLogsResponse503Headers the declared response headers of an HTTP 503 response for GetTaskLogs
+
+```go
+type GetTaskLogsResponse503Headers struct {
+    RetryAfter *int
+}
+```
+
 <a name="GetVariableResponse"></a>
-## type [GetVariableResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L4630-L4639>)
+## type [GetVariableResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L7622-L7635>)
 
 
 
@@ -4400,11 +7103,15 @@ type GetVariableResponse struct {
     JSON401 *Unauthorized
     // JSON404 the response for an HTTP 404 `application/json` response
     JSON404 *NotFound
+    // ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+    ApplicationproblemJSON503 *AuthUnavailable
+    // Headers503 the parsed response headers for an HTTP 503 response
+    Headers503 *GetVariableResponse503Headers
 }
 ```
 
 <a name="ParseGetVariableResponse"></a>
-### func [ParseGetVariableResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L6332>)
+### func [ParseGetVariableResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L10814>)
 
 ```go
 func ParseGetVariableResponse(rsp *http.Response) (*GetVariableResponse, error)
@@ -4413,7 +7120,7 @@ func ParseGetVariableResponse(rsp *http.Response) (*GetVariableResponse, error)
 ParseGetVariableResponse parses an HTTP response from a GetVariableWithResponse call
 
 <a name="GetVariableResponse.ContentType"></a>
-### func \(GetVariableResponse\) [ContentType](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L4678>)
+### func \(GetVariableResponse\) [ContentType](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L7679>)
 
 ```go
 func (r GetVariableResponse) ContentType() string
@@ -4421,8 +7128,17 @@ func (r GetVariableResponse) ContentType() string
 
 ContentType is a convenience method to retrieve the Content\-Type value from the HTTP response headers
 
+<a name="GetVariableResponse.GetApplicationproblemJSON503"></a>
+### func \(GetVariableResponse\) [GetApplicationproblemJSON503](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L7653>)
+
+```go
+func (r GetVariableResponse) GetApplicationproblemJSON503() *AuthUnavailable
+```
+
+GetApplicationproblemJSON503 returns the response for an HTTP 503 \`application/problem\+json\` response
+
 <a name="GetVariableResponse.GetBody"></a>
-### func \(GetVariableResponse\) [GetBody](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L4657>)
+### func \(GetVariableResponse\) [GetBody](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L7658>)
 
 ```go
 func (r GetVariableResponse) GetBody() []byte
@@ -4431,7 +7147,7 @@ func (r GetVariableResponse) GetBody() []byte
 GetBody returns the raw response body bytes
 
 <a name="GetVariableResponse.GetJSON200"></a>
-### func \(GetVariableResponse\) [GetJSON200](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L4642>)
+### func \(GetVariableResponse\) [GetJSON200](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L7638>)
 
 ```go
 func (r GetVariableResponse) GetJSON200() *Variable
@@ -4440,7 +7156,7 @@ func (r GetVariableResponse) GetJSON200() *Variable
 GetJSON200 returns the response for an HTTP 200 \`application/json\` response
 
 <a name="GetVariableResponse.GetJSON401"></a>
-### func \(GetVariableResponse\) [GetJSON401](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L4647>)
+### func \(GetVariableResponse\) [GetJSON401](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L7643>)
 
 ```go
 func (r GetVariableResponse) GetJSON401() *Unauthorized
@@ -4449,7 +7165,7 @@ func (r GetVariableResponse) GetJSON401() *Unauthorized
 GetJSON401 returns the response for an HTTP 401 \`application/json\` response
 
 <a name="GetVariableResponse.GetJSON404"></a>
-### func \(GetVariableResponse\) [GetJSON404](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L4652>)
+### func \(GetVariableResponse\) [GetJSON404](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L7648>)
 
 ```go
 func (r GetVariableResponse) GetJSON404() *NotFound
@@ -4458,7 +7174,7 @@ func (r GetVariableResponse) GetJSON404() *NotFound
 GetJSON404 returns the response for an HTTP 404 \`application/json\` response
 
 <a name="GetVariableResponse.Status"></a>
-### func \(GetVariableResponse\) [Status](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L4662>)
+### func \(GetVariableResponse\) [Status](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L7663>)
 
 ```go
 func (r GetVariableResponse) Status() string
@@ -4467,7 +7183,7 @@ func (r GetVariableResponse) Status() string
 Status returns HTTPResponse.Status
 
 <a name="GetVariableResponse.StatusCode"></a>
-### func \(GetVariableResponse\) [StatusCode](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L4670>)
+### func \(GetVariableResponse\) [StatusCode](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L7671>)
 
 ```go
 func (r GetVariableResponse) StatusCode() int
@@ -4475,8 +7191,19 @@ func (r GetVariableResponse) StatusCode() int
 
 StatusCode returns HTTPResponse.StatusCode
 
+<a name="GetVariableResponse503Headers"></a>
+## type [GetVariableResponse503Headers](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L7618-L7620>)
+
+GetVariableResponse503Headers the declared response headers of an HTTP 503 response for GetVariable
+
+```go
+type GetVariableResponse503Headers struct {
+    RetryAfter *int
+}
+```
+
 <a name="GetVersionResponse"></a>
-## type [GetVersionResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L4685-L4690>)
+## type [GetVersionResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L7691-L7700>)
 
 
 
@@ -4486,11 +7213,15 @@ type GetVersionResponse struct {
     HTTPResponse *http.Response
     // JSON200 the response for an HTTP 200 `application/json` response
     JSON200 *VersionInfo
+    // ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+    ApplicationproblemJSON503 *AuthUnavailable
+    // Headers503 the parsed response headers for an HTTP 503 response
+    Headers503 *GetVersionResponse503Headers
 }
 ```
 
 <a name="ParseGetVersionResponse"></a>
-### func [ParseGetVersionResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L6372>)
+### func [ParseGetVersionResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L10874>)
 
 ```go
 func ParseGetVersionResponse(rsp *http.Response) (*GetVersionResponse, error)
@@ -4499,7 +7230,7 @@ func ParseGetVersionResponse(rsp *http.Response) (*GetVersionResponse, error)
 ParseGetVersionResponse parses an HTTP response from a GetVersionWithResponse call
 
 <a name="GetVersionResponse.ContentType"></a>
-### func \(GetVersionResponse\) [ContentType](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L4719>)
+### func \(GetVersionResponse\) [ContentType](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L7734>)
 
 ```go
 func (r GetVersionResponse) ContentType() string
@@ -4507,8 +7238,17 @@ func (r GetVersionResponse) ContentType() string
 
 ContentType is a convenience method to retrieve the Content\-Type value from the HTTP response headers
 
+<a name="GetVersionResponse.GetApplicationproblemJSON503"></a>
+### func \(GetVersionResponse\) [GetApplicationproblemJSON503](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L7708>)
+
+```go
+func (r GetVersionResponse) GetApplicationproblemJSON503() *AuthUnavailable
+```
+
+GetApplicationproblemJSON503 returns the response for an HTTP 503 \`application/problem\+json\` response
+
 <a name="GetVersionResponse.GetBody"></a>
-### func \(GetVersionResponse\) [GetBody](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L4698>)
+### func \(GetVersionResponse\) [GetBody](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L7713>)
 
 ```go
 func (r GetVersionResponse) GetBody() []byte
@@ -4517,7 +7257,7 @@ func (r GetVersionResponse) GetBody() []byte
 GetBody returns the raw response body bytes
 
 <a name="GetVersionResponse.GetJSON200"></a>
-### func \(GetVersionResponse\) [GetJSON200](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L4693>)
+### func \(GetVersionResponse\) [GetJSON200](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L7703>)
 
 ```go
 func (r GetVersionResponse) GetJSON200() *VersionInfo
@@ -4526,7 +7266,7 @@ func (r GetVersionResponse) GetJSON200() *VersionInfo
 GetJSON200 returns the response for an HTTP 200 \`application/json\` response
 
 <a name="GetVersionResponse.Status"></a>
-### func \(GetVersionResponse\) [Status](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L4703>)
+### func \(GetVersionResponse\) [Status](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L7718>)
 
 ```go
 func (r GetVersionResponse) Status() string
@@ -4535,7 +7275,7 @@ func (r GetVersionResponse) Status() string
 Status returns HTTPResponse.Status
 
 <a name="GetVersionResponse.StatusCode"></a>
-### func \(GetVersionResponse\) [StatusCode](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L4711>)
+### func \(GetVersionResponse\) [StatusCode](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L7726>)
 
 ```go
 func (r GetVersionResponse) StatusCode() int
@@ -4543,8 +7283,19 @@ func (r GetVersionResponse) StatusCode() int
 
 StatusCode returns HTTPResponse.StatusCode
 
+<a name="GetVersionResponse503Headers"></a>
+## type [GetVersionResponse503Headers](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L7687-L7689>)
+
+GetVersionResponse503Headers the declared response headers of an HTTP 503 response for GetVersion
+
+```go
+type GetVersionResponse503Headers struct {
+    RetryAfter *int
+}
+```
+
 <a name="GetXcomEntryResponse"></a>
-## type [GetXcomEntryResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L4726-L4733>)
+## type [GetXcomEntryResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L7746-L7757>)
 
 
 
@@ -4556,11 +7307,15 @@ type GetXcomEntryResponse struct {
     JSON200 *XComEntry
     // JSON404 the response for an HTTP 404 `application/json` response
     JSON404 *NotFound
+    // ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+    ApplicationproblemJSON503 *AuthUnavailable
+    // Headers503 the parsed response headers for an HTTP 503 response
+    Headers503 *GetXcomEntryResponse503Headers
 }
 ```
 
 <a name="ParseGetXcomEntryResponse"></a>
-### func [ParseGetXcomEntryResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L6398>)
+### func [ParseGetXcomEntryResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L10920>)
 
 ```go
 func ParseGetXcomEntryResponse(rsp *http.Response) (*GetXcomEntryResponse, error)
@@ -4569,7 +7324,7 @@ func ParseGetXcomEntryResponse(rsp *http.Response) (*GetXcomEntryResponse, error
 ParseGetXcomEntryResponse parses an HTTP response from a GetXcomEntryWithResponse call
 
 <a name="GetXcomEntryResponse.ContentType"></a>
-### func \(GetXcomEntryResponse\) [ContentType](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L4767>)
+### func \(GetXcomEntryResponse\) [ContentType](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L7796>)
 
 ```go
 func (r GetXcomEntryResponse) ContentType() string
@@ -4577,8 +7332,17 @@ func (r GetXcomEntryResponse) ContentType() string
 
 ContentType is a convenience method to retrieve the Content\-Type value from the HTTP response headers
 
+<a name="GetXcomEntryResponse.GetApplicationproblemJSON503"></a>
+### func \(GetXcomEntryResponse\) [GetApplicationproblemJSON503](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L7770>)
+
+```go
+func (r GetXcomEntryResponse) GetApplicationproblemJSON503() *AuthUnavailable
+```
+
+GetApplicationproblemJSON503 returns the response for an HTTP 503 \`application/problem\+json\` response
+
 <a name="GetXcomEntryResponse.GetBody"></a>
-### func \(GetXcomEntryResponse\) [GetBody](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L4746>)
+### func \(GetXcomEntryResponse\) [GetBody](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L7775>)
 
 ```go
 func (r GetXcomEntryResponse) GetBody() []byte
@@ -4587,7 +7351,7 @@ func (r GetXcomEntryResponse) GetBody() []byte
 GetBody returns the raw response body bytes
 
 <a name="GetXcomEntryResponse.GetJSON200"></a>
-### func \(GetXcomEntryResponse\) [GetJSON200](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L4736>)
+### func \(GetXcomEntryResponse\) [GetJSON200](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L7760>)
 
 ```go
 func (r GetXcomEntryResponse) GetJSON200() *XComEntry
@@ -4596,7 +7360,7 @@ func (r GetXcomEntryResponse) GetJSON200() *XComEntry
 GetJSON200 returns the response for an HTTP 200 \`application/json\` response
 
 <a name="GetXcomEntryResponse.GetJSON404"></a>
-### func \(GetXcomEntryResponse\) [GetJSON404](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L4741>)
+### func \(GetXcomEntryResponse\) [GetJSON404](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L7765>)
 
 ```go
 func (r GetXcomEntryResponse) GetJSON404() *NotFound
@@ -4605,7 +7369,7 @@ func (r GetXcomEntryResponse) GetJSON404() *NotFound
 GetJSON404 returns the response for an HTTP 404 \`application/json\` response
 
 <a name="GetXcomEntryResponse.Status"></a>
-### func \(GetXcomEntryResponse\) [Status](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L4751>)
+### func \(GetXcomEntryResponse\) [Status](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L7780>)
 
 ```go
 func (r GetXcomEntryResponse) Status() string
@@ -4614,7 +7378,7 @@ func (r GetXcomEntryResponse) Status() string
 Status returns HTTPResponse.Status
 
 <a name="GetXcomEntryResponse.StatusCode"></a>
-### func \(GetXcomEntryResponse\) [StatusCode](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L4759>)
+### func \(GetXcomEntryResponse\) [StatusCode](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L7788>)
 
 ```go
 func (r GetXcomEntryResponse) StatusCode() int
@@ -4622,8 +7386,19 @@ func (r GetXcomEntryResponse) StatusCode() int
 
 StatusCode returns HTTPResponse.StatusCode
 
+<a name="GetXcomEntryResponse503Headers"></a>
+## type [GetXcomEntryResponse503Headers](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L7742-L7744>)
+
+GetXcomEntryResponse503Headers the declared response headers of an HTTP 503 response for GetXcomEntry
+
+```go
+type GetXcomEntryResponse503Headers struct {
+    RetryAfter *int
+}
+```
+
 <a name="HealthInfo"></a>
-## type [HealthInfo](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L303-L308>)
+## type [HealthInfo](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L585-L590>)
 
 HealthInfo defines model for HealthInfo.
 
@@ -4637,7 +7412,7 @@ type HealthInfo struct {
 ```
 
 <a name="HttpRequestDoer"></a>
-## type [HttpRequestDoer](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L517-L519>)
+## type [HttpRequestDoer](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L1161-L1163>)
 
 Doer performs HTTP requests.
 
@@ -4650,7 +7425,7 @@ type HttpRequestDoer interface {
 ```
 
 <a name="IssueTokenJSONRequestBody"></a>
-## type [IssueTokenJSONRequestBody](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L509>)
+## type [IssueTokenJSONRequestBody](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L971>)
 
 IssueTokenJSONRequestBody defines body for IssueToken for application/json ContentType.
 
@@ -4659,7 +7434,7 @@ type IssueTokenJSONRequestBody = TokenRequest
 ```
 
 <a name="IssueTokenResponse"></a>
-## type [IssueTokenResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L4774-L4781>)
+## type [IssueTokenResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L7813-L7826>)
 
 
 
@@ -4671,11 +7446,17 @@ type IssueTokenResponse struct {
     JSON200 *TokenResponse
     // JSON401 the response for an HTTP 401 `application/json` response
     JSON401 *Unauthorized
+    // ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+    ApplicationproblemJSON503 *AuthUnavailable
+    // Headers200 the parsed response headers for an HTTP 200 response
+    Headers200 *IssueTokenResponse200Headers
+    // Headers503 the parsed response headers for an HTTP 503 response
+    Headers503 *IssueTokenResponse503Headers
 }
 ```
 
 <a name="ParseIssueTokenResponse"></a>
-### func [ParseIssueTokenResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L6431>)
+### func [ParseIssueTokenResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L10973>)
 
 ```go
 func ParseIssueTokenResponse(rsp *http.Response) (*IssueTokenResponse, error)
@@ -4684,7 +7465,7 @@ func ParseIssueTokenResponse(rsp *http.Response) (*IssueTokenResponse, error)
 ParseIssueTokenResponse parses an HTTP response from a IssueTokenWithResponse call
 
 <a name="IssueTokenResponse.ContentType"></a>
-### func \(IssueTokenResponse\) [ContentType](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L4815>)
+### func \(IssueTokenResponse\) [ContentType](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L7865>)
 
 ```go
 func (r IssueTokenResponse) ContentType() string
@@ -4692,8 +7473,17 @@ func (r IssueTokenResponse) ContentType() string
 
 ContentType is a convenience method to retrieve the Content\-Type value from the HTTP response headers
 
+<a name="IssueTokenResponse.GetApplicationproblemJSON503"></a>
+### func \(IssueTokenResponse\) [GetApplicationproblemJSON503](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L7839>)
+
+```go
+func (r IssueTokenResponse) GetApplicationproblemJSON503() *AuthUnavailable
+```
+
+GetApplicationproblemJSON503 returns the response for an HTTP 503 \`application/problem\+json\` response
+
 <a name="IssueTokenResponse.GetBody"></a>
-### func \(IssueTokenResponse\) [GetBody](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L4794>)
+### func \(IssueTokenResponse\) [GetBody](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L7844>)
 
 ```go
 func (r IssueTokenResponse) GetBody() []byte
@@ -4702,7 +7492,7 @@ func (r IssueTokenResponse) GetBody() []byte
 GetBody returns the raw response body bytes
 
 <a name="IssueTokenResponse.GetJSON200"></a>
-### func \(IssueTokenResponse\) [GetJSON200](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L4784>)
+### func \(IssueTokenResponse\) [GetJSON200](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L7829>)
 
 ```go
 func (r IssueTokenResponse) GetJSON200() *TokenResponse
@@ -4711,7 +7501,7 @@ func (r IssueTokenResponse) GetJSON200() *TokenResponse
 GetJSON200 returns the response for an HTTP 200 \`application/json\` response
 
 <a name="IssueTokenResponse.GetJSON401"></a>
-### func \(IssueTokenResponse\) [GetJSON401](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L4789>)
+### func \(IssueTokenResponse\) [GetJSON401](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L7834>)
 
 ```go
 func (r IssueTokenResponse) GetJSON401() *Unauthorized
@@ -4720,7 +7510,7 @@ func (r IssueTokenResponse) GetJSON401() *Unauthorized
 GetJSON401 returns the response for an HTTP 401 \`application/json\` response
 
 <a name="IssueTokenResponse.Status"></a>
-### func \(IssueTokenResponse\) [Status](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L4799>)
+### func \(IssueTokenResponse\) [Status](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L7849>)
 
 ```go
 func (r IssueTokenResponse) Status() string
@@ -4729,7 +7519,7 @@ func (r IssueTokenResponse) Status() string
 Status returns HTTPResponse.Status
 
 <a name="IssueTokenResponse.StatusCode"></a>
-### func \(IssueTokenResponse\) [StatusCode](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L4807>)
+### func \(IssueTokenResponse\) [StatusCode](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L7857>)
 
 ```go
 func (r IssueTokenResponse) StatusCode() int
@@ -4737,8 +7527,30 @@ func (r IssueTokenResponse) StatusCode() int
 
 StatusCode returns HTTPResponse.StatusCode
 
+<a name="IssueTokenResponse200Headers"></a>
+## type [IssueTokenResponse200Headers](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L7804-L7806>)
+
+IssueTokenResponse200Headers the declared response headers of an HTTP 200 response for IssueToken
+
+```go
+type IssueTokenResponse200Headers struct {
+    SetCookie *string
+}
+```
+
+<a name="IssueTokenResponse503Headers"></a>
+## type [IssueTokenResponse503Headers](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L7809-L7811>)
+
+IssueTokenResponse503Headers the declared response headers of an HTTP 503 response for IssueToken
+
+```go
+type IssueTokenResponse503Headers struct {
+    RetryAfter *int
+}
+```
+
 <a name="Limit"></a>
-## type [Limit](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L430>)
+## type [Limit](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L824>)
 
 Limit defines model for Limit.
 
@@ -4746,8 +7558,134 @@ Limit defines model for Limit.
 type Limit = int
 ```
 
+<a name="ListAPITokensParams"></a>
+## type [ListAPITokensParams](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L848-L851>)
+
+ListAPITokensParams defines parameters for ListAPITokens.
+
+```go
+type ListAPITokensParams struct {
+    Limit  *Limit  `form:"limit,omitempty" json:"limit,omitempty"`
+    Offset *Offset `form:"offset,omitempty" json:"offset,omitempty"`
+}
+```
+
+<a name="ListAPITokensResponse"></a>
+## type [ListAPITokensResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L5264-L5277>)
+
+
+
+```go
+type ListAPITokensResponse struct {
+    Body         []byte
+    HTTPResponse *http.Response
+    // JSON200 the response for an HTTP 200 `application/json` response
+    JSON200 *APITokenCollection
+    // JSON401 the response for an HTTP 401 `application/json` response
+    JSON401 *Unauthorized
+    // JSON403 the response for an HTTP 403 `application/json` response
+    JSON403 *Error
+    // ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+    ApplicationproblemJSON503 *AuthUnavailable
+    // Headers503 the parsed response headers for an HTTP 503 response
+    Headers503 *ListAPITokensResponse503Headers
+}
+```
+
+<a name="ParseListAPITokensResponse"></a>
+### func [ParseListAPITokensResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L8777>)
+
+```go
+func ParseListAPITokensResponse(rsp *http.Response) (*ListAPITokensResponse, error)
+```
+
+ParseListAPITokensResponse parses an HTTP response from a ListAPITokensWithResponse call
+
+<a name="ListAPITokensResponse.ContentType"></a>
+### func \(ListAPITokensResponse\) [ContentType](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L5321>)
+
+```go
+func (r ListAPITokensResponse) ContentType() string
+```
+
+ContentType is a convenience method to retrieve the Content\-Type value from the HTTP response headers
+
+<a name="ListAPITokensResponse.GetApplicationproblemJSON503"></a>
+### func \(ListAPITokensResponse\) [GetApplicationproblemJSON503](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L5295>)
+
+```go
+func (r ListAPITokensResponse) GetApplicationproblemJSON503() *AuthUnavailable
+```
+
+GetApplicationproblemJSON503 returns the response for an HTTP 503 \`application/problem\+json\` response
+
+<a name="ListAPITokensResponse.GetBody"></a>
+### func \(ListAPITokensResponse\) [GetBody](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L5300>)
+
+```go
+func (r ListAPITokensResponse) GetBody() []byte
+```
+
+GetBody returns the raw response body bytes
+
+<a name="ListAPITokensResponse.GetJSON200"></a>
+### func \(ListAPITokensResponse\) [GetJSON200](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L5280>)
+
+```go
+func (r ListAPITokensResponse) GetJSON200() *APITokenCollection
+```
+
+GetJSON200 returns the response for an HTTP 200 \`application/json\` response
+
+<a name="ListAPITokensResponse.GetJSON401"></a>
+### func \(ListAPITokensResponse\) [GetJSON401](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L5285>)
+
+```go
+func (r ListAPITokensResponse) GetJSON401() *Unauthorized
+```
+
+GetJSON401 returns the response for an HTTP 401 \`application/json\` response
+
+<a name="ListAPITokensResponse.GetJSON403"></a>
+### func \(ListAPITokensResponse\) [GetJSON403](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L5290>)
+
+```go
+func (r ListAPITokensResponse) GetJSON403() *Error
+```
+
+GetJSON403 returns the response for an HTTP 403 \`application/json\` response
+
+<a name="ListAPITokensResponse.Status"></a>
+### func \(ListAPITokensResponse\) [Status](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L5305>)
+
+```go
+func (r ListAPITokensResponse) Status() string
+```
+
+Status returns HTTPResponse.Status
+
+<a name="ListAPITokensResponse.StatusCode"></a>
+### func \(ListAPITokensResponse\) [StatusCode](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L5313>)
+
+```go
+func (r ListAPITokensResponse) StatusCode() int
+```
+
+StatusCode returns HTTPResponse.StatusCode
+
+<a name="ListAPITokensResponse503Headers"></a>
+## type [ListAPITokensResponse503Headers](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L5260-L5262>)
+
+ListAPITokensResponse503Headers the declared response headers of an HTTP 503 response for ListAPITokens
+
+```go
+type ListAPITokensResponse503Headers struct {
+    RetryAfter *int
+}
+```
+
 <a name="ListConnectionsParams"></a>
-## type [ListConnectionsParams](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L451-L454>)
+## type [ListConnectionsParams](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L854-L857>)
 
 ListConnectionsParams defines parameters for ListConnections.
 
@@ -4759,7 +7697,7 @@ type ListConnectionsParams struct {
 ```
 
 <a name="ListConnectionsResponse"></a>
-## type [ListConnectionsResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L3403-L3410>)
+## type [ListConnectionsResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L5547-L5558>)
 
 
 
@@ -4771,11 +7709,15 @@ type ListConnectionsResponse struct {
     JSON200 *ConnectionCollection
     // JSON401 the response for an HTTP 401 `application/json` response
     JSON401 *Unauthorized
+    // ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+    ApplicationproblemJSON503 *AuthUnavailable
+    // Headers503 the parsed response headers for an HTTP 503 response
+    Headers503 *ListConnectionsResponse503Headers
 }
 ```
 
 <a name="ParseListConnectionsResponse"></a>
-### func [ParseListConnectionsResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L5492>)
+### func [ParseListConnectionsResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L9027>)
 
 ```go
 func ParseListConnectionsResponse(rsp *http.Response) (*ListConnectionsResponse, error)
@@ -4784,7 +7726,7 @@ func ParseListConnectionsResponse(rsp *http.Response) (*ListConnectionsResponse,
 ParseListConnectionsResponse parses an HTTP response from a ListConnectionsWithResponse call
 
 <a name="ListConnectionsResponse.ContentType"></a>
-### func \(ListConnectionsResponse\) [ContentType](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L3444>)
+### func \(ListConnectionsResponse\) [ContentType](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L5597>)
 
 ```go
 func (r ListConnectionsResponse) ContentType() string
@@ -4792,8 +7734,17 @@ func (r ListConnectionsResponse) ContentType() string
 
 ContentType is a convenience method to retrieve the Content\-Type value from the HTTP response headers
 
+<a name="ListConnectionsResponse.GetApplicationproblemJSON503"></a>
+### func \(ListConnectionsResponse\) [GetApplicationproblemJSON503](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L5571>)
+
+```go
+func (r ListConnectionsResponse) GetApplicationproblemJSON503() *AuthUnavailable
+```
+
+GetApplicationproblemJSON503 returns the response for an HTTP 503 \`application/problem\+json\` response
+
 <a name="ListConnectionsResponse.GetBody"></a>
-### func \(ListConnectionsResponse\) [GetBody](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L3423>)
+### func \(ListConnectionsResponse\) [GetBody](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L5576>)
 
 ```go
 func (r ListConnectionsResponse) GetBody() []byte
@@ -4802,7 +7753,7 @@ func (r ListConnectionsResponse) GetBody() []byte
 GetBody returns the raw response body bytes
 
 <a name="ListConnectionsResponse.GetJSON200"></a>
-### func \(ListConnectionsResponse\) [GetJSON200](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L3413>)
+### func \(ListConnectionsResponse\) [GetJSON200](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L5561>)
 
 ```go
 func (r ListConnectionsResponse) GetJSON200() *ConnectionCollection
@@ -4811,7 +7762,7 @@ func (r ListConnectionsResponse) GetJSON200() *ConnectionCollection
 GetJSON200 returns the response for an HTTP 200 \`application/json\` response
 
 <a name="ListConnectionsResponse.GetJSON401"></a>
-### func \(ListConnectionsResponse\) [GetJSON401](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L3418>)
+### func \(ListConnectionsResponse\) [GetJSON401](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L5566>)
 
 ```go
 func (r ListConnectionsResponse) GetJSON401() *Unauthorized
@@ -4820,7 +7771,7 @@ func (r ListConnectionsResponse) GetJSON401() *Unauthorized
 GetJSON401 returns the response for an HTTP 401 \`application/json\` response
 
 <a name="ListConnectionsResponse.Status"></a>
-### func \(ListConnectionsResponse\) [Status](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L3428>)
+### func \(ListConnectionsResponse\) [Status](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L5581>)
 
 ```go
 func (r ListConnectionsResponse) Status() string
@@ -4829,7 +7780,7 @@ func (r ListConnectionsResponse) Status() string
 Status returns HTTPResponse.Status
 
 <a name="ListConnectionsResponse.StatusCode"></a>
-### func \(ListConnectionsResponse\) [StatusCode](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L3436>)
+### func \(ListConnectionsResponse\) [StatusCode](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L5589>)
 
 ```go
 func (r ListConnectionsResponse) StatusCode() int
@@ -4837,21 +7788,35 @@ func (r ListConnectionsResponse) StatusCode() int
 
 StatusCode returns HTTPResponse.StatusCode
 
+<a name="ListConnectionsResponse503Headers"></a>
+## type [ListConnectionsResponse503Headers](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L5543-L5545>)
+
+ListConnectionsResponse503Headers the declared response headers of an HTTP 503 response for ListConnections
+
+```go
+type ListConnectionsResponse503Headers struct {
+    RetryAfter *int
+}
+```
+
 <a name="ListDagRunsParams"></a>
-## type [ListDagRunsParams](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L466-L470>)
+## type [ListDagRunsParams](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L869-L876>)
 
 ListDagRunsParams defines parameters for ListDagRuns.
 
 ```go
 type ListDagRunsParams struct {
-    Limit  *Limit                    `form:"limit,omitempty" json:"limit,omitempty"`
-    Offset *Offset                   `form:"offset,omitempty" json:"offset,omitempty"`
+    Limit  *Limit  `form:"limit,omitempty" json:"limit,omitempty"`
+    Offset *Offset `form:"offset,omitempty" json:"offset,omitempty"`
+
+    // Cursor Opaque cursor, as Apache Airflow 3.3 pages its lists. Send it empty for the first page, then the next_cursor or previous_cursor the previous body named. Whenever the request carries cursor, the body names next_cursor (absent on the last page) and previous_cursor (absent on the first page); a request without cursor gets the body without those fields. A cursor that is not one this server issued is refused with 400. Dexaflow also accepts the keyset cursor of the Dexaflow-Next-Cursor response header on the DAG run list: the page then holds the runs after the cursor in the same order, at the cost of the first page whatever the depth. With a state filter, offset paging filters the newest 10000 runs and counts total_entries within them, while keyset paging filters and counts every run of the DAG, so the two modes can report different totals for a DAG with more runs than that.
+    Cursor *Cursor                   `form:"cursor,omitempty" json:"cursor,omitempty"`
     State  *[]ListDagRunsParamsState `form:"state,omitempty" json:"state,omitempty"`
 }
 ```
 
 <a name="ListDagRunsParamsState"></a>
-## type [ListDagRunsParamsState](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L473>)
+## type [ListDagRunsParamsState](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L879>)
 
 ListDagRunsParamsState defines parameters for ListDagRuns.
 
@@ -4871,7 +7836,7 @@ const (
 ```
 
 <a name="ListDagRunsParamsState.Valid"></a>
-### func \(ListDagRunsParamsState\) [Valid](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L116>)
+### func \(ListDagRunsParamsState\) [Valid](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L212>)
 
 ```go
 func (e ListDagRunsParamsState) Valid() bool
@@ -4880,7 +7845,7 @@ func (e ListDagRunsParamsState) Valid() bool
 Valid indicates whether the value is a known member of the ListDagRunsParamsState enum.
 
 <a name="ListDagRunsResponse"></a>
-## type [ListDagRunsResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L3904-L3909>)
+## type [ListDagRunsResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L6271-L6280>)
 
 
 
@@ -4890,11 +7855,15 @@ type ListDagRunsResponse struct {
     HTTPResponse *http.Response
     // JSON200 the response for an HTTP 200 `application/json` response
     JSON200 *DAGRunCollection
+    // ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+    ApplicationproblemJSON503 *AuthUnavailable
+    // Headers503 the parsed response headers for an HTTP 503 response
+    Headers503 *ListDagRunsResponse503Headers
 }
 ```
 
 <a name="ParseListDagRunsResponse"></a>
-### func [ParseListDagRunsResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L5846>)
+### func [ParseListDagRunsResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L9646>)
 
 ```go
 func ParseListDagRunsResponse(rsp *http.Response) (*ListDagRunsResponse, error)
@@ -4903,7 +7872,7 @@ func ParseListDagRunsResponse(rsp *http.Response) (*ListDagRunsResponse, error)
 ParseListDagRunsResponse parses an HTTP response from a ListDagRunsWithResponse call
 
 <a name="ListDagRunsResponse.ContentType"></a>
-### func \(ListDagRunsResponse\) [ContentType](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L3938>)
+### func \(ListDagRunsResponse\) [ContentType](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L6314>)
 
 ```go
 func (r ListDagRunsResponse) ContentType() string
@@ -4911,8 +7880,17 @@ func (r ListDagRunsResponse) ContentType() string
 
 ContentType is a convenience method to retrieve the Content\-Type value from the HTTP response headers
 
+<a name="ListDagRunsResponse.GetApplicationproblemJSON503"></a>
+### func \(ListDagRunsResponse\) [GetApplicationproblemJSON503](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L6288>)
+
+```go
+func (r ListDagRunsResponse) GetApplicationproblemJSON503() *AuthUnavailable
+```
+
+GetApplicationproblemJSON503 returns the response for an HTTP 503 \`application/problem\+json\` response
+
 <a name="ListDagRunsResponse.GetBody"></a>
-### func \(ListDagRunsResponse\) [GetBody](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L3917>)
+### func \(ListDagRunsResponse\) [GetBody](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L6293>)
 
 ```go
 func (r ListDagRunsResponse) GetBody() []byte
@@ -4921,7 +7899,7 @@ func (r ListDagRunsResponse) GetBody() []byte
 GetBody returns the raw response body bytes
 
 <a name="ListDagRunsResponse.GetJSON200"></a>
-### func \(ListDagRunsResponse\) [GetJSON200](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L3912>)
+### func \(ListDagRunsResponse\) [GetJSON200](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L6283>)
 
 ```go
 func (r ListDagRunsResponse) GetJSON200() *DAGRunCollection
@@ -4930,7 +7908,7 @@ func (r ListDagRunsResponse) GetJSON200() *DAGRunCollection
 GetJSON200 returns the response for an HTTP 200 \`application/json\` response
 
 <a name="ListDagRunsResponse.Status"></a>
-### func \(ListDagRunsResponse\) [Status](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L3922>)
+### func \(ListDagRunsResponse\) [Status](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L6298>)
 
 ```go
 func (r ListDagRunsResponse) Status() string
@@ -4939,7 +7917,7 @@ func (r ListDagRunsResponse) Status() string
 Status returns HTTPResponse.Status
 
 <a name="ListDagRunsResponse.StatusCode"></a>
-### func \(ListDagRunsResponse\) [StatusCode](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L3930>)
+### func \(ListDagRunsResponse\) [StatusCode](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L6306>)
 
 ```go
 func (r ListDagRunsResponse) StatusCode() int
@@ -4947,8 +7925,19 @@ func (r ListDagRunsResponse) StatusCode() int
 
 StatusCode returns HTTPResponse.StatusCode
 
+<a name="ListDagRunsResponse503Headers"></a>
+## type [ListDagRunsResponse503Headers](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L6267-L6269>)
+
+ListDagRunsResponse503Headers the declared response headers of an HTTP 503 response for ListDagRuns
+
+```go
+type ListDagRunsResponse503Headers struct {
+    RetryAfter *int
+}
+```
+
 <a name="ListDagVersionsResponse"></a>
-## type [ListDagVersionsResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L4150-L4155>)
+## type [ListDagVersionsResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L6822-L6831>)
 
 
 
@@ -4958,11 +7947,15 @@ type ListDagVersionsResponse struct {
     HTTPResponse *http.Response
     // JSON200 the response for an HTTP 200 `application/json` response
     JSON200 *DagVersionCollection
+    // ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+    ApplicationproblemJSON503 *AuthUnavailable
+    // Headers503 the parsed response headers for an HTTP 503 response
+    Headers503 *ListDagVersionsResponse503Headers
 }
 ```
 
 <a name="ParseListDagVersionsResponse"></a>
-### func [ParseListDagVersionsResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L5999>)
+### func [ParseListDagVersionsResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L10116>)
 
 ```go
 func ParseListDagVersionsResponse(rsp *http.Response) (*ListDagVersionsResponse, error)
@@ -4971,7 +7964,7 @@ func ParseListDagVersionsResponse(rsp *http.Response) (*ListDagVersionsResponse,
 ParseListDagVersionsResponse parses an HTTP response from a ListDagVersionsWithResponse call
 
 <a name="ListDagVersionsResponse.ContentType"></a>
-### func \(ListDagVersionsResponse\) [ContentType](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L4184>)
+### func \(ListDagVersionsResponse\) [ContentType](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L6865>)
 
 ```go
 func (r ListDagVersionsResponse) ContentType() string
@@ -4979,8 +7972,17 @@ func (r ListDagVersionsResponse) ContentType() string
 
 ContentType is a convenience method to retrieve the Content\-Type value from the HTTP response headers
 
+<a name="ListDagVersionsResponse.GetApplicationproblemJSON503"></a>
+### func \(ListDagVersionsResponse\) [GetApplicationproblemJSON503](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L6839>)
+
+```go
+func (r ListDagVersionsResponse) GetApplicationproblemJSON503() *AuthUnavailable
+```
+
+GetApplicationproblemJSON503 returns the response for an HTTP 503 \`application/problem\+json\` response
+
 <a name="ListDagVersionsResponse.GetBody"></a>
-### func \(ListDagVersionsResponse\) [GetBody](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L4163>)
+### func \(ListDagVersionsResponse\) [GetBody](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L6844>)
 
 ```go
 func (r ListDagVersionsResponse) GetBody() []byte
@@ -4989,7 +7991,7 @@ func (r ListDagVersionsResponse) GetBody() []byte
 GetBody returns the raw response body bytes
 
 <a name="ListDagVersionsResponse.GetJSON200"></a>
-### func \(ListDagVersionsResponse\) [GetJSON200](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L4158>)
+### func \(ListDagVersionsResponse\) [GetJSON200](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L6834>)
 
 ```go
 func (r ListDagVersionsResponse) GetJSON200() *DagVersionCollection
@@ -4998,7 +8000,7 @@ func (r ListDagVersionsResponse) GetJSON200() *DagVersionCollection
 GetJSON200 returns the response for an HTTP 200 \`application/json\` response
 
 <a name="ListDagVersionsResponse.Status"></a>
-### func \(ListDagVersionsResponse\) [Status](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L4168>)
+### func \(ListDagVersionsResponse\) [Status](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L6849>)
 
 ```go
 func (r ListDagVersionsResponse) Status() string
@@ -5007,7 +8009,7 @@ func (r ListDagVersionsResponse) Status() string
 Status returns HTTPResponse.Status
 
 <a name="ListDagVersionsResponse.StatusCode"></a>
-### func \(ListDagVersionsResponse\) [StatusCode](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L4176>)
+### func \(ListDagVersionsResponse\) [StatusCode](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L6857>)
 
 ```go
 func (r ListDagVersionsResponse) StatusCode() int
@@ -5015,8 +8017,19 @@ func (r ListDagVersionsResponse) StatusCode() int
 
 StatusCode returns HTTPResponse.StatusCode
 
+<a name="ListDagVersionsResponse503Headers"></a>
+## type [ListDagVersionsResponse503Headers](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L6818-L6820>)
+
+ListDagVersionsResponse503Headers the declared response headers of an HTTP 503 response for ListDagVersions
+
+```go
+type ListDagVersionsResponse503Headers struct {
+    RetryAfter *int
+}
+```
+
 <a name="ListDagsParams"></a>
-## type [ListDagsParams](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L457-L463>)
+## type [ListDagsParams](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L860-L866>)
 
 ListDagsParams defines parameters for ListDags.
 
@@ -5031,7 +8044,7 @@ type ListDagsParams struct {
 ```
 
 <a name="ListDagsResponse"></a>
-## type [ListDagsResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L3733-L3738>)
+## type [ListDagsResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L5940-L5949>)
 
 
 
@@ -5041,11 +8054,15 @@ type ListDagsResponse struct {
     HTTPResponse *http.Response
     // JSON200 the response for an HTTP 200 `application/json` response
     JSON200 *DAGCollection
+    // ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+    ApplicationproblemJSON503 *AuthUnavailable
+    // Headers503 the parsed response headers for an HTTP 503 response
+    Headers503 *ListDagsResponse503Headers
 }
 ```
 
 <a name="ParseListDagsResponse"></a>
-### func [ParseListDagsResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L5735>)
+### func [ParseListDagsResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L9357>)
 
 ```go
 func ParseListDagsResponse(rsp *http.Response) (*ListDagsResponse, error)
@@ -5054,7 +8071,7 @@ func ParseListDagsResponse(rsp *http.Response) (*ListDagsResponse, error)
 ParseListDagsResponse parses an HTTP response from a ListDagsWithResponse call
 
 <a name="ListDagsResponse.ContentType"></a>
-### func \(ListDagsResponse\) [ContentType](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L3767>)
+### func \(ListDagsResponse\) [ContentType](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L5983>)
 
 ```go
 func (r ListDagsResponse) ContentType() string
@@ -5062,8 +8079,17 @@ func (r ListDagsResponse) ContentType() string
 
 ContentType is a convenience method to retrieve the Content\-Type value from the HTTP response headers
 
+<a name="ListDagsResponse.GetApplicationproblemJSON503"></a>
+### func \(ListDagsResponse\) [GetApplicationproblemJSON503](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L5957>)
+
+```go
+func (r ListDagsResponse) GetApplicationproblemJSON503() *AuthUnavailable
+```
+
+GetApplicationproblemJSON503 returns the response for an HTTP 503 \`application/problem\+json\` response
+
 <a name="ListDagsResponse.GetBody"></a>
-### func \(ListDagsResponse\) [GetBody](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L3746>)
+### func \(ListDagsResponse\) [GetBody](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L5962>)
 
 ```go
 func (r ListDagsResponse) GetBody() []byte
@@ -5072,7 +8098,7 @@ func (r ListDagsResponse) GetBody() []byte
 GetBody returns the raw response body bytes
 
 <a name="ListDagsResponse.GetJSON200"></a>
-### func \(ListDagsResponse\) [GetJSON200](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L3741>)
+### func \(ListDagsResponse\) [GetJSON200](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L5952>)
 
 ```go
 func (r ListDagsResponse) GetJSON200() *DAGCollection
@@ -5081,7 +8107,7 @@ func (r ListDagsResponse) GetJSON200() *DAGCollection
 GetJSON200 returns the response for an HTTP 200 \`application/json\` response
 
 <a name="ListDagsResponse.Status"></a>
-### func \(ListDagsResponse\) [Status](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L3751>)
+### func \(ListDagsResponse\) [Status](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L5967>)
 
 ```go
 func (r ListDagsResponse) Status() string
@@ -5090,7 +8116,7 @@ func (r ListDagsResponse) Status() string
 Status returns HTTPResponse.Status
 
 <a name="ListDagsResponse.StatusCode"></a>
-### func \(ListDagsResponse\) [StatusCode](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L3759>)
+### func \(ListDagsResponse\) [StatusCode](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L5975>)
 
 ```go
 func (r ListDagsResponse) StatusCode() int
@@ -5098,8 +8124,19 @@ func (r ListDagsResponse) StatusCode() int
 
 StatusCode returns HTTPResponse.StatusCode
 
+<a name="ListDagsResponse503Headers"></a>
+## type [ListDagsResponse503Headers](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L5936-L5938>)
+
+ListDagsResponse503Headers the declared response headers of an HTTP 503 response for ListDags
+
+```go
+type ListDagsResponse503Headers struct {
+    RetryAfter *int
+}
+```
+
 <a name="ListTaskInstancesResponse"></a>
-## type [ListTaskInstancesResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L4034-L4039>)
+## type [ListTaskInstancesResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L6526-L6535>)
 
 
 
@@ -5109,11 +8146,15 @@ type ListTaskInstancesResponse struct {
     HTTPResponse *http.Response
     // JSON200 the response for an HTTP 200 `application/json` response
     JSON200 *TaskInstanceCollection
+    // ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+    ApplicationproblemJSON503 *AuthUnavailable
+    // Headers503 the parsed response headers for an HTTP 503 response
+    Headers503 *ListTaskInstancesResponse503Headers
 }
 ```
 
 <a name="ParseListTaskInstancesResponse"></a>
-### func [ParseListTaskInstancesResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L5931>)
+### func [ParseListTaskInstancesResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L9865>)
 
 ```go
 func ParseListTaskInstancesResponse(rsp *http.Response) (*ListTaskInstancesResponse, error)
@@ -5122,7 +8163,7 @@ func ParseListTaskInstancesResponse(rsp *http.Response) (*ListTaskInstancesRespo
 ParseListTaskInstancesResponse parses an HTTP response from a ListTaskInstancesWithResponse call
 
 <a name="ListTaskInstancesResponse.ContentType"></a>
-### func \(ListTaskInstancesResponse\) [ContentType](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L4068>)
+### func \(ListTaskInstancesResponse\) [ContentType](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L6569>)
 
 ```go
 func (r ListTaskInstancesResponse) ContentType() string
@@ -5130,8 +8171,17 @@ func (r ListTaskInstancesResponse) ContentType() string
 
 ContentType is a convenience method to retrieve the Content\-Type value from the HTTP response headers
 
+<a name="ListTaskInstancesResponse.GetApplicationproblemJSON503"></a>
+### func \(ListTaskInstancesResponse\) [GetApplicationproblemJSON503](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L6543>)
+
+```go
+func (r ListTaskInstancesResponse) GetApplicationproblemJSON503() *AuthUnavailable
+```
+
+GetApplicationproblemJSON503 returns the response for an HTTP 503 \`application/problem\+json\` response
+
 <a name="ListTaskInstancesResponse.GetBody"></a>
-### func \(ListTaskInstancesResponse\) [GetBody](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L4047>)
+### func \(ListTaskInstancesResponse\) [GetBody](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L6548>)
 
 ```go
 func (r ListTaskInstancesResponse) GetBody() []byte
@@ -5140,7 +8190,7 @@ func (r ListTaskInstancesResponse) GetBody() []byte
 GetBody returns the raw response body bytes
 
 <a name="ListTaskInstancesResponse.GetJSON200"></a>
-### func \(ListTaskInstancesResponse\) [GetJSON200](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L4042>)
+### func \(ListTaskInstancesResponse\) [GetJSON200](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L6538>)
 
 ```go
 func (r ListTaskInstancesResponse) GetJSON200() *TaskInstanceCollection
@@ -5149,7 +8199,7 @@ func (r ListTaskInstancesResponse) GetJSON200() *TaskInstanceCollection
 GetJSON200 returns the response for an HTTP 200 \`application/json\` response
 
 <a name="ListTaskInstancesResponse.Status"></a>
-### func \(ListTaskInstancesResponse\) [Status](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L4052>)
+### func \(ListTaskInstancesResponse\) [Status](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L6553>)
 
 ```go
 func (r ListTaskInstancesResponse) Status() string
@@ -5158,7 +8208,7 @@ func (r ListTaskInstancesResponse) Status() string
 Status returns HTTPResponse.Status
 
 <a name="ListTaskInstancesResponse.StatusCode"></a>
-### func \(ListTaskInstancesResponse\) [StatusCode](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L4060>)
+### func \(ListTaskInstancesResponse\) [StatusCode](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L6561>)
 
 ```go
 func (r ListTaskInstancesResponse) StatusCode() int
@@ -5166,8 +8216,19 @@ func (r ListTaskInstancesResponse) StatusCode() int
 
 StatusCode returns HTTPResponse.StatusCode
 
+<a name="ListTaskInstancesResponse503Headers"></a>
+## type [ListTaskInstancesResponse503Headers](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L6522-L6524>)
+
+ListTaskInstancesResponse503Headers the declared response headers of an HTTP 503 response for ListTaskInstances
+
+```go
+type ListTaskInstancesResponse503Headers struct {
+    RetryAfter *int
+}
+```
+
 <a name="ListUsersParams"></a>
-## type [ListUsersParams](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L476-L479>)
+## type [ListUsersParams](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L917-L920>)
 
 ListUsersParams defines parameters for ListUsers.
 
@@ -5179,7 +8240,7 @@ type ListUsersParams struct {
 ```
 
 <a name="ListUsersResponse"></a>
-## type [ListUsersResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L4369-L4376>)
+## type [ListUsersResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L7208-L7219>)
 
 
 
@@ -5191,11 +8252,15 @@ type ListUsersResponse struct {
     JSON200 *UserCollection
     // JSON401 the response for an HTTP 401 `application/json` response
     JSON401 *Unauthorized
+    // ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+    ApplicationproblemJSON503 *AuthUnavailable
+    // Headers503 the parsed response headers for an HTTP 503 response
+    Headers503 *ListUsersResponse503Headers
 }
 ```
 
 <a name="ParseListUsersResponse"></a>
-### func [ParseListUsersResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L6143>)
+### func [ParseListUsersResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L10451>)
 
 ```go
 func ParseListUsersResponse(rsp *http.Response) (*ListUsersResponse, error)
@@ -5204,7 +8269,7 @@ func ParseListUsersResponse(rsp *http.Response) (*ListUsersResponse, error)
 ParseListUsersResponse parses an HTTP response from a ListUsersWithResponse call
 
 <a name="ListUsersResponse.ContentType"></a>
-### func \(ListUsersResponse\) [ContentType](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L4410>)
+### func \(ListUsersResponse\) [ContentType](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L7258>)
 
 ```go
 func (r ListUsersResponse) ContentType() string
@@ -5212,8 +8277,17 @@ func (r ListUsersResponse) ContentType() string
 
 ContentType is a convenience method to retrieve the Content\-Type value from the HTTP response headers
 
+<a name="ListUsersResponse.GetApplicationproblemJSON503"></a>
+### func \(ListUsersResponse\) [GetApplicationproblemJSON503](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L7232>)
+
+```go
+func (r ListUsersResponse) GetApplicationproblemJSON503() *AuthUnavailable
+```
+
+GetApplicationproblemJSON503 returns the response for an HTTP 503 \`application/problem\+json\` response
+
 <a name="ListUsersResponse.GetBody"></a>
-### func \(ListUsersResponse\) [GetBody](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L4389>)
+### func \(ListUsersResponse\) [GetBody](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L7237>)
 
 ```go
 func (r ListUsersResponse) GetBody() []byte
@@ -5222,7 +8296,7 @@ func (r ListUsersResponse) GetBody() []byte
 GetBody returns the raw response body bytes
 
 <a name="ListUsersResponse.GetJSON200"></a>
-### func \(ListUsersResponse\) [GetJSON200](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L4379>)
+### func \(ListUsersResponse\) [GetJSON200](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L7222>)
 
 ```go
 func (r ListUsersResponse) GetJSON200() *UserCollection
@@ -5231,7 +8305,7 @@ func (r ListUsersResponse) GetJSON200() *UserCollection
 GetJSON200 returns the response for an HTTP 200 \`application/json\` response
 
 <a name="ListUsersResponse.GetJSON401"></a>
-### func \(ListUsersResponse\) [GetJSON401](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L4384>)
+### func \(ListUsersResponse\) [GetJSON401](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L7227>)
 
 ```go
 func (r ListUsersResponse) GetJSON401() *Unauthorized
@@ -5240,7 +8314,7 @@ func (r ListUsersResponse) GetJSON401() *Unauthorized
 GetJSON401 returns the response for an HTTP 401 \`application/json\` response
 
 <a name="ListUsersResponse.Status"></a>
-### func \(ListUsersResponse\) [Status](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L4394>)
+### func \(ListUsersResponse\) [Status](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L7242>)
 
 ```go
 func (r ListUsersResponse) Status() string
@@ -5249,7 +8323,7 @@ func (r ListUsersResponse) Status() string
 Status returns HTTPResponse.Status
 
 <a name="ListUsersResponse.StatusCode"></a>
-### func \(ListUsersResponse\) [StatusCode](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L4402>)
+### func \(ListUsersResponse\) [StatusCode](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L7250>)
 
 ```go
 func (r ListUsersResponse) StatusCode() int
@@ -5257,8 +8331,19 @@ func (r ListUsersResponse) StatusCode() int
 
 StatusCode returns HTTPResponse.StatusCode
 
+<a name="ListUsersResponse503Headers"></a>
+## type [ListUsersResponse503Headers](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L7204-L7206>)
+
+ListUsersResponse503Headers the declared response headers of an HTTP 503 response for ListUsers
+
+```go
+type ListUsersResponse503Headers struct {
+    RetryAfter *int
+}
+```
+
 <a name="ListVariablesParams"></a>
-## type [ListVariablesParams](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L482-L485>)
+## type [ListVariablesParams](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L923-L926>)
 
 ListVariablesParams defines parameters for ListVariables.
 
@@ -5270,7 +8355,7 @@ type ListVariablesParams struct {
 ```
 
 <a name="ListVariablesResponse"></a>
-## type [ListVariablesResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L4479-L4486>)
+## type [ListVariablesResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L7429-L7440>)
 
 
 
@@ -5282,11 +8367,15 @@ type ListVariablesResponse struct {
     JSON200 *VariableCollection
     // JSON401 the response for an HTTP 401 `application/json` response
     JSON401 *Unauthorized
+    // ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+    ApplicationproblemJSON503 *AuthUnavailable
+    // Headers503 the parsed response headers for an HTTP 503 response
+    Headers503 *ListVariablesResponse503Headers
 }
 ```
 
 <a name="ParseListVariablesResponse"></a>
-### func [ParseListVariablesResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L6223>)
+### func [ParseListVariablesResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L10645>)
 
 ```go
 func ParseListVariablesResponse(rsp *http.Response) (*ListVariablesResponse, error)
@@ -5295,7 +8384,7 @@ func ParseListVariablesResponse(rsp *http.Response) (*ListVariablesResponse, err
 ParseListVariablesResponse parses an HTTP response from a ListVariablesWithResponse call
 
 <a name="ListVariablesResponse.ContentType"></a>
-### func \(ListVariablesResponse\) [ContentType](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L4520>)
+### func \(ListVariablesResponse\) [ContentType](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L7479>)
 
 ```go
 func (r ListVariablesResponse) ContentType() string
@@ -5303,8 +8392,17 @@ func (r ListVariablesResponse) ContentType() string
 
 ContentType is a convenience method to retrieve the Content\-Type value from the HTTP response headers
 
+<a name="ListVariablesResponse.GetApplicationproblemJSON503"></a>
+### func \(ListVariablesResponse\) [GetApplicationproblemJSON503](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L7453>)
+
+```go
+func (r ListVariablesResponse) GetApplicationproblemJSON503() *AuthUnavailable
+```
+
+GetApplicationproblemJSON503 returns the response for an HTTP 503 \`application/problem\+json\` response
+
 <a name="ListVariablesResponse.GetBody"></a>
-### func \(ListVariablesResponse\) [GetBody](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L4499>)
+### func \(ListVariablesResponse\) [GetBody](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L7458>)
 
 ```go
 func (r ListVariablesResponse) GetBody() []byte
@@ -5313,7 +8411,7 @@ func (r ListVariablesResponse) GetBody() []byte
 GetBody returns the raw response body bytes
 
 <a name="ListVariablesResponse.GetJSON200"></a>
-### func \(ListVariablesResponse\) [GetJSON200](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L4489>)
+### func \(ListVariablesResponse\) [GetJSON200](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L7443>)
 
 ```go
 func (r ListVariablesResponse) GetJSON200() *VariableCollection
@@ -5322,7 +8420,7 @@ func (r ListVariablesResponse) GetJSON200() *VariableCollection
 GetJSON200 returns the response for an HTTP 200 \`application/json\` response
 
 <a name="ListVariablesResponse.GetJSON401"></a>
-### func \(ListVariablesResponse\) [GetJSON401](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L4494>)
+### func \(ListVariablesResponse\) [GetJSON401](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L7448>)
 
 ```go
 func (r ListVariablesResponse) GetJSON401() *Unauthorized
@@ -5331,7 +8429,7 @@ func (r ListVariablesResponse) GetJSON401() *Unauthorized
 GetJSON401 returns the response for an HTTP 401 \`application/json\` response
 
 <a name="ListVariablesResponse.Status"></a>
-### func \(ListVariablesResponse\) [Status](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L4504>)
+### func \(ListVariablesResponse\) [Status](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L7463>)
 
 ```go
 func (r ListVariablesResponse) Status() string
@@ -5340,7 +8438,7 @@ func (r ListVariablesResponse) Status() string
 Status returns HTTPResponse.Status
 
 <a name="ListVariablesResponse.StatusCode"></a>
-### func \(ListVariablesResponse\) [StatusCode](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L4512>)
+### func \(ListVariablesResponse\) [StatusCode](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L7471>)
 
 ```go
 func (r ListVariablesResponse) StatusCode() int
@@ -5348,8 +8446,19 @@ func (r ListVariablesResponse) StatusCode() int
 
 StatusCode returns HTTPResponse.StatusCode
 
+<a name="ListVariablesResponse503Headers"></a>
+## type [ListVariablesResponse503Headers](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L7425-L7427>)
+
+ListVariablesResponse503Headers the declared response headers of an HTTP 503 response for ListVariables
+
+```go
+type ListVariablesResponse503Headers struct {
+    RetryAfter *int
+}
+```
+
 <a name="NotFound"></a>
-## type [NotFound](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L445>)
+## type [NotFound](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L842>)
 
 NotFound defines model for NotFound.
 
@@ -5358,7 +8467,7 @@ type NotFound = Error
 ```
 
 <a name="Offset"></a>
-## type [Offset](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L433>)
+## type [Offset](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L827>)
 
 Offset defines model for Offset.
 
@@ -5366,8 +8475,616 @@ Offset defines model for Offset.
 type Offset = int
 ```
 
+<a name="PatchTaskInstanceDryRunJSONRequestBody"></a>
+## type [PatchTaskInstanceDryRunJSONRequestBody](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L956>)
+
+PatchTaskInstanceDryRunJSONRequestBody defines body for PatchTaskInstanceDryRun for application/json ContentType.
+
+```go
+type PatchTaskInstanceDryRunJSONRequestBody = TaskInstanceStateUpdate
+```
+
+<a name="PatchTaskInstanceDryRunResponse"></a>
+## type [PatchTaskInstanceDryRunResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L6705-L6718>)
+
+
+
+```go
+type PatchTaskInstanceDryRunResponse struct {
+    Body         []byte
+    HTTPResponse *http.Response
+    // JSON200 the response for an HTTP 200 `application/json` response
+    JSON200 *TaskInstanceCollection
+    // JSON400 the response for an HTTP 400 `application/json` response
+    JSON400 *Error
+    // JSON404 the response for an HTTP 404 `application/json` response
+    JSON404 *NotFound
+    // ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+    ApplicationproblemJSON503 *AuthUnavailable
+    // Headers503 the parsed response headers for an HTTP 503 response
+    Headers503 *PatchTaskInstanceDryRunResponse503Headers
+}
+```
+
+<a name="ParsePatchTaskInstanceDryRunResponse"></a>
+### func [ParsePatchTaskInstanceDryRunResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L10017>)
+
+```go
+func ParsePatchTaskInstanceDryRunResponse(rsp *http.Response) (*PatchTaskInstanceDryRunResponse, error)
+```
+
+ParsePatchTaskInstanceDryRunResponse parses an HTTP response from a PatchTaskInstanceDryRunWithResponse call
+
+<a name="PatchTaskInstanceDryRunResponse.ContentType"></a>
+### func \(PatchTaskInstanceDryRunResponse\) [ContentType](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L6762>)
+
+```go
+func (r PatchTaskInstanceDryRunResponse) ContentType() string
+```
+
+ContentType is a convenience method to retrieve the Content\-Type value from the HTTP response headers
+
+<a name="PatchTaskInstanceDryRunResponse.GetApplicationproblemJSON503"></a>
+### func \(PatchTaskInstanceDryRunResponse\) [GetApplicationproblemJSON503](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L6736>)
+
+```go
+func (r PatchTaskInstanceDryRunResponse) GetApplicationproblemJSON503() *AuthUnavailable
+```
+
+GetApplicationproblemJSON503 returns the response for an HTTP 503 \`application/problem\+json\` response
+
+<a name="PatchTaskInstanceDryRunResponse.GetBody"></a>
+### func \(PatchTaskInstanceDryRunResponse\) [GetBody](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L6741>)
+
+```go
+func (r PatchTaskInstanceDryRunResponse) GetBody() []byte
+```
+
+GetBody returns the raw response body bytes
+
+<a name="PatchTaskInstanceDryRunResponse.GetJSON200"></a>
+### func \(PatchTaskInstanceDryRunResponse\) [GetJSON200](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L6721>)
+
+```go
+func (r PatchTaskInstanceDryRunResponse) GetJSON200() *TaskInstanceCollection
+```
+
+GetJSON200 returns the response for an HTTP 200 \`application/json\` response
+
+<a name="PatchTaskInstanceDryRunResponse.GetJSON400"></a>
+### func \(PatchTaskInstanceDryRunResponse\) [GetJSON400](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L6726>)
+
+```go
+func (r PatchTaskInstanceDryRunResponse) GetJSON400() *Error
+```
+
+GetJSON400 returns the response for an HTTP 400 \`application/json\` response
+
+<a name="PatchTaskInstanceDryRunResponse.GetJSON404"></a>
+### func \(PatchTaskInstanceDryRunResponse\) [GetJSON404](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L6731>)
+
+```go
+func (r PatchTaskInstanceDryRunResponse) GetJSON404() *NotFound
+```
+
+GetJSON404 returns the response for an HTTP 404 \`application/json\` response
+
+<a name="PatchTaskInstanceDryRunResponse.Status"></a>
+### func \(PatchTaskInstanceDryRunResponse\) [Status](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L6746>)
+
+```go
+func (r PatchTaskInstanceDryRunResponse) Status() string
+```
+
+Status returns HTTPResponse.Status
+
+<a name="PatchTaskInstanceDryRunResponse.StatusCode"></a>
+### func \(PatchTaskInstanceDryRunResponse\) [StatusCode](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L6754>)
+
+```go
+func (r PatchTaskInstanceDryRunResponse) StatusCode() int
+```
+
+StatusCode returns HTTPResponse.StatusCode
+
+<a name="PatchTaskInstanceDryRunResponse503Headers"></a>
+## type [PatchTaskInstanceDryRunResponse503Headers](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L6701-L6703>)
+
+PatchTaskInstanceDryRunResponse503Headers the declared response headers of an HTTP 503 response for PatchTaskInstanceDryRun
+
+```go
+type PatchTaskInstanceDryRunResponse503Headers struct {
+    RetryAfter *int
+}
+```
+
+<a name="PatchTaskInstanceJSONRequestBody"></a>
+## type [PatchTaskInstanceJSONRequestBody](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L953>)
+
+PatchTaskInstanceJSONRequestBody defines body for PatchTaskInstance for application/json ContentType.
+
+```go
+type PatchTaskInstanceJSONRequestBody = TaskInstanceStateUpdate
+```
+
+<a name="PatchTaskInstanceResponse"></a>
+## type [PatchTaskInstanceResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L6636-L6649>)
+
+
+
+```go
+type PatchTaskInstanceResponse struct {
+    Body         []byte
+    HTTPResponse *http.Response
+    // JSON200 the response for an HTTP 200 `application/json` response
+    JSON200 *TaskInstanceCollection
+    // JSON400 the response for an HTTP 400 `application/json` response
+    JSON400 *Error
+    // JSON404 the response for an HTTP 404 `application/json` response
+    JSON404 *NotFound
+    // ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+    ApplicationproblemJSON503 *AuthUnavailable
+    // Headers503 the parsed response headers for an HTTP 503 response
+    Headers503 *PatchTaskInstanceResponse503Headers
+}
+```
+
+<a name="ParsePatchTaskInstanceResponse"></a>
+### func [ParsePatchTaskInstanceResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L9957>)
+
+```go
+func ParsePatchTaskInstanceResponse(rsp *http.Response) (*PatchTaskInstanceResponse, error)
+```
+
+ParsePatchTaskInstanceResponse parses an HTTP response from a PatchTaskInstanceWithResponse call
+
+<a name="PatchTaskInstanceResponse.ContentType"></a>
+### func \(PatchTaskInstanceResponse\) [ContentType](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L6693>)
+
+```go
+func (r PatchTaskInstanceResponse) ContentType() string
+```
+
+ContentType is a convenience method to retrieve the Content\-Type value from the HTTP response headers
+
+<a name="PatchTaskInstanceResponse.GetApplicationproblemJSON503"></a>
+### func \(PatchTaskInstanceResponse\) [GetApplicationproblemJSON503](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L6667>)
+
+```go
+func (r PatchTaskInstanceResponse) GetApplicationproblemJSON503() *AuthUnavailable
+```
+
+GetApplicationproblemJSON503 returns the response for an HTTP 503 \`application/problem\+json\` response
+
+<a name="PatchTaskInstanceResponse.GetBody"></a>
+### func \(PatchTaskInstanceResponse\) [GetBody](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L6672>)
+
+```go
+func (r PatchTaskInstanceResponse) GetBody() []byte
+```
+
+GetBody returns the raw response body bytes
+
+<a name="PatchTaskInstanceResponse.GetJSON200"></a>
+### func \(PatchTaskInstanceResponse\) [GetJSON200](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L6652>)
+
+```go
+func (r PatchTaskInstanceResponse) GetJSON200() *TaskInstanceCollection
+```
+
+GetJSON200 returns the response for an HTTP 200 \`application/json\` response
+
+<a name="PatchTaskInstanceResponse.GetJSON400"></a>
+### func \(PatchTaskInstanceResponse\) [GetJSON400](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L6657>)
+
+```go
+func (r PatchTaskInstanceResponse) GetJSON400() *Error
+```
+
+GetJSON400 returns the response for an HTTP 400 \`application/json\` response
+
+<a name="PatchTaskInstanceResponse.GetJSON404"></a>
+### func \(PatchTaskInstanceResponse\) [GetJSON404](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L6662>)
+
+```go
+func (r PatchTaskInstanceResponse) GetJSON404() *NotFound
+```
+
+GetJSON404 returns the response for an HTTP 404 \`application/json\` response
+
+<a name="PatchTaskInstanceResponse.Status"></a>
+### func \(PatchTaskInstanceResponse\) [Status](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L6677>)
+
+```go
+func (r PatchTaskInstanceResponse) Status() string
+```
+
+Status returns HTTPResponse.Status
+
+<a name="PatchTaskInstanceResponse.StatusCode"></a>
+### func \(PatchTaskInstanceResponse\) [StatusCode](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L6685>)
+
+```go
+func (r PatchTaskInstanceResponse) StatusCode() int
+```
+
+StatusCode returns HTTPResponse.StatusCode
+
+<a name="PatchTaskInstanceResponse503Headers"></a>
+## type [PatchTaskInstanceResponse503Headers](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L6632-L6634>)
+
+PatchTaskInstanceResponse503Headers the declared response headers of an HTTP 503 response for PatchTaskInstance
+
+```go
+type PatchTaskInstanceResponse503Headers struct {
+    RetryAfter *int
+}
+```
+
+<a name="PatchUserJSONRequestBody"></a>
+## type [PatchUserJSONRequestBody](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L965>)
+
+PatchUserJSONRequestBody defines body for PatchUser for application/json ContentType.
+
+```go
+type PatchUserJSONRequestBody = PatchUserRequest
+```
+
+<a name="PatchUserRequest"></a>
+## type [PatchUserRequest](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L593-L596>)
+
+PatchUserRequest defines model for PatchUserRequest.
+
+```go
+type PatchUserRequest struct {
+    // IsActive false deactivates the account, true reactivates it.
+    IsActive bool `json:"is_active"`
+}
+```
+
+<a name="PatchUserResponse"></a>
+## type [PatchUserResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L7346-L7363>)
+
+
+
+```go
+type PatchUserResponse struct {
+    Body         []byte
+    HTTPResponse *http.Response
+    // JSON200 the response for an HTTP 200 `application/json` response
+    JSON200 *User
+    // JSON400 the response for an HTTP 400 `application/json` response
+    JSON400 *Error
+    // JSON401 the response for an HTTP 401 `application/json` response
+    JSON401 *Unauthorized
+    // JSON404 the response for an HTTP 404 `application/json` response
+    JSON404 *NotFound
+    // JSON409 the response for an HTTP 409 `application/json` response
+    JSON409 *Error
+    // ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+    ApplicationproblemJSON503 *AuthUnavailable
+    // Headers503 the parsed response headers for an HTTP 503 response
+    Headers503 *PatchUserResponse503Headers
+}
+```
+
+<a name="ParsePatchUserResponse"></a>
+### func [ParsePatchUserResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L10571>)
+
+```go
+func ParsePatchUserResponse(rsp *http.Response) (*PatchUserResponse, error)
+```
+
+ParsePatchUserResponse parses an HTTP response from a PatchUserWithResponse call
+
+<a name="PatchUserResponse.ContentType"></a>
+### func \(PatchUserResponse\) [ContentType](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L7417>)
+
+```go
+func (r PatchUserResponse) ContentType() string
+```
+
+ContentType is a convenience method to retrieve the Content\-Type value from the HTTP response headers
+
+<a name="PatchUserResponse.GetApplicationproblemJSON503"></a>
+### func \(PatchUserResponse\) [GetApplicationproblemJSON503](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L7391>)
+
+```go
+func (r PatchUserResponse) GetApplicationproblemJSON503() *AuthUnavailable
+```
+
+GetApplicationproblemJSON503 returns the response for an HTTP 503 \`application/problem\+json\` response
+
+<a name="PatchUserResponse.GetBody"></a>
+### func \(PatchUserResponse\) [GetBody](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L7396>)
+
+```go
+func (r PatchUserResponse) GetBody() []byte
+```
+
+GetBody returns the raw response body bytes
+
+<a name="PatchUserResponse.GetJSON200"></a>
+### func \(PatchUserResponse\) [GetJSON200](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L7366>)
+
+```go
+func (r PatchUserResponse) GetJSON200() *User
+```
+
+GetJSON200 returns the response for an HTTP 200 \`application/json\` response
+
+<a name="PatchUserResponse.GetJSON400"></a>
+### func \(PatchUserResponse\) [GetJSON400](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L7371>)
+
+```go
+func (r PatchUserResponse) GetJSON400() *Error
+```
+
+GetJSON400 returns the response for an HTTP 400 \`application/json\` response
+
+<a name="PatchUserResponse.GetJSON401"></a>
+### func \(PatchUserResponse\) [GetJSON401](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L7376>)
+
+```go
+func (r PatchUserResponse) GetJSON401() *Unauthorized
+```
+
+GetJSON401 returns the response for an HTTP 401 \`application/json\` response
+
+<a name="PatchUserResponse.GetJSON404"></a>
+### func \(PatchUserResponse\) [GetJSON404](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L7381>)
+
+```go
+func (r PatchUserResponse) GetJSON404() *NotFound
+```
+
+GetJSON404 returns the response for an HTTP 404 \`application/json\` response
+
+<a name="PatchUserResponse.GetJSON409"></a>
+### func \(PatchUserResponse\) [GetJSON409](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L7386>)
+
+```go
+func (r PatchUserResponse) GetJSON409() *Error
+```
+
+GetJSON409 returns the response for an HTTP 409 \`application/json\` response
+
+<a name="PatchUserResponse.Status"></a>
+### func \(PatchUserResponse\) [Status](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L7401>)
+
+```go
+func (r PatchUserResponse) Status() string
+```
+
+Status returns HTTPResponse.Status
+
+<a name="PatchUserResponse.StatusCode"></a>
+### func \(PatchUserResponse\) [StatusCode](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L7409>)
+
+```go
+func (r PatchUserResponse) StatusCode() int
+```
+
+StatusCode returns HTTPResponse.StatusCode
+
+<a name="PatchUserResponse503Headers"></a>
+## type [PatchUserResponse503Headers](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L7342-L7344>)
+
+PatchUserResponse503Headers the declared response headers of an HTTP 503 response for PatchUser
+
+```go
+type PatchUserResponse503Headers struct {
+    RetryAfter *int
+}
+```
+
+<a name="RegisterDagVersionJSONRequestBody"></a>
+## type [RegisterDagVersionJSONRequestBody](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L959>)
+
+RegisterDagVersionJSONRequestBody defines body for RegisterDagVersion for application/json ContentType.
+
+```go
+type RegisterDagVersionJSONRequestBody = DagSpec
+```
+
+<a name="RegisterDagVersionParams"></a>
+## type [RegisterDagVersionParams](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L887-L914>)
+
+RegisterDagVersionParams defines parameters for RegisterDagVersion.
+
+```go
+type RegisterDagVersionParams struct {
+    // IsPaused Sets the DAG's is_paused for this register (true or false). Any other value is refused with 400. Sending it needs write on dags, and a scoped token also needs the dexaflow:run scope (403 otherwise).
+    IsPaused *bool `form:"is_paused,omitempty" json:"is_paused,omitempty"`
+
+    // PromotedFrom Marks the register as a promotion (`dexaflow promote`): the name of the target the version was read from, recorded with promoted_from_server under promoted_from in the register's audit entry. It is the caller's claim, recorded as sent and not verified. A target name: lower case letters, digits, _ and -, starting with a letter or digit, at most 63 characters; anything else is refused with 400.
+    PromotedFrom *string `form:"promoted_from,omitempty" json:"promoted_from,omitempty"`
+
+    // PromotedFromServer The URL of the control plane the version was promoted from, as the caller claims it (not verified): an absolute http or https URL without credentials and with no control or format character, at most 2048 bytes. It needs promoted_from (400 otherwise).
+    PromotedFromServer *string `form:"promoted_from_server,omitempty" json:"promoted_from_server,omitempty"`
+
+    // BuildCommit Where the version was built (#1702), with the other build_* parameters: the git commit of its sources, 7 to 64 lower case hex characters. The build_* parameters are metadata of the register, not part of dag.json: they change neither the spec, its hash nor the version label. They are stored with the version the register creates (build_info in DagVersion) and recorded in its audit entry; a register of content already registered keeps the build info of its first register. They are the caller's claim, recorded as sent and not verified. A value that is empty or breaks its rule is refused with 400.
+    BuildCommit *string `form:"build_commit,omitempty" json:"build_commit,omitempty"`
+
+    // BuildRepo The repository of the sources: an absolute http or https URL without credentials, query string or fragment, valid UTF-8 with no control or format character, at most 2048 bytes.
+    BuildRepo *string `form:"build_repo,omitempty" json:"build_repo,omitempty"`
+
+    // BuildPipelineUrl The CI pipeline run that built the version: an absolute http or https URL without credentials, query string or fragment, valid UTF-8 with no control or format character, at most 2048 bytes.
+    BuildPipelineUrl *string `form:"build_pipeline_url,omitempty" json:"build_pipeline_url,omitempty"`
+
+    // BuildBuilder The builder that produced the image, at most 255 bytes, with no control or format character.
+    BuildBuilder *string `form:"build_builder,omitempty" json:"build_builder,omitempty"`
+
+    // BuildBaseImage The base image the DAG image was built from (it carries the task agent), at most 512 bytes, with no space, control or format character.
+    BuildBaseImage *string `form:"build_base_image,omitempty" json:"build_base_image,omitempty"`
+
+    // BuildCliVersion The version of the CLI that built and registered the version, at most 128 bytes, with no space, control or format character.
+    BuildCliVersion *string `form:"build_cli_version,omitempty" json:"build_cli_version,omitempty"`
+}
+```
+
+<a name="RegisterDagVersionResponse"></a>
+## type [RegisterDagVersionResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L7006-L7027>)
+
+
+
+```go
+type RegisterDagVersionResponse struct {
+    Body         []byte
+    HTTPResponse *http.Response
+    // JSON200 the response for an HTTP 200 `application/json` response
+    JSON200 *VersionRegistration
+    // JSON201 the response for an HTTP 201 `application/json` response
+    JSON201 *VersionRegistration
+    // JSON400 the response for an HTTP 400 `application/json` response
+    JSON400 *Error
+    // JSON401 the response for an HTTP 401 `application/json` response
+    JSON401 *Unauthorized
+    // JSON403 the response for an HTTP 403 `application/json` response
+    JSON403 *Error
+    // JSON409 the response for an HTTP 409 `application/json` response
+    JSON409 *Error
+    // ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+    ApplicationproblemJSON503 *AuthUnavailable
+    // Headers403 the parsed response headers for an HTTP 403 response
+    Headers403 *RegisterDagVersionResponse403Headers
+    // Headers503 the parsed response headers for an HTTP 503 response
+    Headers503 *RegisterDagVersionResponse503Headers
+}
+```
+
+<a name="ParseRegisterDagVersionResponse"></a>
+### func [ParseRegisterDagVersionResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L10268>)
+
+```go
+func ParseRegisterDagVersionResponse(rsp *http.Response) (*RegisterDagVersionResponse, error)
+```
+
+ParseRegisterDagVersionResponse parses an HTTP response from a RegisterDagVersionWithResponse call
+
+<a name="RegisterDagVersionResponse.ContentType"></a>
+### func \(RegisterDagVersionResponse\) [ContentType](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L7086>)
+
+```go
+func (r RegisterDagVersionResponse) ContentType() string
+```
+
+ContentType is a convenience method to retrieve the Content\-Type value from the HTTP response headers
+
+<a name="RegisterDagVersionResponse.GetApplicationproblemJSON503"></a>
+### func \(RegisterDagVersionResponse\) [GetApplicationproblemJSON503](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L7060>)
+
+```go
+func (r RegisterDagVersionResponse) GetApplicationproblemJSON503() *AuthUnavailable
+```
+
+GetApplicationproblemJSON503 returns the response for an HTTP 503 \`application/problem\+json\` response
+
+<a name="RegisterDagVersionResponse.GetBody"></a>
+### func \(RegisterDagVersionResponse\) [GetBody](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L7065>)
+
+```go
+func (r RegisterDagVersionResponse) GetBody() []byte
+```
+
+GetBody returns the raw response body bytes
+
+<a name="RegisterDagVersionResponse.GetJSON200"></a>
+### func \(RegisterDagVersionResponse\) [GetJSON200](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L7030>)
+
+```go
+func (r RegisterDagVersionResponse) GetJSON200() *VersionRegistration
+```
+
+GetJSON200 returns the response for an HTTP 200 \`application/json\` response
+
+<a name="RegisterDagVersionResponse.GetJSON201"></a>
+### func \(RegisterDagVersionResponse\) [GetJSON201](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L7035>)
+
+```go
+func (r RegisterDagVersionResponse) GetJSON201() *VersionRegistration
+```
+
+GetJSON201 returns the response for an HTTP 201 \`application/json\` response
+
+<a name="RegisterDagVersionResponse.GetJSON400"></a>
+### func \(RegisterDagVersionResponse\) [GetJSON400](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L7040>)
+
+```go
+func (r RegisterDagVersionResponse) GetJSON400() *Error
+```
+
+GetJSON400 returns the response for an HTTP 400 \`application/json\` response
+
+<a name="RegisterDagVersionResponse.GetJSON401"></a>
+### func \(RegisterDagVersionResponse\) [GetJSON401](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L7045>)
+
+```go
+func (r RegisterDagVersionResponse) GetJSON401() *Unauthorized
+```
+
+GetJSON401 returns the response for an HTTP 401 \`application/json\` response
+
+<a name="RegisterDagVersionResponse.GetJSON403"></a>
+### func \(RegisterDagVersionResponse\) [GetJSON403](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L7050>)
+
+```go
+func (r RegisterDagVersionResponse) GetJSON403() *Error
+```
+
+GetJSON403 returns the response for an HTTP 403 \`application/json\` response
+
+<a name="RegisterDagVersionResponse.GetJSON409"></a>
+### func \(RegisterDagVersionResponse\) [GetJSON409](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L7055>)
+
+```go
+func (r RegisterDagVersionResponse) GetJSON409() *Error
+```
+
+GetJSON409 returns the response for an HTTP 409 \`application/json\` response
+
+<a name="RegisterDagVersionResponse.Status"></a>
+### func \(RegisterDagVersionResponse\) [Status](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L7070>)
+
+```go
+func (r RegisterDagVersionResponse) Status() string
+```
+
+Status returns HTTPResponse.Status
+
+<a name="RegisterDagVersionResponse.StatusCode"></a>
+### func \(RegisterDagVersionResponse\) [StatusCode](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L7078>)
+
+```go
+func (r RegisterDagVersionResponse) StatusCode() int
+```
+
+StatusCode returns HTTPResponse.StatusCode
+
+<a name="RegisterDagVersionResponse403Headers"></a>
+## type [RegisterDagVersionResponse403Headers](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L6997-L6999>)
+
+RegisterDagVersionResponse403Headers the declared response headers of an HTTP 403 response for RegisterDagVersion
+
+```go
+type RegisterDagVersionResponse403Headers struct {
+    DexaflowDeployVia *string
+}
+```
+
+<a name="RegisterDagVersionResponse503Headers"></a>
+## type [RegisterDagVersionResponse503Headers](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L7002-L7004>)
+
+RegisterDagVersionResponse503Headers the declared response headers of an HTTP 503 response for RegisterDagVersion
+
+```go
+type RegisterDagVersionResponse503Headers struct {
+    RetryAfter *int
+}
+```
+
 <a name="RenewTokenResponse"></a>
-## type [RenewTokenResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L3355-L3362>)
+## type [RenewTokenResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L5485-L5496>)
 
 
 
@@ -5379,11 +9096,15 @@ type RenewTokenResponse struct {
     JSON200 *TokenResponse
     // JSON401 the response for an HTTP 401 `application/json` response
     JSON401 *Unauthorized
+    // ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+    ApplicationproblemJSON503 *AuthUnavailable
+    // Headers503 the parsed response headers for an HTTP 503 response
+    Headers503 *RenewTokenResponse503Headers
 }
 ```
 
 <a name="ParseRenewTokenResponse"></a>
-### func [ParseRenewTokenResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L5459>)
+### func [ParseRenewTokenResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L8974>)
 
 ```go
 func ParseRenewTokenResponse(rsp *http.Response) (*RenewTokenResponse, error)
@@ -5392,7 +9113,7 @@ func ParseRenewTokenResponse(rsp *http.Response) (*RenewTokenResponse, error)
 ParseRenewTokenResponse parses an HTTP response from a RenewTokenWithResponse call
 
 <a name="RenewTokenResponse.ContentType"></a>
-### func \(RenewTokenResponse\) [ContentType](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L3396>)
+### func \(RenewTokenResponse\) [ContentType](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L5535>)
 
 ```go
 func (r RenewTokenResponse) ContentType() string
@@ -5400,8 +9121,17 @@ func (r RenewTokenResponse) ContentType() string
 
 ContentType is a convenience method to retrieve the Content\-Type value from the HTTP response headers
 
+<a name="RenewTokenResponse.GetApplicationproblemJSON503"></a>
+### func \(RenewTokenResponse\) [GetApplicationproblemJSON503](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L5509>)
+
+```go
+func (r RenewTokenResponse) GetApplicationproblemJSON503() *AuthUnavailable
+```
+
+GetApplicationproblemJSON503 returns the response for an HTTP 503 \`application/problem\+json\` response
+
 <a name="RenewTokenResponse.GetBody"></a>
-### func \(RenewTokenResponse\) [GetBody](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L3375>)
+### func \(RenewTokenResponse\) [GetBody](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L5514>)
 
 ```go
 func (r RenewTokenResponse) GetBody() []byte
@@ -5410,7 +9140,7 @@ func (r RenewTokenResponse) GetBody() []byte
 GetBody returns the raw response body bytes
 
 <a name="RenewTokenResponse.GetJSON200"></a>
-### func \(RenewTokenResponse\) [GetJSON200](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L3365>)
+### func \(RenewTokenResponse\) [GetJSON200](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L5499>)
 
 ```go
 func (r RenewTokenResponse) GetJSON200() *TokenResponse
@@ -5419,7 +9149,7 @@ func (r RenewTokenResponse) GetJSON200() *TokenResponse
 GetJSON200 returns the response for an HTTP 200 \`application/json\` response
 
 <a name="RenewTokenResponse.GetJSON401"></a>
-### func \(RenewTokenResponse\) [GetJSON401](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L3370>)
+### func \(RenewTokenResponse\) [GetJSON401](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L5504>)
 
 ```go
 func (r RenewTokenResponse) GetJSON401() *Unauthorized
@@ -5428,7 +9158,7 @@ func (r RenewTokenResponse) GetJSON401() *Unauthorized
 GetJSON401 returns the response for an HTTP 401 \`application/json\` response
 
 <a name="RenewTokenResponse.Status"></a>
-### func \(RenewTokenResponse\) [Status](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L3380>)
+### func \(RenewTokenResponse\) [Status](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L5519>)
 
 ```go
 func (r RenewTokenResponse) Status() string
@@ -5437,7 +9167,7 @@ func (r RenewTokenResponse) Status() string
 Status returns HTTPResponse.Status
 
 <a name="RenewTokenResponse.StatusCode"></a>
-### func \(RenewTokenResponse\) [StatusCode](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L3388>)
+### func \(RenewTokenResponse\) [StatusCode](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L5527>)
 
 ```go
 func (r RenewTokenResponse) StatusCode() int
@@ -5445,8 +9175,19 @@ func (r RenewTokenResponse) StatusCode() int
 
 StatusCode returns HTTPResponse.StatusCode
 
+<a name="RenewTokenResponse503Headers"></a>
+## type [RenewTokenResponse503Headers](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L5481-L5483>)
+
+RenewTokenResponse503Headers the declared response headers of an HTTP 503 response for RenewToken
+
+```go
+type RenewTokenResponse503Headers struct {
+    RetryAfter *int
+}
+```
+
 <a name="RequestEditorFn"></a>
-## type [RequestEditorFn](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L512>)
+## type [RequestEditorFn](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L1156>)
 
 RequestEditorFn is the function signature for the RequestEditor callback function
 
@@ -5454,8 +9195,362 @@ RequestEditorFn is the function signature for the RequestEditor callback functio
 type RequestEditorFn func(ctx context.Context, req *http.Request) error
 ```
 
+<a name="WithDagSourceVersion"></a>
+### func [WithDagSourceVersion](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.go#L50>)
+
+```go
+func WithDagSourceVersion(n int) RequestEditorFn
+```
+
+WithDagSourceVersion returns a request editor that asks GET /api/v2/dagSources/\{dag\_id\} for the source of the DAG version numbered n \(its version\_number in the dagVersions listing\) instead of the newest one:
+
+```
+c.GetDagSourceWithResponse(ctx, dagID, client.WithDagSourceVersion(n))
+```
+
+The generated GetDagSource does not take the parameter itself, so that its signature stays compatible \(see overlay.yaml\).
+
+<a name="RevokeAPITokenResponse"></a>
+## type [RevokeAPITokenResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L5416-L5429>)
+
+
+
+```go
+type RevokeAPITokenResponse struct {
+    Body         []byte
+    HTTPResponse *http.Response
+    // JSON401 the response for an HTTP 401 `application/json` response
+    JSON401 *Unauthorized
+    // JSON403 the response for an HTTP 403 `application/json` response
+    JSON403 *Error
+    // JSON404 the response for an HTTP 404 `application/json` response
+    JSON404 *NotFound
+    // ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+    ApplicationproblemJSON503 *AuthUnavailable
+    // Headers503 the parsed response headers for an HTTP 503 response
+    Headers503 *RevokeAPITokenResponse503Headers
+}
+```
+
+<a name="ParseRevokeAPITokenResponse"></a>
+### func [ParseRevokeAPITokenResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L8911>)
+
+```go
+func ParseRevokeAPITokenResponse(rsp *http.Response) (*RevokeAPITokenResponse, error)
+```
+
+ParseRevokeAPITokenResponse parses an HTTP response from a RevokeAPITokenWithResponse call
+
+<a name="RevokeAPITokenResponse.ContentType"></a>
+### func \(RevokeAPITokenResponse\) [ContentType](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L5473>)
+
+```go
+func (r RevokeAPITokenResponse) ContentType() string
+```
+
+ContentType is a convenience method to retrieve the Content\-Type value from the HTTP response headers
+
+<a name="RevokeAPITokenResponse.GetApplicationproblemJSON503"></a>
+### func \(RevokeAPITokenResponse\) [GetApplicationproblemJSON503](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L5447>)
+
+```go
+func (r RevokeAPITokenResponse) GetApplicationproblemJSON503() *AuthUnavailable
+```
+
+GetApplicationproblemJSON503 returns the response for an HTTP 503 \`application/problem\+json\` response
+
+<a name="RevokeAPITokenResponse.GetBody"></a>
+### func \(RevokeAPITokenResponse\) [GetBody](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L5452>)
+
+```go
+func (r RevokeAPITokenResponse) GetBody() []byte
+```
+
+GetBody returns the raw response body bytes
+
+<a name="RevokeAPITokenResponse.GetJSON401"></a>
+### func \(RevokeAPITokenResponse\) [GetJSON401](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L5432>)
+
+```go
+func (r RevokeAPITokenResponse) GetJSON401() *Unauthorized
+```
+
+GetJSON401 returns the response for an HTTP 401 \`application/json\` response
+
+<a name="RevokeAPITokenResponse.GetJSON403"></a>
+### func \(RevokeAPITokenResponse\) [GetJSON403](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L5437>)
+
+```go
+func (r RevokeAPITokenResponse) GetJSON403() *Error
+```
+
+GetJSON403 returns the response for an HTTP 403 \`application/json\` response
+
+<a name="RevokeAPITokenResponse.GetJSON404"></a>
+### func \(RevokeAPITokenResponse\) [GetJSON404](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L5442>)
+
+```go
+func (r RevokeAPITokenResponse) GetJSON404() *NotFound
+```
+
+GetJSON404 returns the response for an HTTP 404 \`application/json\` response
+
+<a name="RevokeAPITokenResponse.Status"></a>
+### func \(RevokeAPITokenResponse\) [Status](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L5457>)
+
+```go
+func (r RevokeAPITokenResponse) Status() string
+```
+
+Status returns HTTPResponse.Status
+
+<a name="RevokeAPITokenResponse.StatusCode"></a>
+### func \(RevokeAPITokenResponse\) [StatusCode](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L5465>)
+
+```go
+func (r RevokeAPITokenResponse) StatusCode() int
+```
+
+StatusCode returns HTTPResponse.StatusCode
+
+<a name="RevokeAPITokenResponse503Headers"></a>
+## type [RevokeAPITokenResponse503Headers](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L5412-L5414>)
+
+RevokeAPITokenResponse503Headers the declared response headers of an HTTP 503 response for RevokeAPIToken
+
+```go
+type RevokeAPITokenResponse503Headers struct {
+    RetryAfter *int
+}
+```
+
+<a name="SetDagCurrentVersionJSONRequestBody"></a>
+## type [SetDagCurrentVersionJSONRequestBody](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L944>)
+
+SetDagCurrentVersionJSONRequestBody defines body for SetDagCurrentVersion for application/json ContentType.
+
+```go
+type SetDagCurrentVersionJSONRequestBody = DagCurrentVersionRequest
+```
+
+<a name="SetDagCurrentVersionResponse"></a>
+## type [SetDagCurrentVersionResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L6186-L6205>)
+
+
+
+```go
+type SetDagCurrentVersionResponse struct {
+    Body         []byte
+    HTTPResponse *http.Response
+    // JSON200 the response for an HTTP 200 `application/json` response
+    JSON200 *DagCurrentVersionChange
+    // JSON400 the response for an HTTP 400 `application/json` response
+    JSON400 *Error
+    // JSON401 the response for an HTTP 401 `application/json` response
+    JSON401 *Unauthorized
+    // JSON403 the response for an HTTP 403 `application/json` response
+    JSON403 *Error
+    // JSON404 the response for an HTTP 404 `application/json` response
+    JSON404 *NotFound
+    // ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+    ApplicationproblemJSON503 *AuthUnavailable
+    // Headers403 the parsed response headers for an HTTP 403 response
+    Headers403 *SetDagCurrentVersionResponse403Headers
+    // Headers503 the parsed response headers for an HTTP 503 response
+    Headers503 *SetDagCurrentVersionResponse503Headers
+}
+```
+
+<a name="ParseSetDagCurrentVersionResponse"></a>
+### func [ParseSetDagCurrentVersionResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L9562>)
+
+```go
+func ParseSetDagCurrentVersionResponse(rsp *http.Response) (*SetDagCurrentVersionResponse, error)
+```
+
+ParseSetDagCurrentVersionResponse parses an HTTP response from a SetDagCurrentVersionWithResponse call
+
+<a name="SetDagCurrentVersionResponse.ContentType"></a>
+### func \(SetDagCurrentVersionResponse\) [ContentType](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L6259>)
+
+```go
+func (r SetDagCurrentVersionResponse) ContentType() string
+```
+
+ContentType is a convenience method to retrieve the Content\-Type value from the HTTP response headers
+
+<a name="SetDagCurrentVersionResponse.GetApplicationproblemJSON503"></a>
+### func \(SetDagCurrentVersionResponse\) [GetApplicationproblemJSON503](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L6233>)
+
+```go
+func (r SetDagCurrentVersionResponse) GetApplicationproblemJSON503() *AuthUnavailable
+```
+
+GetApplicationproblemJSON503 returns the response for an HTTP 503 \`application/problem\+json\` response
+
+<a name="SetDagCurrentVersionResponse.GetBody"></a>
+### func \(SetDagCurrentVersionResponse\) [GetBody](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L6238>)
+
+```go
+func (r SetDagCurrentVersionResponse) GetBody() []byte
+```
+
+GetBody returns the raw response body bytes
+
+<a name="SetDagCurrentVersionResponse.GetJSON200"></a>
+### func \(SetDagCurrentVersionResponse\) [GetJSON200](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L6208>)
+
+```go
+func (r SetDagCurrentVersionResponse) GetJSON200() *DagCurrentVersionChange
+```
+
+GetJSON200 returns the response for an HTTP 200 \`application/json\` response
+
+<a name="SetDagCurrentVersionResponse.GetJSON400"></a>
+### func \(SetDagCurrentVersionResponse\) [GetJSON400](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L6213>)
+
+```go
+func (r SetDagCurrentVersionResponse) GetJSON400() *Error
+```
+
+GetJSON400 returns the response for an HTTP 400 \`application/json\` response
+
+<a name="SetDagCurrentVersionResponse.GetJSON401"></a>
+### func \(SetDagCurrentVersionResponse\) [GetJSON401](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L6218>)
+
+```go
+func (r SetDagCurrentVersionResponse) GetJSON401() *Unauthorized
+```
+
+GetJSON401 returns the response for an HTTP 401 \`application/json\` response
+
+<a name="SetDagCurrentVersionResponse.GetJSON403"></a>
+### func \(SetDagCurrentVersionResponse\) [GetJSON403](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L6223>)
+
+```go
+func (r SetDagCurrentVersionResponse) GetJSON403() *Error
+```
+
+GetJSON403 returns the response for an HTTP 403 \`application/json\` response
+
+<a name="SetDagCurrentVersionResponse.GetJSON404"></a>
+### func \(SetDagCurrentVersionResponse\) [GetJSON404](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L6228>)
+
+```go
+func (r SetDagCurrentVersionResponse) GetJSON404() *NotFound
+```
+
+GetJSON404 returns the response for an HTTP 404 \`application/json\` response
+
+<a name="SetDagCurrentVersionResponse.Status"></a>
+### func \(SetDagCurrentVersionResponse\) [Status](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L6243>)
+
+```go
+func (r SetDagCurrentVersionResponse) Status() string
+```
+
+Status returns HTTPResponse.Status
+
+<a name="SetDagCurrentVersionResponse.StatusCode"></a>
+### func \(SetDagCurrentVersionResponse\) [StatusCode](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L6251>)
+
+```go
+func (r SetDagCurrentVersionResponse) StatusCode() int
+```
+
+StatusCode returns HTTPResponse.StatusCode
+
+<a name="SetDagCurrentVersionResponse403Headers"></a>
+## type [SetDagCurrentVersionResponse403Headers](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L6177-L6179>)
+
+SetDagCurrentVersionResponse403Headers the declared response headers of an HTTP 403 response for SetDagCurrentVersion
+
+```go
+type SetDagCurrentVersionResponse403Headers struct {
+    DexaflowDeployVia *string
+}
+```
+
+<a name="SetDagCurrentVersionResponse503Headers"></a>
+## type [SetDagCurrentVersionResponse503Headers](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L6182-L6184>)
+
+SetDagCurrentVersionResponse503Headers the declared response headers of an HTTP 503 response for SetDagCurrentVersion
+
+```go
+type SetDagCurrentVersionResponse503Headers struct {
+    RetryAfter *int
+}
+```
+
+<a name="StatusError"></a>
+## type [StatusError](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/dag_version_spec.go#L20-L27>)
+
+StatusError is the answer of a hand\-written call when the server answers with a status the call does not expect: the status and the body as served \(bounded\), so the caller can tell one refusal from another.
+
+```go
+type StatusError struct {
+    // Path is the route that was called.
+    Path string
+    // StatusCode is the HTTP status of the answer.
+    StatusCode int
+    // Body is the answer's body.
+    Body []byte
+}
+```
+
+<a name="StatusError.Error"></a>
+### func \(\*StatusError\) [Error](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/dag_version_spec.go#L30>)
+
+```go
+func (e *StatusError) Error() string
+```
+
+Error names the route and the status.
+
+<a name="TaskExecution"></a>
+## type [TaskExecution](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L599-L605>)
+
+TaskExecution defines model for TaskExecution.
+
+```go
+type TaskExecution struct {
+    Mode TaskExecutionMode `json:"mode"`
+
+    // Reason Why the task takes a dedicated pod, absent when warm-eligible: warm pools off, staging enabled, source mode, service_account set, a placement field set (node_selector set, tolerations set, ...), a size larger than a warm pod, no idle warm workers kept for this DAG, or a server that runs no warm workers.
+    Reason *string `json:"reason,omitempty"`
+    TaskId string  `json:"task_id"`
+}
+```
+
+<a name="TaskExecutionMode"></a>
+## type [TaskExecutionMode](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L608>)
+
+TaskExecutionMode defines model for TaskExecution.Mode.
+
+```go
+type TaskExecutionMode string
+```
+
+<a name="TaskExecutionModeDedicated"></a>Defines values for TaskExecutionMode.
+
+```go
+const (
+    TaskExecutionModeDedicated TaskExecutionMode = "dedicated"
+    TaskExecutionModeWarm      TaskExecutionMode = "warm"
+)
+```
+
+<a name="TaskExecutionMode.Valid"></a>
+### func \(TaskExecutionMode\) [Valid](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L93>)
+
+```go
+func (e TaskExecutionMode) Valid() bool
+```
+
+Valid indicates whether the value is a known member of the TaskExecutionMode enum.
+
 <a name="TaskID"></a>
-## type [TaskID](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L436>)
+## type [TaskID](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L830>)
 
 TaskID defines model for TaskID.
 
@@ -5464,7 +9559,7 @@ type TaskID = string
 ```
 
 <a name="TaskInstance"></a>
-## type [TaskInstance](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L311-L330>)
+## type [TaskInstance](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L611-L630>)
 
 TaskInstance defines model for TaskInstance.
 
@@ -5492,19 +9587,27 @@ type TaskInstance struct {
 ```
 
 <a name="TaskInstanceCollection"></a>
-## type [TaskInstanceCollection](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L336-L339>)
+## type [TaskInstanceCollection](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L636-L647>)
 
 TaskInstanceCollection defines model for TaskInstanceCollection.
 
 ```go
 type TaskInstanceCollection struct {
-    TaskInstances *[]TaskInstance `json:"task_instances,omitempty"`
-    TotalEntries  *int            `json:"total_entries,omitempty"`
+    // NextCursor Cursor of the next page. Present only when the request carried cursor and a next page exists.
+    NextCursor *string `json:"next_cursor,omitempty"`
+
+    // PreviousCursor Cursor of the previous page. Present only when the request carried cursor and the page is not the first.
+    PreviousCursor *string `json:"previous_cursor,omitempty"`
+
+    // RunOnLatestVersionNotApplied Dexaflow-only. The runs a clear with run_on_latest_version keeps on their own version, each with the reason (ADR 0086): only a finished run with no task instance queued or running moves to the current version. The clear still applies to these runs, on their version. Left out when every run moved or the option was not asked, and on every response other than the two clear routes.
+    RunOnLatestVersionNotApplied *ClearVersionNotApplied `json:"run_on_latest_version_not_applied,omitempty"`
+    TaskInstances                *[]TaskInstance         `json:"task_instances,omitempty"`
+    TotalEntries                 *int                    `json:"total_entries,omitempty"`
 }
 ```
 
 <a name="TaskInstanceState"></a>
-## type [TaskInstanceState](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L333>)
+## type [TaskInstanceState](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L633>)
 
 TaskInstanceState defines model for TaskInstance.State.
 
@@ -5519,6 +9622,7 @@ const (
     TaskInstanceStateFailed         TaskInstanceState = "failed"
     TaskInstanceStateNone           TaskInstanceState = "none"
     TaskInstanceStateQueued         TaskInstanceState = "queued"
+    TaskInstanceStateRemoved        TaskInstanceState = "removed"
     TaskInstanceStateRunning        TaskInstanceState = "running"
     TaskInstanceStateScheduled      TaskInstanceState = "scheduled"
     TaskInstanceStateSkipped        TaskInstanceState = "skipped"
@@ -5529,7 +9633,7 @@ const (
 ```
 
 <a name="TaskInstanceState.Valid"></a>
-### func \(TaskInstanceState\) [Valid](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L82>)
+### func \(TaskInstanceState\) [Valid](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L119>)
 
 ```go
 func (e TaskInstanceState) Valid() bool
@@ -5537,8 +9641,84 @@ func (e TaskInstanceState) Valid() bool
 
 Valid indicates whether the value is a known member of the TaskInstanceState enum.
 
+<a name="TaskInstanceStateUpdate"></a>
+## type [TaskInstanceStateUpdate](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L650-L652>)
+
+TaskInstanceStateUpdate defines model for TaskInstanceStateUpdate.
+
+```go
+type TaskInstanceStateUpdate struct {
+    NewState TaskInstanceStateUpdateNewState `json:"new_state"`
+}
+```
+
+<a name="TaskInstanceStateUpdateNewState"></a>
+## type [TaskInstanceStateUpdateNewState](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L655>)
+
+TaskInstanceStateUpdateNewState defines model for TaskInstanceStateUpdate.NewState.
+
+```go
+type TaskInstanceStateUpdateNewState string
+```
+
+<a name="TaskInstanceStateUpdateNewStateFailed"></a>Defines values for TaskInstanceStateUpdateNewState.
+
+```go
+const (
+    TaskInstanceStateUpdateNewStateFailed  TaskInstanceStateUpdateNewState = "failed"
+    TaskInstanceStateUpdateNewStateSkipped TaskInstanceStateUpdateNewState = "skipped"
+    TaskInstanceStateUpdateNewStateSuccess TaskInstanceStateUpdateNewState = "success"
+)
+```
+
+<a name="TaskInstanceStateUpdateNewState.Valid"></a>
+### func \(TaskInstanceStateUpdateNewState\) [Valid](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L154>)
+
+```go
+func (e TaskInstanceStateUpdateNewState) Valid() bool
+```
+
+Valid indicates whether the value is a known member of the TaskInstanceStateUpdateNewState enum.
+
+<a name="TaskPodsReport"></a>
+## type [TaskPodsReport](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L658-L664>)
+
+TaskPodsReport What the version's task pods would run as \(Dexaflow\), sent by the dry run route only, absent from a register. A server that starts no task pods sends run\_as\_non\_root false and no service account.
+
+```go
+type TaskPodsReport struct {
+    // RunAsNonRoot True when task pods refuse an image that runs as root or as a user name rather than a number (executor.run_tasks_as_non_root).
+    RunAsNonRoot bool `json:"run_as_non_root"`
+
+    // ServiceAccounts Each ServiceAccount a task pod of the version would run as (the task's execution.service_account, else executor.task_service_account, else the namespace's default), sorted by name. A dry run looks up at most 8.
+    ServiceAccounts []TaskServiceAccountCheck `json:"service_accounts"`
+}
+```
+
+<a name="TaskServiceAccountCheck"></a>
+## type [TaskServiceAccountCheck](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L667-L680>)
+
+TaskServiceAccountCheck defines model for TaskServiceAccountCheck.
+
+```go
+type TaskServiceAccountCheck struct {
+    // Detail Why it is unchecked, or why a missing name is not valid.
+    Detail *string `json:"detail,omitempty"`
+
+    // ImagePullSecrets How many imagePullSecrets it carries; sent with state found.
+    ImagePullSecrets *int   `json:"image_pull_secrets,omitempty"`
+    Name             string `json:"name"`
+
+    // State One of found, missing or unchecked. found: it exists in the task namespace. missing: it does not, and the pods of these tasks would not be created; when its name is not a valid ServiceAccount name (a DNS-1123 subdomain), it is not looked up and detail says so. unchecked: the server could not look it up (detail says why).
+    State string `json:"state"`
+
+    // Tasks The tasks whose pods run as it.
+    Tasks []string `json:"tasks"`
+}
+```
+
 <a name="TokenRequest"></a>
-## type [TokenRequest](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L342-L345>)
+## type [TokenRequest](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L683-L686>)
 
 TokenRequest defines model for TokenRequest.
 
@@ -5550,7 +9730,7 @@ type TokenRequest struct {
 ```
 
 <a name="TokenResponse"></a>
-## type [TokenResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L348-L356>)
+## type [TokenResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L689-L697>)
 
 TokenResponse defines model for TokenResponse.
 
@@ -5567,7 +9747,7 @@ type TokenResponse struct {
 ```
 
 <a name="TriggerDagRunJSONRequestBody"></a>
-## type [TriggerDagRunJSONRequestBody](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L500>)
+## type [TriggerDagRunJSONRequestBody](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L947>)
 
 TriggerDagRunJSONRequestBody defines body for TriggerDagRun for application/json ContentType.
 
@@ -5576,7 +9756,7 @@ type TriggerDagRunJSONRequestBody = DAGRunCreate
 ```
 
 <a name="TriggerDagRunResponse"></a>
-## type [TriggerDagRunResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L3945-L3950>)
+## type [TriggerDagRunResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L6326-L6335>)
 
 
 
@@ -5586,11 +9766,15 @@ type TriggerDagRunResponse struct {
     HTTPResponse *http.Response
     // JSON200 the response for an HTTP 200 `application/json` response
     JSON200 *DAGRun
+    // ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+    ApplicationproblemJSON503 *AuthUnavailable
+    // Headers503 the parsed response headers for an HTTP 503 response
+    Headers503 *TriggerDagRunResponse503Headers
 }
 ```
 
 <a name="ParseTriggerDagRunResponse"></a>
-### func [ParseTriggerDagRunResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L5872>)
+### func [ParseTriggerDagRunResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L9692>)
 
 ```go
 func ParseTriggerDagRunResponse(rsp *http.Response) (*TriggerDagRunResponse, error)
@@ -5599,7 +9783,7 @@ func ParseTriggerDagRunResponse(rsp *http.Response) (*TriggerDagRunResponse, err
 ParseTriggerDagRunResponse parses an HTTP response from a TriggerDagRunWithResponse call
 
 <a name="TriggerDagRunResponse.ContentType"></a>
-### func \(TriggerDagRunResponse\) [ContentType](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L3979>)
+### func \(TriggerDagRunResponse\) [ContentType](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L6369>)
 
 ```go
 func (r TriggerDagRunResponse) ContentType() string
@@ -5607,8 +9791,17 @@ func (r TriggerDagRunResponse) ContentType() string
 
 ContentType is a convenience method to retrieve the Content\-Type value from the HTTP response headers
 
+<a name="TriggerDagRunResponse.GetApplicationproblemJSON503"></a>
+### func \(TriggerDagRunResponse\) [GetApplicationproblemJSON503](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L6343>)
+
+```go
+func (r TriggerDagRunResponse) GetApplicationproblemJSON503() *AuthUnavailable
+```
+
+GetApplicationproblemJSON503 returns the response for an HTTP 503 \`application/problem\+json\` response
+
 <a name="TriggerDagRunResponse.GetBody"></a>
-### func \(TriggerDagRunResponse\) [GetBody](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L3958>)
+### func \(TriggerDagRunResponse\) [GetBody](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L6348>)
 
 ```go
 func (r TriggerDagRunResponse) GetBody() []byte
@@ -5617,7 +9810,7 @@ func (r TriggerDagRunResponse) GetBody() []byte
 GetBody returns the raw response body bytes
 
 <a name="TriggerDagRunResponse.GetJSON200"></a>
-### func \(TriggerDagRunResponse\) [GetJSON200](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L3953>)
+### func \(TriggerDagRunResponse\) [GetJSON200](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L6338>)
 
 ```go
 func (r TriggerDagRunResponse) GetJSON200() *DAGRun
@@ -5626,7 +9819,7 @@ func (r TriggerDagRunResponse) GetJSON200() *DAGRun
 GetJSON200 returns the response for an HTTP 200 \`application/json\` response
 
 <a name="TriggerDagRunResponse.Status"></a>
-### func \(TriggerDagRunResponse\) [Status](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L3963>)
+### func \(TriggerDagRunResponse\) [Status](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L6353>)
 
 ```go
 func (r TriggerDagRunResponse) Status() string
@@ -5635,7 +9828,7 @@ func (r TriggerDagRunResponse) Status() string
 Status returns HTTPResponse.Status
 
 <a name="TriggerDagRunResponse.StatusCode"></a>
-### func \(TriggerDagRunResponse\) [StatusCode](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L3971>)
+### func \(TriggerDagRunResponse\) [StatusCode](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L6361>)
 
 ```go
 func (r TriggerDagRunResponse) StatusCode() int
@@ -5643,8 +9836,19 @@ func (r TriggerDagRunResponse) StatusCode() int
 
 StatusCode returns HTTPResponse.StatusCode
 
+<a name="TriggerDagRunResponse503Headers"></a>
+## type [TriggerDagRunResponse503Headers](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L6322-L6324>)
+
+TriggerDagRunResponse503Headers the declared response headers of an HTTP 503 response for TriggerDagRun
+
+```go
+type TriggerDagRunResponse503Headers struct {
+    RetryAfter *int
+}
+```
+
 <a name="Unauthorized"></a>
-## type [Unauthorized](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L448>)
+## type [Unauthorized](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L845>)
 
 Unauthorized defines model for Unauthorized.
 
@@ -5653,7 +9857,7 @@ type Unauthorized = Error
 ```
 
 <a name="UpdateConnectionJSONRequestBody"></a>
-## type [UpdateConnectionJSONRequestBody](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L491>)
+## type [UpdateConnectionJSONRequestBody](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L935>)
 
 UpdateConnectionJSONRequestBody defines body for UpdateConnection for application/json ContentType.
 
@@ -5662,7 +9866,7 @@ type UpdateConnectionJSONRequestBody = ConnectionBody
 ```
 
 <a name="UpdateConnectionResponse"></a>
-## type [UpdateConnectionResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L3616-L3629>)
+## type [UpdateConnectionResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L5797-L5810>)
 
 
 
@@ -5684,7 +9888,7 @@ type UpdateConnectionResponse struct {
 ```
 
 <a name="ParseUpdateConnectionResponse"></a>
-### func [ParseUpdateConnectionResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L5648>)
+### func [ParseUpdateConnectionResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L9243>)
 
 ```go
 func ParseUpdateConnectionResponse(rsp *http.Response) (*UpdateConnectionResponse, error)
@@ -5693,7 +9897,7 @@ func ParseUpdateConnectionResponse(rsp *http.Response) (*UpdateConnectionRespons
 ParseUpdateConnectionResponse parses an HTTP response from a UpdateConnectionWithResponse call
 
 <a name="UpdateConnectionResponse.ContentType"></a>
-### func \(UpdateConnectionResponse\) [ContentType](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L3678>)
+### func \(UpdateConnectionResponse\) [ContentType](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L5859>)
 
 ```go
 func (r UpdateConnectionResponse) ContentType() string
@@ -5702,7 +9906,7 @@ func (r UpdateConnectionResponse) ContentType() string
 ContentType is a convenience method to retrieve the Content\-Type value from the HTTP response headers
 
 <a name="UpdateConnectionResponse.GetBody"></a>
-### func \(UpdateConnectionResponse\) [GetBody](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L3657>)
+### func \(UpdateConnectionResponse\) [GetBody](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L5838>)
 
 ```go
 func (r UpdateConnectionResponse) GetBody() []byte
@@ -5711,7 +9915,7 @@ func (r UpdateConnectionResponse) GetBody() []byte
 GetBody returns the raw response body bytes
 
 <a name="UpdateConnectionResponse.GetJSON200"></a>
-### func \(UpdateConnectionResponse\) [GetJSON200](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L3632>)
+### func \(UpdateConnectionResponse\) [GetJSON200](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L5813>)
 
 ```go
 func (r UpdateConnectionResponse) GetJSON200() *Connection
@@ -5720,7 +9924,7 @@ func (r UpdateConnectionResponse) GetJSON200() *Connection
 GetJSON200 returns the response for an HTTP 200 \`application/json\` response
 
 <a name="UpdateConnectionResponse.GetJSON400"></a>
-### func \(UpdateConnectionResponse\) [GetJSON400](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L3637>)
+### func \(UpdateConnectionResponse\) [GetJSON400](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L5818>)
 
 ```go
 func (r UpdateConnectionResponse) GetJSON400() *Error
@@ -5729,7 +9933,7 @@ func (r UpdateConnectionResponse) GetJSON400() *Error
 GetJSON400 returns the response for an HTTP 400 \`application/json\` response
 
 <a name="UpdateConnectionResponse.GetJSON401"></a>
-### func \(UpdateConnectionResponse\) [GetJSON401](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L3642>)
+### func \(UpdateConnectionResponse\) [GetJSON401](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L5823>)
 
 ```go
 func (r UpdateConnectionResponse) GetJSON401() *Unauthorized
@@ -5738,7 +9942,7 @@ func (r UpdateConnectionResponse) GetJSON401() *Unauthorized
 GetJSON401 returns the response for an HTTP 401 \`application/json\` response
 
 <a name="UpdateConnectionResponse.GetJSON404"></a>
-### func \(UpdateConnectionResponse\) [GetJSON404](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L3647>)
+### func \(UpdateConnectionResponse\) [GetJSON404](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L5828>)
 
 ```go
 func (r UpdateConnectionResponse) GetJSON404() *NotFound
@@ -5747,7 +9951,7 @@ func (r UpdateConnectionResponse) GetJSON404() *NotFound
 GetJSON404 returns the response for an HTTP 404 \`application/json\` response
 
 <a name="UpdateConnectionResponse.GetJSON503"></a>
-### func \(UpdateConnectionResponse\) [GetJSON503](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L3652>)
+### func \(UpdateConnectionResponse\) [GetJSON503](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L5833>)
 
 ```go
 func (r UpdateConnectionResponse) GetJSON503() *EncryptionUnavailable
@@ -5756,7 +9960,7 @@ func (r UpdateConnectionResponse) GetJSON503() *EncryptionUnavailable
 GetJSON503 returns the response for an HTTP 503 \`application/json\` response
 
 <a name="UpdateConnectionResponse.Status"></a>
-### func \(UpdateConnectionResponse\) [Status](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L3662>)
+### func \(UpdateConnectionResponse\) [Status](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L5843>)
 
 ```go
 func (r UpdateConnectionResponse) Status() string
@@ -5765,7 +9969,7 @@ func (r UpdateConnectionResponse) Status() string
 Status returns HTTPResponse.Status
 
 <a name="UpdateConnectionResponse.StatusCode"></a>
-### func \(UpdateConnectionResponse\) [StatusCode](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L3670>)
+### func \(UpdateConnectionResponse\) [StatusCode](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L5851>)
 
 ```go
 func (r UpdateConnectionResponse) StatusCode() int
@@ -5774,7 +9978,7 @@ func (r UpdateConnectionResponse) StatusCode() int
 StatusCode returns HTTPResponse.StatusCode
 
 <a name="UpdateDagJSONRequestBody"></a>
-## type [UpdateDagJSONRequestBody](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L494>)
+## type [UpdateDagJSONRequestBody](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L938>)
 
 UpdateDagJSONRequestBody defines body for UpdateDag for application/json ContentType.
 
@@ -5783,7 +9987,7 @@ type UpdateDagJSONRequestBody = DAGUpdate
 ```
 
 <a name="UpdateDagResponse"></a>
-## type [UpdateDagResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L3822-L3827>)
+## type [UpdateDagResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L6057-L6068>)
 
 
 
@@ -5793,11 +9997,17 @@ type UpdateDagResponse struct {
     HTTPResponse *http.Response
     // JSON200 the response for an HTTP 200 `application/json` response
     JSON200 *DAG
+    // JSON400 the response for an HTTP 400 `application/json` response
+    JSON400 *Error
+    // ApplicationproblemJSON503 the response for an HTTP 503 `application/problem+json` response
+    ApplicationproblemJSON503 *AuthUnavailable
+    // Headers503 the parsed response headers for an HTTP 503 response
+    Headers503 *UpdateDagResponse503Headers
 }
 ```
 
 <a name="ParseUpdateDagResponse"></a>
-### func [ParseUpdateDagResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L5794>)
+### func [ParseUpdateDagResponse](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L9456>)
 
 ```go
 func ParseUpdateDagResponse(rsp *http.Response) (*UpdateDagResponse, error)
@@ -5806,7 +10016,7 @@ func ParseUpdateDagResponse(rsp *http.Response) (*UpdateDagResponse, error)
 ParseUpdateDagResponse parses an HTTP response from a UpdateDagWithResponse call
 
 <a name="UpdateDagResponse.ContentType"></a>
-### func \(UpdateDagResponse\) [ContentType](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L3856>)
+### func \(UpdateDagResponse\) [ContentType](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L6107>)
 
 ```go
 func (r UpdateDagResponse) ContentType() string
@@ -5814,8 +10024,17 @@ func (r UpdateDagResponse) ContentType() string
 
 ContentType is a convenience method to retrieve the Content\-Type value from the HTTP response headers
 
+<a name="UpdateDagResponse.GetApplicationproblemJSON503"></a>
+### func \(UpdateDagResponse\) [GetApplicationproblemJSON503](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L6081>)
+
+```go
+func (r UpdateDagResponse) GetApplicationproblemJSON503() *AuthUnavailable
+```
+
+GetApplicationproblemJSON503 returns the response for an HTTP 503 \`application/problem\+json\` response
+
 <a name="UpdateDagResponse.GetBody"></a>
-### func \(UpdateDagResponse\) [GetBody](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L3835>)
+### func \(UpdateDagResponse\) [GetBody](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L6086>)
 
 ```go
 func (r UpdateDagResponse) GetBody() []byte
@@ -5824,7 +10043,7 @@ func (r UpdateDagResponse) GetBody() []byte
 GetBody returns the raw response body bytes
 
 <a name="UpdateDagResponse.GetJSON200"></a>
-### func \(UpdateDagResponse\) [GetJSON200](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L3830>)
+### func \(UpdateDagResponse\) [GetJSON200](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L6071>)
 
 ```go
 func (r UpdateDagResponse) GetJSON200() *DAG
@@ -5832,8 +10051,17 @@ func (r UpdateDagResponse) GetJSON200() *DAG
 
 GetJSON200 returns the response for an HTTP 200 \`application/json\` response
 
+<a name="UpdateDagResponse.GetJSON400"></a>
+### func \(UpdateDagResponse\) [GetJSON400](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L6076>)
+
+```go
+func (r UpdateDagResponse) GetJSON400() *Error
+```
+
+GetJSON400 returns the response for an HTTP 400 \`application/json\` response
+
 <a name="UpdateDagResponse.Status"></a>
-### func \(UpdateDagResponse\) [Status](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L3840>)
+### func \(UpdateDagResponse\) [Status](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L6091>)
 
 ```go
 func (r UpdateDagResponse) Status() string
@@ -5842,7 +10070,7 @@ func (r UpdateDagResponse) Status() string
 Status returns HTTPResponse.Status
 
 <a name="UpdateDagResponse.StatusCode"></a>
-### func \(UpdateDagResponse\) [StatusCode](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L3848>)
+### func \(UpdateDagResponse\) [StatusCode](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L6099>)
 
 ```go
 func (r UpdateDagResponse) StatusCode() int
@@ -5850,8 +10078,19 @@ func (r UpdateDagResponse) StatusCode() int
 
 StatusCode returns HTTPResponse.StatusCode
 
+<a name="UpdateDagResponse503Headers"></a>
+## type [UpdateDagResponse503Headers](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L6053-L6055>)
+
+UpdateDagResponse503Headers the declared response headers of an HTTP 503 response for UpdateDag
+
+```go
+type UpdateDagResponse503Headers struct {
+    RetryAfter *int
+}
+```
+
 <a name="User"></a>
-## type [User](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L359-L365>)
+## type [User](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L700-L706>)
 
 User defines model for User.
 
@@ -5866,7 +10105,7 @@ type User struct {
 ```
 
 <a name="UserCollection"></a>
-## type [UserCollection](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L368-L371>)
+## type [UserCollection](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L709-L712>)
 
 UserCollection defines model for UserCollection.
 
@@ -5878,7 +10117,7 @@ type UserCollection struct {
 ```
 
 <a name="UserListItem"></a>
-## type [UserListItem](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L374-L380>)
+## type [UserListItem](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L715-L721>)
 
 UserListItem One account in the user list. Dexaflow accounts are email\-keyed and carry a set of RBAC roles, so this diverges from the Airflow FAB users API \(username\-keyed with first\_name/last\_name\).
 
@@ -5893,7 +10132,7 @@ type UserListItem struct {
 ```
 
 <a name="Variable"></a>
-## type [Variable](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L383-L389>)
+## type [Variable](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L724-L733>)
 
 Variable An Airflow\-style variable. The value is masked server\-side when the key looks sensitive \(secret/password/token/...\).
 
@@ -5904,11 +10143,14 @@ type Variable struct {
     Key         string  `json:"key"`
     TeamName    *string `json:"team_name,omitempty"`
     Value       string  `json:"value"`
+
+    // ValueUnreadable Present and true in a listing when the value is encrypted with a secret key the server does not have (for example after a key rotation that dropped the old key). The value is then masked. Reading the variable alone answers 500 with a message naming it.
+    ValueUnreadable *bool `json:"value_unreadable,omitempty"`
 }
 ```
 
 <a name="VariableBody"></a>
-## type [VariableBody](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L392-L396>)
+## type [VariableBody](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L736-L740>)
 
 VariableBody Variable create/replace payload. value and description are tri\-state: omit the key to preserve the stored value, send an empty string to clear it, or send a value to set it. A value equal to the mask \`\*\*\*\` for a sensitive\-looking key \(secret/password/token/...\) is treated as "unchanged", so re\-submitting a variable read back from GET \(whose sensitive value is masked\) never overwrites the real value with the mask.
 
@@ -5921,7 +10163,7 @@ type VariableBody struct {
 ```
 
 <a name="VariableCollection"></a>
-## type [VariableCollection](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L399-L402>)
+## type [VariableCollection](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L743-L746>)
 
 VariableCollection defines model for VariableCollection.
 
@@ -5933,7 +10175,7 @@ type VariableCollection struct {
 ```
 
 <a name="VariableKey"></a>
-## type [VariableKey](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L439>)
+## type [VariableKey](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L833>)
 
 VariableKey defines model for VariableKey.
 
@@ -5942,7 +10184,7 @@ type VariableKey = string
 ```
 
 <a name="VersionInfo"></a>
-## type [VersionInfo](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L405-L408>)
+## type [VersionInfo](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L749-L752>)
 
 VersionInfo defines model for VersionInfo.
 
@@ -5953,8 +10195,115 @@ type VersionInfo struct {
 }
 ```
 
+<a name="VersionRegistration"></a>
+## type [VersionRegistration](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L755-L779>)
+
+VersionRegistration defines model for VersionRegistration.
+
+```go
+type VersionRegistration struct {
+    // Created False when the content was already registered.
+    Created *bool `json:"created,omitempty"`
+
+    // DagCreated True when this register created the DAG (its first version); false for a new version of an existing DAG.
+    DagCreated *bool   `json:"dag_created,omitempty"`
+    DagId      *string `json:"dag_id,omitempty"`
+
+    // DryRun True on an answer of the dry run route: nothing was written, and the other fields say what the register would do. Absent from a register.
+    DryRun *bool `json:"dry_run,omitempty"`
+
+    // Execution Where the version's tasks run (Dexaflow), from the same decision dispatch places an attempt with: on a warm worker of the version (warm pools, ADR 0058) or on a dedicated pod. Sent by the register and its dry run. A task is warm-eligible; it still takes a dedicated pod when no warm worker is free. A task the dispatcher would offer to a warm worker is reported dedicated when no warm worker of its version can exist (no idle worker kept, or a server that runs none).
+    Execution *ExecutionReport `json:"execution,omitempty"`
+
+    // IsPaused The DAG's is_paused after the register.
+    IsPaused *bool   `json:"is_paused,omitempty"`
+    SpecHash *string `json:"spec_hash,omitempty"`
+
+    // TaskPods What the version's task pods would run as (Dexaflow), sent by the dry run route only, absent from a register. A server that starts no task pods sends run_as_non_root false and no service account.
+    TaskPods *TaskPodsReport `json:"task_pods,omitempty"`
+    Version  *string         `json:"version,omitempty"`
+
+    // Warnings What the register lets through with a warning (a task that does not fit its size under executor.unit.enforce=warn, an image not pinned by digest under deploy.require_digest=warn). Always sent by the dry run route; sent by a register only when it has a warning to give.
+    Warnings *[]string `json:"warnings,omitempty"`
+}
+```
+
+<a name="WarmPoolReport"></a>
+## type [WarmPoolReport](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L782-L793>)
+
+WarmPoolReport defines model for WarmPoolReport.
+
+```go
+type WarmPoolReport struct {
+    // Detail The state in a sentence for a person.
+    Detail         string `json:"detail"`
+    MaxPoolSize    *int   `json:"max_pool_size,omitempty"`
+    MinIdleWorkers *int   `json:"min_idle_workers,omitempty"`
+
+    // PreviousPool draining for a new version of an existing DAG when this server keeps warm workers; the previous version's idle warm workers, if it has any, are removed, and each busy one once its attempt ends.
+    PreviousPool *WarmPoolReportPreviousPool `json:"previous_pool,omitempty"`
+
+    // State off: warm pools are off. none: this version gets no warm worker (staging, source mode, no idle worker kept, or a server that runs no warm workers: the subprocess executor, or pod dispatch disabled). on: the version keeps min_idle_workers idle warm workers, up to max_pool_size, while it is the DAG's current version; for a DAG that declares min_idle_workers they start at the next reconcile (when a paused DAG is unpaused), else with the version's first run.
+    State WarmPoolReportState `json:"state"`
+}
+```
+
+<a name="WarmPoolReportPreviousPool"></a>
+## type [WarmPoolReportPreviousPool](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L796>)
+
+WarmPoolReportPreviousPool draining for a new version of an existing DAG when this server keeps warm workers; the previous version's idle warm workers, if it has any, are removed, and each busy one once its attempt ends.
+
+```go
+type WarmPoolReportPreviousPool string
+```
+
+<a name="WarmPoolReportPreviousPoolDraining"></a>Defines values for WarmPoolReportPreviousPool.
+
+```go
+const (
+    WarmPoolReportPreviousPoolDraining WarmPoolReportPreviousPool = "draining"
+)
+```
+
+<a name="WarmPoolReportPreviousPool.Valid"></a>
+### func \(WarmPoolReportPreviousPool\) [Valid](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L173>)
+
+```go
+func (e WarmPoolReportPreviousPool) Valid() bool
+```
+
+Valid indicates whether the value is a known member of the WarmPoolReportPreviousPool enum.
+
+<a name="WarmPoolReportState"></a>
+## type [WarmPoolReportState](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L799>)
+
+WarmPoolReportState off: warm pools are off. none: this version gets no warm worker \(staging, source mode, no idle worker kept, or a server that runs no warm workers: the subprocess executor, or pod dispatch disabled\). on: the version keeps min\_idle\_workers idle warm workers, up to max\_pool\_size, while it is the DAG's current version; for a DAG that declares min\_idle\_workers they start at the next reconcile \(when a paused DAG is unpaused\), else with the version's first run.
+
+```go
+type WarmPoolReportState string
+```
+
+<a name="WarmPoolReportStateNone"></a>Defines values for WarmPoolReportState.
+
+```go
+const (
+    WarmPoolReportStateNone WarmPoolReportState = "none"
+    WarmPoolReportStateOff  WarmPoolReportState = "off"
+    WarmPoolReportStateOn   WarmPoolReportState = "on"
+)
+```
+
+<a name="WarmPoolReportState.Valid"></a>
+### func \(WarmPoolReportState\) [Valid](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L190>)
+
+```go
+func (e WarmPoolReportState) Valid() bool
+```
+
+Valid indicates whether the value is a known member of the WarmPoolReportState enum.
+
 <a name="XComEntry"></a>
-## type [XComEntry](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L411-L418>)
+## type [XComEntry](<https://github.com/dexadata/dexaflow/blob/main/pkg/client/client.gen.go#L802-L809>)
 
 XComEntry defines model for XComEntry.
 

@@ -26,10 +26,10 @@ import (
 //     than the silence they punish, so the whole fleet can re-heartbeat.
 //   - settling grace < token TTL: the grace ends while a re-heartbeat can still
 //     authenticate and renew the bearer; otherwise the fleet is unreapable AND
-//     unable to report — every in-flight task is lost.
+//     unable to report, every in-flight task is lost.
 //   - 2×maintenance < settling grace: the leader's maintenance loop runs the
 //     reconciler's sweep and then the reapers as ONE ordered cycle, so a reap
-//     structurally follows a completed sweep — the settling gate additionally
+//     structurally follows a completed sweep, the settling gate additionally
 //     requires that a sweep completed under the new leader. This rung is what
 //     makes the grace meaningful on top of that ordering: at least two cycles
 //     START inside it, so a settle that failed transiently on the first sweep
@@ -58,7 +58,7 @@ import (
 //     bearer alive only while the attempt is younger than the ceiling. A ceiling
 //     below the TTL means the first renewal is already refused, the bearer
 //     lapses at the TTL, and every task longer than one TTL is unreapable AND
-//     unable to report — the restart recovery is silently disabled. This is the
+//     unable to report, the restart recovery is silently disabled. This is the
 //     ONLY operator-tunable rung; every other value is a build-time constant.
 //   - dispatch-lost threshold < token TTL - start margin (#1126): a pod still
 //     Pending as its dispatch-minted credential nears its end is re-placed by
