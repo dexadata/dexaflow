@@ -99,7 +99,7 @@ The control plane already supports more than one replica: the scheduler
 **leader-elects** — one active scheduler, the others standing by on the same
 Postgres advisory lock — and the API serves **active-active** from every replica
 ([ADR 0009](/project/adrs/0009-leader-election/)). With `replicaCount: 2`
-(non-split — see [split mode](#split-mode-is-not-dispatch-ha) below):
+(non-split; for split mode see [the scheduler standby](#split-mode-with-a-scheduler-standby) below):
 
 - an eviction of the leader becomes a **failover measured in seconds** — the
   standby is already pulled, booted and connected; it only has to win the lock
@@ -152,7 +152,7 @@ control-plane ServiceAccount to the cloud identity that may write the bucket:
 IRSA on EKS (`serviceAccount.annotations`), **EKS Pod Identity** — AWS's current
 recommendation, which needs *no* annotation and is configured as a Pod Identity
 association against the ServiceAccount instead — or Workload Identity on GKE. In
-[split mode](#split-mode-is-not-dispatch-ha) `serviceAccount.annotations` is
+[split mode](#split-mode-with-a-scheduler-standby) `serviceAccount.annotations` is
 rendered onto **both** ServiceAccounts and both need the identity: the scheduler
 *writes* task logs to the bucket and any api replica *reads* them back to serve
 the UI, so annotating one role leaves half the control plane without credentials.
@@ -189,28 +189,44 @@ and the PDB then blocks every drain of the one node. A constraint that omits
 values file does not need to know the release name. On multi-zone clusters add
 a second constraint on `topology.kubernetes.io/zone` (also `ScheduleAnyway`).
 
-### Split mode is not dispatch-HA
+### Split mode with a scheduler standby
 
 The api/scheduler role split
 ([ADR 0049](/project/adrs/0049-split-api-and-scheduler-roles/)) is a
-**security** topology, not an availability one. Its `api` Deployment is HA — it
-runs `split.api.replicaCount` active-active replicas and gets the auto PDB — but
-its `scheduler` Deployment is **pinned to one replica** by the chart, with no
-standby and, correctly, no PDB (a budget over one pod would block every drain).
-Every eviction of the split scheduler is therefore still the full restart window
-above: image pull, boot, leadership. Non-split `replicaCount: 2` is the only
-topology that gives dispatch failover today; choose the split when you need the
-restricted API identity more than scheduler failover, and know which one you
-picked.
+**security** topology: the `api` Deployment runs with an identity that cannot
+create pods. Its `api` Deployment is HA by itself: it runs
+`split.api.replicaCount` active-active replicas and gets the auto PDB.
 
-The restricted API identity goes one step further than an unbound
-ServiceAccount: the `api` pods do not mount a ServiceAccount token at all
-(`automountServiceAccountToken: false`), because the api role never calls the
-Kubernetes API. The `scheduler` pods, and the single Deployment when split is
-off, keep the token, since they create the task pods. Cloud identity for the
-object log sink (IRSA, EKS Pod Identity, GKE Workload Identity) does not use this
-mount and keeps working. A sidecar that reads the default token mount needs
-`split.api.automountServiceAccountToken: true`.
+The `scheduler` Deployment runs one replica by default, with no standby and no
+PDB (a budget over one pod would block every drain), so every eviction of it is
+the full restart window above: image pull, boot, leadership. Set
+`split.scheduler.replicaCount: 2` for dispatch failover in split mode
+([ADR 0105](/project/adrs/0105-split-scheduler-standby/)):
+
+```yaml
+split:
+  enabled: true
+  api:
+    replicaCount: 2
+  scheduler:
+    replicaCount: 2
+```
+
+- The second scheduler waits on the same leader lock and takes it within
+  seconds after the leader goes, like the non-split standby.
+- The chart renders a PodDisruptionBudget for the scheduler too, so a drain
+  evicts the leader only while the standby is up.
+- Both replicas serve the agent gRPC endpoint behind the scheduler Service.
+  State reports land on either one; a warm worker's assignment stream is
+  refused by the standby and reconnects to the leader.
+- Both mount the logs volume, so the logs go to object storage or a
+  ReadWriteMany PVC.
+- Only `1` and `2` are accepted: one replica leads at a time, so a third adds
+  nothing. Charts before 0.5.11 ignored the value and always ran one scheduler,
+  and a leftover value other than `1` or `2` now fails the render instead of
+  starting that many.
+
+The settling grace above applies to a failover in split mode as well.
 
 ### Warm pools are rebuilt on the far side of a failover
 

@@ -113,8 +113,8 @@ tests:
           count: 0
 
   # Split mode (ADR 0049): the PDB covers the active-active api Deployment, so the
-  # api replica count is the one that decides auto mode; the single-leader
-  # scheduler never gets a PDB.
+  # api replica count is the one that decides auto mode; a single scheduler
+  # never gets a PDB (ADR 0105 cases below cover the standby).
   - it: auto mode in split mode keys on split.api.replicaCount and targets the api Deployment
     template: pdb.yaml
     set:
@@ -136,6 +136,79 @@ tests:
     set:
       split.enabled: true
       split.api.replicaCount: 1
+      logs.persistence.accessMode: ReadWriteMany
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  # ADR 0105 (#2316): a standby scheduler gets a budget of its own, so a drain
+  # evicts the leader only while the standby is up.
+  - it: renders a scheduler PDB next to the api PDB with a standby scheduler
+    template: pdb.yaml
+    set:
+      split.enabled: true
+      split.api.replicaCount: 2
+      split.scheduler.replicaCount: 2
+      logs.persistence.accessMode: ReadWriteMany
+    asserts:
+      - hasDocuments:
+          count: 2
+      - equal:
+          path: metadata.name
+          value: leoflow-api
+        documentIndex: 0
+      - equal:
+          path: metadata.name
+          value: leoflow-scheduler
+        documentIndex: 1
+      - equal:
+          path: spec.selector.matchLabels["app.kubernetes.io/component"]
+          value: scheduler
+        documentIndex: 1
+      - equal:
+          path: spec.minAvailable
+          value: 1
+        documentIndex: 1
+      - equal:
+          path: spec.unhealthyPodEvictionPolicy
+          value: AlwaysAllow
+        documentIndex: 1
+
+  - it: renders the scheduler PDB alone with a single api replica and a standby scheduler
+    template: pdb.yaml
+    set:
+      split.enabled: true
+      split.api.replicaCount: 1
+      split.scheduler.replicaCount: 2
+      logs.persistence.accessMode: ReadWriteMany
+    asserts:
+      - hasDocuments:
+          count: 1
+      - equal:
+          path: metadata.name
+          value: leoflow-scheduler
+
+  - it: never renders a scheduler PDB over a single scheduler, even when forced on
+    template: pdb.yaml
+    set:
+      split.enabled: true
+      split.api.replicaCount: 2
+      podDisruptionBudget.enabled: true
+      logs.persistence.accessMode: ReadWriteMany
+    asserts:
+      - hasDocuments:
+          count: 1
+      - equal:
+          path: metadata.name
+          value: leoflow-api
+
+  - it: an explicit false turns the scheduler PDB off too
+    template: pdb.yaml
+    set:
+      split.enabled: true
+      split.api.replicaCount: 2
+      split.scheduler.replicaCount: 2
+      podDisruptionBudget.enabled: "false"
       logs.persistence.accessMode: ReadWriteMany
     asserts:
       - hasDocuments:

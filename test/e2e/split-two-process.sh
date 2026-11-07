@@ -15,6 +15,11 @@
 # role-gating from cert-manager / in-cluster datastore concerns. The chart's split
 # topology is validated separately by helm-unittest + the kind e2e.
 #
+# Then the standby scenario of ADR 0105 (#2316): a second scheduler-role process
+# starts and waits on the leader lock without ticking, the leader is killed with
+# SIGKILL, and the standby must take the lock and run a new run to success. The
+# chart runs the same two processes as split.scheduler.replicaCount: 2.
+#
 # It also asserts role ISOLATION at the socket level: the api process serves no
 # gRPC and the scheduler process serves no HTTP API; each still answers /healthz
 # on its metrics port (the kubelet probe target for a scheduler-only pod).
@@ -49,6 +54,11 @@ API="http://localhost:${API_HTTP_PORT}"
 HOST_ADDR="${LEOFLOW_E2E_HOST_ADDR:-$([ "$(uname -s)" = Linux ] && echo host.k3d.internal || echo host.docker.internal)}"
 API_PID=""
 SCHED_PID=""
+SCHED2_PID=""
+# The standby scheduler of the ADR 0105 scenario, on ports of its own.
+SCHED2_HTTP_PORT="8083"
+SCHED2_METRICS_PORT="9094"
+GRPC2_PORT="9093"
 
 log()  { printf '\033[1;34m==>\033[0m %s\n' "$*"; }
 dump_pods() {
@@ -64,6 +74,7 @@ fail() { printf '\033[1;31mFAIL:\033[0m %s\n' "$*" >&2; dump_pods; exit 1; }
 cleanup() {
   [ -n "$API_PID" ] && kill "$API_PID" 2>/dev/null || true
   [ -n "$SCHED_PID" ] && kill "$SCHED_PID" 2>/dev/null || true
+  [ -n "$SCHED2_PID" ] && kill "$SCHED2_PID" 2>/dev/null || true
   k3d cluster delete "$CLUSTER" >/dev/null 2>&1 || true
   rm -rf "$WORKDIR"
 }
@@ -199,20 +210,26 @@ RUN_ID="$(curl -fsS -X POST -H "Authorization: Bearer $TOKEN" -H "Content-Type: 
 [ -n "$RUN_ID" ] && [ "$RUN_ID" != "null" ] || fail "no dag_run_id returned from the api process"
 log "run = $RUN_ID"
 
+# wait_run_success RUN_ID: every task instance of the run ends success or skipped.
+wait_run_success() {
+  local run="$1" deadline states
+  deadline=$(( $(date +%s) + 300 ))
+  while :; do
+    states="$(curl -fsS -H "Authorization: Bearer $TOKEN" \
+      "$API/api/v2/dags/$DAG_ID/dagRuns/$run/taskInstances" | jq -r '.task_instances[].state')"
+    log "task states: [$(echo "$states" | tr '\n' ' ')] pods: [$(kubectl get pods -n leoflow --no-headers 2>/dev/null | awk '{print $1"="$3}' | tr '\n' ' ')]"
+    echo "$states" | grep -qE 'failed|upstream_failed' && fail "a task failed: $states"
+    if [ -n "$states" ] && ! echo "$states" | grep -qvE 'success|skipped'; then
+      log "all tasks terminal-success: $states"
+      return 0
+    fi
+    [ "$(date +%s)" -gt "$deadline" ] && fail "timed out; last states: ${states:-<none>}"
+    sleep 3
+  done
+}
+
 log "Waiting for all task instances to succeed (dispatched by the SEPARATE scheduler process, via the DB)"
-deadline=$(( $(date +%s) + 300 ))
-while :; do
-  states="$(curl -fsS -H "Authorization: Bearer $TOKEN" \
-    "$API/api/v2/dags/$DAG_ID/dagRuns/$RUN_ID/taskInstances" | jq -r '.task_instances[].state')"
-  log "task states: [$(echo "$states" | tr '\n' ' ')] pods: [$(kubectl get pods -n leoflow --no-headers 2>/dev/null | awk '{print $1"="$3}' | tr '\n' ' ')]"
-  echo "$states" | grep -qE 'failed|upstream_failed' && fail "a task failed: $states"
-  if [ -n "$states" ] && ! echo "$states" | grep -qvE 'success|skipped'; then
-    log "all tasks terminal-success: $states"
-    break
-  fi
-  [ "$(date +%s)" -gt "$deadline" ] && fail "timed out; last states: ${states:-<none>}"
-  sleep 3
-done
+wait_run_success "$RUN_ID"
 
 log "Asserting TaskFlow value passing across two pods (proves cross-pod XCom via the DB)"
 tlog=""
@@ -224,4 +241,50 @@ done
 [ -n "$tlog" ] || fail "transform did not receive extract's output — the two processes did not cooperate through the DB"
 log "value passing OK: transform received payload-split (API served logs the scheduler's pods produced)"
 
-log "SPLIT E2E passed — api and scheduler ran as separate processes cooperating via the DB (ADR 0049)"
+# ── ADR 0105: a standby scheduler takes over a killed leader ─────────────────
+# loop_ticks PORT: scheduler ticks the process on that metrics port has run. Only
+# the leader ticks, so a standby reads 0 until it takes the lock.
+loop_ticks() {
+  curl -fsS --max-time 3 "http://localhost:$1/metrics" 2>/dev/null \
+    | awk '$1 == "dexaflow_scheduler_loop_duration_seconds_count" { print int($2); found=1 } END { if (!found) print 0 }'
+}
+
+log "Starting a STANDBY scheduler process (ADR 0105): same database, gRPC on :${GRPC2_PORT}"
+LEOFLOW_SERVER_ROLE=scheduler \
+LEOFLOW_SERVER_HTTP_ADDR="0.0.0.0:${SCHED2_HTTP_PORT}" \
+LEOFLOW_SERVER_METRICS_ADDR="0.0.0.0:${SCHED2_METRICS_PORT}" \
+LEOFLOW_SERVER_GRPC_ADDR="0.0.0.0:${GRPC2_PORT}" \
+LEOFLOW_EXECUTOR_AGENT_CONTROL_PLANE_ADDR="${HOST_ADDR}:${GRPC2_PORT}" \
+  "$ROOT/bin/leoflow-server" &
+SCHED2_PID=$!
+deadline=$(( $(date +%s) + 30 ))
+until curl -fsS --max-time 3 "http://localhost:${SCHED2_METRICS_PORT}/healthz" >/dev/null 2>&1; do
+  [ "$(date +%s)" -gt "$deadline" ] && fail "the standby scheduler never served /healthz on :${SCHED2_METRICS_PORT}"
+  sleep 1
+done
+sleep 10
+leader_ticks="$(loop_ticks "$SCHED_METRICS_PORT")"
+standby_ticks="$(loop_ticks "$SCHED2_METRICS_PORT")"
+[ "$leader_ticks" -gt 0 ] || fail "the first scheduler reports no tick: it should be the leader"
+[ "$standby_ticks" -eq 0 ] || fail "the standby ticked ${standby_ticks} times while the leader holds the lock: two schedulers lead"
+log "standby OK: leader ticked ${leader_ticks} times, the standby none"
+
+log "Killing the leader scheduler with SIGKILL (no clean step-down)"
+kill -9 "$SCHED_PID"
+wait "$SCHED_PID" 2>/dev/null || true
+SCHED_PID=""
+deadline=$(( $(date +%s) + 60 ))
+until [ "$(loop_ticks "$SCHED2_METRICS_PORT")" -gt 0 ]; do
+  [ "$(date +%s)" -gt "$deadline" ] && fail "the standby did not take the leader lock within 60s of the leader's death"
+  sleep 2
+done
+log "failover OK: the standby leads"
+
+log "Triggering a second run; the new leader must dispatch it"
+RUN2_ID="$(curl -fsS -X POST -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{}' "$API/api/v2/dags/$DAG_ID/dagRuns" | jq -r '.dag_run_id')"
+[ -n "$RUN2_ID" ] && [ "$RUN2_ID" != "null" ] || fail "no dag_run_id for the second run"
+wait_run_success "$RUN2_ID"
+log "standby takeover OK: the run after the leader's death succeeded on the new leader"
+
+log "SPLIT E2E passed: api and scheduler ran as separate processes cooperating via the DB (ADR 0049), and a standby scheduler took over a killed leader (ADR 0105)"

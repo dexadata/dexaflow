@@ -19,7 +19,7 @@ release ships.
 
 | Area | Production profile | Why, and where the detail is |
 |---|---|---|
-| Edition and topology | Cluster edition, non-split, `replicaCount: 2`, from [`values-ha.yaml`](https://github.com/dexadata/dexaflow/blob/main/helm/dexaflow/examples/values-ha.yaml) | A leader-elected scheduler with a warm standby and an active-active API. Split mode is not dispatch HA ([control-plane HA](/operate/control-plane-ha/#split-mode-is-not-dispatch-ha)). |
+| Edition and topology | Cluster edition, non-split, `replicaCount: 2`, from [`values-ha.yaml`](https://github.com/dexadata/dexaflow/blob/main/helm/dexaflow/examples/values-ha.yaml) | A leader-elected scheduler with a warm standby and an active-active API. Split mode needs `split.scheduler.replicaCount: 2` for the same failover ([control-plane HA](/operate/control-plane-ha/#split-mode-with-a-scheduler-standby)). |
 | Placement | Replicas spread across nodes, and across zones on a multi-zone cluster | Two replicas on one node or in one zone are one replica ([control-plane HA](/operate/control-plane-ha/#two-replicas-on-one-node-are-one-replica)). |
 | Postgres | Managed Postgres 16 with high availability and point-in-time recovery | The only durable state of the control plane. Direct connections, or PgBouncer in **session** mode, for every process that runs the scheduler: the leader election holds a session advisory lock ([connection budget](/operate/control-plane-ha/#postgres-connection-budget)). |
 | Redis | Managed Redis with persistence, `maxmemory-policy noeviction`, reached through the provider's failover endpoint | Holds XCom values of running DAGs and carries the live log tail ([Redis requirements](/operate/redis/)). |

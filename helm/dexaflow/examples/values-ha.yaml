@@ -21,9 +21,9 @@
 # REFUSES to render `replicaCount > 1` onto a single-writer PVC. This file is the
 # one-switch profile that satisfies that guard the recommended way.
 #
-# Not the split (api/scheduler) topology: in split mode the scheduler is pinned to
-# one replica with no standby, so every scheduler eviction is still the full
-# restart window. Non-split replicaCount: 2 is the topology that fails dispatch over.
+# Not the split (api/scheduler) topology. For split mode with dispatch failover,
+# add split.enabled: true and split.scheduler.replicaCount: 2 (ADR 0105): the
+# scheduler then runs a leader and a standby, with a budget of its own.
 
 replicaCount: 2
 
