@@ -49,6 +49,9 @@ drift="$(changed_trees)"
 if [ -n "$drift" ]; then
 	echo "FAIL: the committed reference pages are stale:" >&2
 	printf '%s\n' "$drift" | sed 's/^/  /' >&2
+	# The first lines of the diff, so a drift that only shows up on the CI
+	# runner can be read from the log instead of guessed at.
+	git --no-pager diff --no-color -- "${TREES[@]}" | head -n 120 >&2 || true
 	echo "Run ./website/scripts/gen-cli.sh, gen-openapi.sh and gen-go.sh from the repository root and commit the result." >&2
 	exit 1
 fi
