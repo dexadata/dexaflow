@@ -20,6 +20,7 @@ Package storage wraps the Postgres and Redis connections used by the control pla
 - [func NewLeaderPool\(ctx context.Context, cfg config.DatabaseSection\) \(\*pgxpool.Pool, error\)](<#NewLeaderPool>)
 - [func TryKeyMigrationLockExclusive\(ctx context.Context, q RowQueryer\) \(bool, error\)](<#TryKeyMigrationLockExclusive>)
 - [func TryKeyMigrationLockShared\(ctx context.Context, q RowQueryer\) \(bool, error\)](<#TryKeyMigrationLockShared>)
+- [func WatchRedisMemory\(ctx context.Context, r \*Redis, m RedisMemoryMetrics, logger \*slog.Logger, interval time.Duration\) func\(\)](<#WatchRedisMemory>)
 - [type EncryptedColumn](<#EncryptedColumn>)
   - [func EncryptedColumns\(\) \[\]EncryptedColumn](<#EncryptedColumns>)
   - [func \(c EncryptedColumn\) String\(\) string](<#EncryptedColumn.String>)
@@ -62,6 +63,7 @@ Package storage wraps the Postgres and Redis connections used by the control pla
   - [func \(c \*PoolCollector\) Describe\(ch chan\<\- \*prometheus.Desc\)](<#PoolCollector.Describe>)
 - [type Postgres](<#Postgres>)
   - [func NewPostgres\(ctx context.Context, cfg config.DatabaseSection\) \(\*Postgres, error\)](<#NewPostgres>)
+  - [func \(p \*Postgres\) CheckRowSecurity\(ctx context.Context\) error](<#Postgres.CheckRowSecurity>)
   - [func \(p \*Postgres\) Close\(\)](<#Postgres.Close>)
   - [func \(p \*Postgres\) ForAgents\(ctx context.Context, cfg config.DatabaseSection\) \(\*Postgres, func\(\), error\)](<#Postgres.ForAgents>)
   - [func \(p \*Postgres\) ForScheduler\(ctx context.Context, cfg config.DatabaseSection\) \(\*Postgres, func\(\), error\)](<#Postgres.ForScheduler>)
@@ -75,8 +77,18 @@ Package storage wraps the Postgres and Redis connections used by the control pla
 - [type Redis](<#Redis>)
   - [func NewRedis\(ctx context.Context, cfg config.RedisSection\) \(\*Redis, error\)](<#NewRedis>)
   - [func \(r \*Redis\) Close\(\) error](<#Redis.Close>)
+  - [func \(r \*Redis\) MemoryInfo\(ctx context.Context\) \(RedisMemoryInfo, error\)](<#Redis.MemoryInfo>)
   - [func \(r \*Redis\) Ping\(ctx context.Context\) error](<#Redis.Ping>)
+- [type RedisMemoryInfo](<#RedisMemoryInfo>)
+  - [func CheckRedisEviction\(ctx context.Context, r \*Redis, require bool, logger \*slog.Logger\) \(RedisMemoryInfo, error\)](<#CheckRedisEviction>)
+  - [func \(i RedisMemoryInfo\) EvictionSafe\(\) bool](<#RedisMemoryInfo.EvictionSafe>)
+- [type RedisMemoryMetrics](<#RedisMemoryMetrics>)
 - [type RedisMetrics](<#RedisMetrics>)
+- [type RedisRateCounter](<#RedisRateCounter>)
+  - [func NewRedisRateCounter\(client \*redis.Client\) \*RedisRateCounter](<#NewRedisRateCounter>)
+  - [func \(r \*RedisRateCounter\) Decr\(ctx context.Context, key string\) error](<#RedisRateCounter.Decr>)
+  - [func \(r \*RedisRateCounter\) Get\(ctx context.Context, key string\) \(int64, error\)](<#RedisRateCounter.Get>)
+  - [func \(r \*RedisRateCounter\) Incr\(ctx context.Context, key string, ttl time.Duration\) \(int64, error\)](<#RedisRateCounter.Incr>)
 - [type ReencryptResult](<#ReencryptResult>)
   - [func \(r ReencryptResult\) Clean\(\) bool](<#ReencryptResult.Clean>)
 - [type Repository](<#Repository>)
@@ -153,6 +165,7 @@ Package storage wraps the Postgres and Redis connections used by the control pla
   - [func \(r \*Repository\) PoolSlotUsage\(ctx context.Context, tenant string\) \(map\[string\]domain.PoolUsage, error\)](<#Repository.PoolSlotUsage>)
   - [func \(r \*Repository\) ReconcileUserRoles\(ctx context.Context, userID string, roleNames \[\]string\) error](<#Repository.ReconcileUserRoles>)
   - [func \(r \*Repository\) RecordAuthEvent\(ctx context.Context, tenant, actorUserID, action, email, outcome string, extra map\[string\]string\) error](<#Repository.RecordAuthEvent>)
+  - [func \(r \*Repository\) RecordResourceAudit\(ctx context.Context, tenant, actorUserID, action, resourceType, resourceID string, metadata map\[string\]string\) error](<#Repository.RecordResourceAudit>)
   - [func \(r \*Repository\) RecordRunActionAudit\(ctx context.Context, tenant, userID, action, dagID, runID string, metadata map\[string\]string\) error](<#Repository.RecordRunActionAudit>)
   - [func \(r \*Repository\) RecordSecretLivenessDenial\(ctx context.Context, tenantID, dagID, runID, taskID string, tryNumber int, kind, mode string\) error](<#Repository.RecordSecretLivenessDenial>)
   - [func \(r \*Repository\) RecordSecretScopeWarning\(ctx context.Context, tenantID, dagID, runID, taskID, kind string, declared, total int\) error](<#Repository.RecordSecretScopeWarning>)
@@ -206,6 +219,9 @@ Package storage wraps the Postgres and Redis connections used by the control pla
   - [func \(s \*RetentionStore\) TenantIDs\(ctx context.Context\) \(\[\]string, error\)](<#RetentionStore.TenantIDs>)
 - [type RowQuerier](<#RowQuerier>)
 - [type RowQueryer](<#RowQueryer>)
+- [type RowSecurityStatus](<#RowSecurityStatus>)
+  - [func ReadRowSecurity\(ctx context.Context, db queryer\) \(\[\]RowSecurityStatus, error\)](<#ReadRowSecurity>)
+  - [func \(s RowSecurityStatus\) On\(\) bool](<#RowSecurityStatus.On>)
 - [type SchedulerStore](<#SchedulerStore>)
   - [func NewSchedulerStore\(pg \*Postgres\) \*SchedulerStore](<#NewSchedulerStore>)
   - [func \(s \*SchedulerStore\) ActiveRuns\(ctx context.Context\) \(\[\]scheduler.RunState, error\)](<#SchedulerStore.ActiveRuns>)
@@ -321,6 +337,12 @@ const KeyMigrationLockID int64 = 0x4C6974654B6579
 const MaxLiveAPITokensPerUser = 50
 ```
 
+<a name="RedisSafeEvictionPolicy"></a>RedisSafeEvictionPolicy is the only maxmemory\-policy under which Redis never deletes a key to free memory. XCom values carry a TTL, so a volatile\-\* policy evicts exactly them first, and an allkeys\-\* policy evicts them too \(\#2354\).
+
+```go
+const RedisSafeEvictionPolicy = "noeviction"
+```
+
 <a name="VariableCiphertextPrefix"></a>VariableCiphertextPrefix tags a stored variable value as sealed with the secret key \(\#507\). The value column holds either a legacy plaintext value or this prefix followed by the cipher's output, so the stored form describes itself: no schema change, rows written by an older server stay readable, and a value an older server writes over a sealed one is plaintext again, which is exactly what that server meant.
 
 ```go
@@ -348,6 +370,18 @@ var ErrKeyMigrationGuard = errors.New("a row changed under the key migration's t
 
 ```go
 var ErrNotDispatchable = errors.New("task instance is not in a dispatchable state")
+```
+
+<a name="ErrRedisEvictionUnsafe"></a>ErrRedisEvictionUnsafe is returned by CheckRedisEviction when redis.require\_noeviction is on and the server may evict keys, or its policy cannot be read.
+
+```go
+var ErrRedisEvictionUnsafe = errors.New("redis may evict keys")
+```
+
+<a name="ErrRowSecurityOff"></a>ErrRowSecurityOff is returned by CheckRowSecurity when a tenant table does not have row level security on and forced.
+
+```go
+var ErrRowSecurityOff = errors.New("row level security is not enforced")
 ```
 
 <a name="AttachRedisObservability"></a>
@@ -380,7 +414,7 @@ func KeyMigrationLockHeld(ctx context.Context, q RowQueryer) (bool, error)
 KeyMigrationLockHeld reports whether any session holds the key\-migration lock, in either mode, without taking it. A Lite server holds it shared for its whole life, so a command that only needs to know whether a server is running against this datastore \(\`dexaflow lite reset\-password\`, \#413\) asks here instead of trying the lock, which for a moment could make a server that is starting refuse to boot.
 
 <a name="NewLeaderPool"></a>
-## func [NewLeaderPool](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/postgres.go#L369>)
+## func [NewLeaderPool](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/postgres.go#L372>)
 
 ```go
 func NewLeaderPool(ctx context.Context, cfg config.DatabaseSection) (*pgxpool.Pool, error)
@@ -411,6 +445,15 @@ func TryKeyMigrationLockShared(ctx context.Context, q RowQueryer) (bool, error)
 ```
 
 TryKeyMigrationLockShared takes the key\-migration lock in shared mode on the caller's session without waiting. It reports false while a migration holds it.
+
+<a name="WatchRedisMemory"></a>
+## func [WatchRedisMemory](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/redis_memory.go#L126>)
+
+```go
+func WatchRedisMemory(ctx context.Context, r *Redis, m RedisMemoryMetrics, logger *slog.Logger, interval time.Duration) func()
+```
+
+WatchRedisMemory reads INFO every interval, publishes the eviction policy, used memory and evicted keys to m, and logs a warning when the policy turns unsafe after the first read \(the boot check, CheckRedisEviction, already reported the policy it found\). The returned function stops it.
 
 <a name="EncryptedColumn"></a>
 ## type [EncryptedColumn](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/keymigration.go#L17-L31>)
@@ -834,7 +877,7 @@ type Postgres struct {
 ```
 
 <a name="NewPostgres"></a>
-### func [NewPostgres](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/postgres.go#L190>)
+### func [NewPostgres](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/postgres.go#L193>)
 
 ```go
 func NewPostgres(ctx context.Context, cfg config.DatabaseSection) (*Postgres, error)
@@ -842,8 +885,17 @@ func NewPostgres(ctx context.Context, cfg config.DatabaseSection) (*Postgres, er
 
 NewPostgres opens a connection pool and verifies connectivity, retrying transient failures during boot for up to pgStartupBudget. Pre\-2026\-06, the first failed ping fatal\-ed the server, so a docker compose race or any Pro failover blip became a hard crash. The retry loop keeps Lite boot ergonomic and Pro startup resilient under realistic upstream\-PG dynamics. A truly broken setup \(wrong DSN, bad auth\) still surfaces quickly because the underlying error is wrapped into the final error.
 
+<a name="Postgres.CheckRowSecurity"></a>
+### func \(\*Postgres\) [CheckRowSecurity](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/tenant_binding.go#L110>)
+
+```go
+func (p *Postgres) CheckRowSecurity(ctx context.Context) error
+```
+
+CheckRowSecurity returns ErrRowSecurityOff, naming the tables, unless every tenant table has row level security on, forced and with its policy.
+
 <a name="Postgres.Close"></a>
-### func \(\*Postgres\) [Close](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/postgres.go#L498>)
+### func \(\*Postgres\) [Close](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/postgres.go#L501>)
 
 ```go
 func (p *Postgres) Close()
@@ -852,7 +904,7 @@ func (p *Postgres) Close()
 Close releases the connection pools.
 
 <a name="Postgres.ForAgents"></a>
-### func \(\*Postgres\) [ForAgents](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/postgres.go#L460>)
+### func \(\*Postgres\) [ForAgents](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/postgres.go#L463>)
 
 ```go
 func (p *Postgres) ForAgents(ctx context.Context, cfg config.DatabaseSection) (*Postgres, func(), error)
@@ -863,7 +915,7 @@ ForAgents returns the handle the agent gRPC handlers should use, and a func that
 With database.agent\_max\_conns unset it is p itself and the release func does nothing: heartbeats and state reports share the main pool with the API, as they always have. With it set, it is a dedicated pool of that size, without the API statement timeout, so API traffic that holds every main pool connection cannot block a heartbeat write while the reapers, on the scheduler pool, read last\_heartbeat\_at and judge the agent silent. The dedicated handle shares p's spec cache.
 
 <a name="Postgres.ForScheduler"></a>
-### func \(\*Postgres\) [ForScheduler](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/postgres.go#L439>)
+### func \(\*Postgres\) [ForScheduler](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/postgres.go#L442>)
 
 ```go
 func (p *Postgres) ForScheduler(ctx context.Context, cfg config.DatabaseSection) (*Postgres, func(), error)
@@ -874,7 +926,7 @@ ForScheduler returns the handle the scheduler side should use, and a func that r
 With database.scheduler\_max\_conns unset it is p itself and the release func does nothing: the scheduler shares the main pool, as it always has. With it set, it is a dedicated pool of that size, without the API statement timeout, so a burst of API traffic holding every main pool connection cannot stall a scheduler tick or a reaper behind it. The dedicated handle shares p's spec cache, so the scheduler and the agent path still decode each version once.
 
 <a name="Postgres.Ping"></a>
-### func \(\*Postgres\) [Ping](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/postgres.go#L493>)
+### func \(\*Postgres\) [Ping](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/postgres.go#L496>)
 
 ```go
 func (p *Postgres) Ping(ctx context.Context) error
@@ -969,6 +1021,15 @@ func (r *Redis) Close() error
 
 Close releases the Redis client.
 
+<a name="Redis.MemoryInfo"></a>
+### func \(\*Redis\) [MemoryInfo](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/redis_memory.go#L40>)
+
+```go
+func (r *Redis) MemoryInfo(ctx context.Context) (RedisMemoryInfo, error)
+```
+
+MemoryInfo reads the eviction policy, the used memory and the evicted keys from INFO, which managed services allow where CONFIG GET is blocked. The sections are read one call each because Redis before 7 takes one section per INFO.
+
 <a name="Redis.Ping"></a>
 ### func \(\*Redis\) [Ping](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/redis.go#L70>)
 
@@ -977,6 +1038,52 @@ func (r *Redis) Ping(ctx context.Context) error
 ```
 
 Ping checks Redis connectivity \(used by /readyz\).
+
+<a name="RedisMemoryInfo"></a>
+## type [RedisMemoryInfo](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/redis_memory.go#L21-L29>)
+
+RedisMemoryInfo is what the server reports about its memory and evictions.
+
+```go
+type RedisMemoryInfo struct {
+    // Policy is maxmemory_policy, for example noeviction or volatile-lru.
+    Policy string
+    // UsedMemory is used_memory, in bytes.
+    UsedMemory int64
+    // EvictedKeys is evicted_keys: keys the server deleted to stay under
+    // maxmemory since it started.
+    EvictedKeys int64
+}
+```
+
+<a name="CheckRedisEviction"></a>
+### func [CheckRedisEviction](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/redis_memory.go#L97>)
+
+```go
+func CheckRedisEviction(ctx context.Context, r *Redis, require bool, logger *slog.Logger) (RedisMemoryInfo, error)
+```
+
+CheckRedisEviction is the boot check of the eviction policy \(\#2354\). A policy other than noeviction lets Redis delete the XCom values of running DAGs under memory pressure, and the downstream task then fails with "not found". It logs a warning that names the risk, or, when require is set \(redis.require\_noeviction\), returns ErrRedisEvictionUnsafe so the process refuses to boot. A policy that cannot be read is a warning, or a refusal in strict mode: strict mode fails closed.
+
+<a name="RedisMemoryInfo.EvictionSafe"></a>
+### func \(RedisMemoryInfo\) [EvictionSafe](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/redis_memory.go#L32>)
+
+```go
+func (i RedisMemoryInfo) EvictionSafe() bool
+```
+
+EvictionSafe reports whether the policy keeps every key until it expires.
+
+<a name="RedisMemoryMetrics"></a>
+## type [RedisMemoryMetrics](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/redis_memory.go#L81-L83>)
+
+RedisMemoryMetrics receives what WatchRedisMemory reads from INFO. It is a local interface so this package does not import internal/observability.
+
+```go
+type RedisMemoryMetrics interface {
+    SetRedisMemory(evictionSafe bool, usedBytes, evictedKeys int64)
+}
+```
 
 <a name="RedisMetrics"></a>
 ## type [RedisMetrics](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/redis_observability.go#L18-L24>)
@@ -992,6 +1099,53 @@ type RedisMetrics interface {
     RecordRedisPoolTimeout()
 }
 ```
+
+<a name="RedisRateCounter"></a>
+## type [RedisRateCounter](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/redis_ratelimit.go#L15-L17>)
+
+RedisRateCounter is the auth.SharedCounter of the API replicas on Redis \(\#2357\): one INCR and EXPIRE per counted event, in one round trip, so every replica behind the Service spends the same budget.
+
+```go
+type RedisRateCounter struct {
+    // contains filtered or unexported fields
+}
+```
+
+<a name="NewRedisRateCounter"></a>
+### func [NewRedisRateCounter](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/redis_ratelimit.go#L20>)
+
+```go
+func NewRedisRateCounter(client *redis.Client) *RedisRateCounter
+```
+
+NewRedisRateCounter builds the shared rate limit counter over client.
+
+<a name="RedisRateCounter.Decr"></a>
+### func \(\*RedisRateCounter\) [Decr](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/redis_ratelimit.go#L56>)
+
+```go
+func (r *RedisRateCounter) Decr(ctx context.Context, key string) error
+```
+
+Decr gives one event of key back.
+
+<a name="RedisRateCounter.Get"></a>
+### func \(\*RedisRateCounter\) [Get](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/redis_ratelimit.go#L44>)
+
+```go
+func (r *RedisRateCounter) Get(ctx context.Context, key string) (int64, error)
+```
+
+Get returns the count of key, 0 when it has none.
+
+<a name="RedisRateCounter.Incr"></a>
+### func \(\*RedisRateCounter\) [Incr](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/redis_ratelimit.go#L33>)
+
+```go
+func (r *RedisRateCounter) Incr(ctx context.Context, key string, ttl time.Duration) (int64, error)
+```
+
+Incr counts one event of key and returns the count. key expires after ttl, which outlives the window the key names, since the key is created inside it.
 
 <a name="ReencryptResult"></a>
 ## type [ReencryptResult](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/reencrypt.go#L13-L21>)
@@ -1455,7 +1609,7 @@ func (r *Repository) ListAPITokens(ctx context.Context, tenant, ownerID string, 
 ListAPITokens returns a page of the tenant's unrevoked tokens, newest first, and their total. ownerID limits them to one user; empty lists every owner's.
 
 <a name="Repository.ListAuditLogs"></a>
-### func \(\*Repository\) [ListAuditLogs](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/repo_audit.go#L224>)
+### func \(\*Repository\) [ListAuditLogs](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/repo_audit.go#L258>)
 
 ```go
 func (r *Repository) ListAuditLogs(ctx context.Context, tenant, dagID string, limit, offset int) ([]domain.AuditLogEntry, int, error)
@@ -1464,7 +1618,7 @@ func (r *Repository) ListAuditLogs(ctx context.Context, tenant, dagID string, li
 ListAuditLogs returns a page of audit\-log entries for the tenant, newest first, optionally filtered to a single DAG \(dagID == "" means no filter\).
 
 <a name="Repository.ListAuditLogsAfter"></a>
-### func \(\*Repository\) [ListAuditLogsAfter](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/repo_audit.go#L267>)
+### func \(\*Repository\) [ListAuditLogsAfter](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/repo_audit.go#L301>)
 
 ```go
 func (r *Repository) ListAuditLogsAfter(ctx context.Context, tenant, dagID string, after domain.PageCursor, limit int) ([]domain.AuditLogEntry, int, error)
@@ -1695,7 +1849,7 @@ ReconcileUserRoles makes the user's granted roles exactly roleNames, atomically:
 Every name is resolved to a role id in the user's OWN tenant BEFORE any write, so a name that is not a role in that tenant fails closed as domain.ErrValidation with the prior grants untouched, the login path turns that into a rejected, audited login rather than silently wiping the user's roles. The delete and the inserts run in one transaction, making the operation idempotent \(reconciling the same set yields the same rows\) and an empty roleNames a full clear \(default\-deny\).
 
 <a name="Repository.RecordAuthEvent"></a>
-### func \(\*Repository\) [RecordAuthEvent](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/repo_audit.go#L109>)
+### func \(\*Repository\) [RecordAuthEvent](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/repo_audit.go#L143>)
 
 ```go
 func (r *Repository) RecordAuthEvent(ctx context.Context, tenant, actorUserID, action, email, outcome string, extra map[string]string) error
@@ -1704,6 +1858,15 @@ func (r *Repository) RecordAuthEvent(ctx context.Context, tenant, actorUserID, a
 RecordAuthEvent records an authentication event to the audit log \(H5\): OIDC login success/failure, tenant\-pin rejection, JIT provisioning, break\-glass login, and logout. It NEVER records tokens or the client secret, only the actor's email, the resolved tenant \(best\-effort\), the outcome, and small non\-secret detail fields \(e.g. the rejection reason, the attempted tenant claim\). It is best\-effort: the caller logs and continues on error so a flaky audit sink never turns a security decision \(a 403 rejection, a successful login\) into a 5xx.
 
 The event is scoped to the resolved tenant when known; events that never resolved a tenant \(a login failure, a tenant\-pin rejection\) fall back to the "default" tenant so the row still lands, with the attempted values in the metadata. resourceID carries the email so account\-scoped auth activity is filterable alongside user.create.
+
+<a name="Repository.RecordResourceAudit"></a>
+### func \(\*Repository\) [RecordResourceAudit](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/repo_audit.go#L102>)
+
+```go
+func (r *Repository) RecordResourceAudit(ctx context.Context, tenant, actorUserID, action, resourceType, resourceID string, metadata map[string]string) error
+```
+
+RecordResourceAudit logs an accepted admin write to a named resource of the tenant, such as variable.update or pool.delete \(\#2228\), with the acting user as the owner, scoped to resourceType and resourceID. metadata holds the names of the fields the request set and other non\-secret detail; the caller never passes a secret value. The resource's name is also written to the metadata under resourceType, since the EventLog shape of the API has no field for a resource other than a DAG.
 
 <a name="Repository.RecordRunActionAudit"></a>
 ### func \(\*Repository\) [RecordRunActionAudit](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/repo_audit.go#L31>)
@@ -1715,7 +1878,7 @@ func (r *Repository) RecordRunActionAudit(ctx context.Context, tenant, userID, a
 RecordRunActionAudit logs a run\-level action on the DAG's Audit Log tab, as RecordTaskActionAudit does, with extra metadata fields next to run\_id \(for example requested\_state when a PATCH stored another state, \#1766\).
 
 <a name="Repository.RecordSecretLivenessDenial"></a>
-### func \(\*Repository\) [RecordSecretLivenessDenial](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/repo_audit.go#L195>)
+### func \(\*Repository\) [RecordSecretLivenessDenial](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/repo_audit.go#L229>)
 
 ```go
 func (r *Repository) RecordSecretLivenessDenial(ctx context.Context, tenantID, dagID, runID, taskID string, tryNumber int, kind, mode string) error
@@ -1726,7 +1889,7 @@ RecordSecretLivenessDenial records that the secret\-path liveness gate fired for
 tenantID is the tenant UUID the agent token carries \(not the tenant name\): the caller is the agent RPC path, which passes AgentIdentity.TenantID. Resolving it by name silently dropped every row \(\#722\), including enforce\-mode security denials, so mirror the secret\-delivery path and parse it as a UUID.
 
 <a name="Repository.RecordSecretScopeWarning"></a>
-### func \(\*Repository\) [RecordSecretScopeWarning](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/repo_audit.go#L162>)
+### func \(\*Repository\) [RecordSecretScopeWarning](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/repo_audit.go#L196>)
 
 ```go
 func (r *Repository) RecordSecretScopeWarning(ctx context.Context, tenantID, dagID, runID, taskID, kind string, declared, total int) error
@@ -2212,8 +2375,40 @@ type RowQueryer interface {
 }
 ```
 
+<a name="RowSecurityStatus"></a>
+## type [RowSecurityStatus](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/tenant_binding.go#L69-L74>)
+
+RowSecurityStatus reports, per tenant table, whether row level security is enabled and forced, and whether its tenant policy exists.
+
+```go
+type RowSecurityStatus struct {
+    Table   string
+    Enabled bool
+    Forced  bool
+    Policy  bool
+}
+```
+
+<a name="ReadRowSecurity"></a>
+### func [ReadRowSecurity](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/tenant_binding.go#L87>)
+
+```go
+func ReadRowSecurity(ctx context.Context, db queryer) ([]RowSecurityStatus, error)
+```
+
+ReadRowSecurity reads the row level security state of the tenant tables.
+
+<a name="RowSecurityStatus.On"></a>
+### func \(RowSecurityStatus\) [On](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/tenant_binding.go#L79>)
+
+```go
+func (s RowSecurityStatus) On() bool
+```
+
+On reports whether the table is protected: enabled, forced \(so the table owner, which is usually the server's own role, is held to it too\) and with its policy.
+
 <a name="SchedulerStore"></a>
-## type [SchedulerStore](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/scheduler_store.go#L21-L42>)
+## type [SchedulerStore](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/scheduler_store.go#L24-L48>)
 
 SchedulerStore is the sqlc\-backed implementation of scheduler.Store.
 
@@ -2224,7 +2419,7 @@ type SchedulerStore struct {
 ```
 
 <a name="NewSchedulerStore"></a>
-### func [NewSchedulerStore](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/scheduler_store.go#L52>)
+### func [NewSchedulerStore](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/scheduler_store.go#L58>)
 
 ```go
 func NewSchedulerStore(pg *Postgres) *SchedulerStore
@@ -2233,7 +2428,7 @@ func NewSchedulerStore(pg *Postgres) *SchedulerStore
 NewSchedulerStore builds a SchedulerStore over the given Postgres connection.
 
 <a name="SchedulerStore.ActiveRuns"></a>
-### func \(\*SchedulerStore\) [ActiveRuns](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/scheduler_store.go#L134>)
+### func \(\*SchedulerStore\) [ActiveRuns](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/scheduler_store.go#L148>)
 
 ```go
 func (s *SchedulerStore) ActiveRuns(ctx context.Context) ([]scheduler.RunState, error)
@@ -2251,7 +2446,7 @@ func (s *SchedulerStore) ActiveWarmTargets(ctx context.Context) ([]executor.Warm
 ActiveWarmTargets returns one warm target per dag\_version the warm pool keeps \(ADR 0058 N1b2b, ADR 0082\), the read side of a warm\-pool reconcile tick: the current version of every active, unpaused DAG that declares min\_idle\_workers, prewarmed before its first run \(\#1707\), and the version of every active run that is still its DAG's current version. A run whose version a register, a rollback or a promote superseded keeps running on it, but the version is no longer a target, so its pool drains: idle workers are deleted and busy ones finish their attempt first, and the run's later attempts take dedicated pods. A run of a DAG with no current version keeps its version's target, as before. It reuses the same cached\-spec path as ActiveRuns: the spec is immutable per dag\_version\_id, so N active runs sharing a version decode it once, and the effective target is derived from the DAG author's min\_idle\_workers under the operator's clamp/fallback. It implements executor.WarmTargetSource without the executor importing storage. A version none of whose tasks dispatch would place on a warm worker gets no target \(\#2065\). A run held by its paused DAG \(\#1705\) keeps a target only while one of its tasks is live, since nothing else of it is dispatched until the unpause, and a paused DAG is not prewarmed.
 
 <a name="SchedulerStore.ApplyTransition"></a>
-### func \(\*SchedulerStore\) [ApplyTransition](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/scheduler_store.go#L397>)
+### func \(\*SchedulerStore\) [ApplyTransition](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/scheduler_store.go#L437>)
 
 ```go
 func (s *SchedulerStore) ApplyTransition(ctx context.Context, runID, taskID string, to domain.TaskState) error
@@ -2260,7 +2455,7 @@ func (s *SchedulerStore) ApplyTransition(ctx context.Context, runID, taskID stri
 ApplyTransition moves a task instance to a new state.
 
 <a name="SchedulerStore.ApplyTransitions"></a>
-### func \(\*SchedulerStore\) [ApplyTransitions](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/scheduler_store.go#L417>)
+### func \(\*SchedulerStore\) [ApplyTransitions](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/scheduler_store.go#L457>)
 
 ```go
 func (s *SchedulerStore) ApplyTransitions(ctx context.Context, runID string, taskIDs []string, from, to domain.TaskState) ([]string, error)
@@ -2269,7 +2464,7 @@ func (s *SchedulerStore) ApplyTransitions(ctx context.Context, runID string, tas
 ApplyTransitions moves every listed task of a run that is still in the from state to the SAME target state in one UPDATE, the batched form of the plain per\-task transition. The scheduler groups a tick's plain state\-set transitions by source and target state and flushes each group here, collapsing R updates into one per group. The from guard is the state the tick's snapshot read: a row a concurrent writer moved since then is left alone \(\#1605\). It returns the task ids that actually moved. An empty list is a no\-op.
 
 <a name="SchedulerStore.ClaimAlertAttempt"></a>
-### func \(\*SchedulerStore\) [ClaimAlertAttempt](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/scheduler_store.go#L706>)
+### func \(\*SchedulerStore\) [ClaimAlertAttempt](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/scheduler_store.go#L746>)
 
 ```go
 func (s *SchedulerStore) ClaimAlertAttempt(ctx context.Context, runID string, maxAttempts int, backoff time.Duration) (int, error)
@@ -2280,7 +2475,7 @@ ClaimAlertAttempt atomically claims one on\-failure send attempt for a run \(\#4
 Claiming an attempt is NOT the same as recording delivery; that is MarkRunAlertDelivered. Conflating the two is what made a failed send a permanently lost page. Returns the attempt number won \(0 when the claim was refused\), which the caller passes back to MarkRunAlertDelivered so a superseded send cannot stamp.
 
 <a name="SchedulerStore.ConfirmInfraFailure"></a>
-### func \(\*SchedulerStore\) [ConfirmInfraFailure](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/scheduler_store.go#L288>)
+### func \(\*SchedulerStore\) [ConfirmInfraFailure](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/scheduler_store.go#L328>)
 
 ```go
 func (s *SchedulerStore) ConfirmInfraFailure(ctx context.Context, taskInstanceID string, tryNumber, attemptEpoch int) (bool, error)
@@ -2289,7 +2484,7 @@ func (s *SchedulerStore) ConfirmInfraFailure(ctx context.Context, taskInstanceID
 ConfirmInfraFailure stamps a provisional infra mark confirmed, guarded on the exact attempt and on the mark still being provisional. It reports whether a row was confirmed.
 
 <a name="SchedulerStore.CountHeartbeatFleet"></a>
-### func \(\*SchedulerStore\) [CountHeartbeatFleet](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/scheduler_store.go#L982>)
+### func \(\*SchedulerStore\) [CountHeartbeatFleet](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/scheduler_store.go#L1022>)
 
 ```go
 func (s *SchedulerStore) CountHeartbeatFleet(ctx context.Context, staleBefore time.Time) (executor.HeartbeatFleet, error)
@@ -2298,7 +2493,7 @@ func (s *SchedulerStore) CountHeartbeatFleet(ctx context.Context, staleBefore ti
 CountHeartbeatFleet counts the running TIs with a heartbeat and those whose last heartbeat is before staleBefore, for the agent\-lost reaper's mass\-silence guard \(\#1624\). It implements executor.HeartbeatFleetCounter.
 
 <a name="SchedulerStore.CreateScheduledRun"></a>
-### func \(\*SchedulerStore\) [CreateScheduledRun](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/scheduler_store.go#L784>)
+### func \(\*SchedulerStore\) [CreateScheduledRun](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/scheduler_store.go#L824>)
 
 ```go
 func (s *SchedulerStore) CreateScheduledRun(ctx context.Context, tenantID, dagID string, logical time.Time) error
@@ -2307,7 +2502,7 @@ func (s *SchedulerStore) CreateScheduledRun(ctx context.Context, tenantID, dagID
 CreateScheduledRun inserts a scheduled run for the DAG dagID owned by the tenant tenantID \(a tenant UUID\), idempotent on run\_id. The tenant is explicit because a dag\_id is unique only within its tenant \(\#209\). A tenant at its max\_runs\_per\_day gets domain.ErrLimitExceeded and no run.
 
 <a name="SchedulerStore.DispatchAttempts"></a>
-### func \(\*SchedulerStore\) [DispatchAttempts](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/scheduler_store.go#L600>)
+### func \(\*SchedulerStore\) [DispatchAttempts](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/scheduler_store.go#L640>)
 
 ```go
 func (s *SchedulerStore) DispatchAttempts(ctx context.Context, runID, taskID string) (attempts int, active bool, err error)
@@ -2316,7 +2511,7 @@ func (s *SchedulerStore) DispatchAttempts(ctx context.Context, runID, taskID str
 DispatchAttempts returns the consecutive dispatch\-failure count of a task still scheduled or queued; active is false when it has moved on.
 
 <a name="SchedulerStore.FailDispatchExhausted"></a>
-### func \(\*SchedulerStore\) [FailDispatchExhausted](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/scheduler_store.go#L617>)
+### func \(\*SchedulerStore\) [FailDispatchExhausted](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/scheduler_store.go#L657>)
 
 ```go
 func (s *SchedulerStore) FailDispatchExhausted(ctx context.Context, runID, taskID, reason string) error
@@ -2325,7 +2520,7 @@ func (s *SchedulerStore) FailDispatchExhausted(ctx context.Context, runID, taskI
 FailDispatchExhausted fails a scheduled task as dispatch\_failed once its dispatch\-attempt budget is spent \(ADR 0031 Amendment A\).
 
 <a name="SchedulerStore.FailDispatchRefused"></a>
-### func \(\*SchedulerStore\) [FailDispatchRefused](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/scheduler_store.go#L633>)
+### func \(\*SchedulerStore\) [FailDispatchRefused](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/scheduler_store.go#L673>)
 
 ```go
 func (s *SchedulerStore) FailDispatchRefused(ctx context.Context, runID, taskID, reason string) error
@@ -2334,7 +2529,7 @@ func (s *SchedulerStore) FailDispatchRefused(ctx context.Context, runID, taskID,
 FailDispatchRefused fails a task whose dispatch the executor refused \(ADR 0066 section 3\) and spends its retry budget, so a permanent refusal is not dispatched and refused again once per retry. It serves both the sync path \(a scheduled task\) and the buffered path \(a scheduled or queued one\).
 
 <a name="SchedulerStore.FailStoppedTenantTaskInstances"></a>
-### func \(\*SchedulerStore\) [FailStoppedTenantTaskInstances](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/scheduler_store.go#L1294>)
+### func \(\*SchedulerStore\) [FailStoppedTenantTaskInstances](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/scheduler_store.go#L1334>)
 
 ```go
 func (s *SchedulerStore) FailStoppedTenantTaskInstances(ctx context.Context, tenantID string) (int64, error)
@@ -2343,7 +2538,7 @@ func (s *SchedulerStore) FailStoppedTenantTaskInstances(ctx context.Context, ten
 FailStoppedTenantTaskInstances fails the queued and running task instances of the tenant while it is suspended in stop mode, and returns how many it failed \(scheduler.TenantStopper, \#2181\). Once the suspension is lifted or changed to another mode it fails nothing.
 
 <a name="SchedulerStore.ListActiveStagingVolumes"></a>
-### func \(\*SchedulerStore\) [ListActiveStagingVolumes](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/scheduler_store.go#L1248>)
+### func \(\*SchedulerStore\) [ListActiveStagingVolumes](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/scheduler_store.go#L1288>)
 
 ```go
 func (s *SchedulerStore) ListActiveStagingVolumes(ctx context.Context) ([]domain.StagingVolumeState, error)
@@ -2352,7 +2547,7 @@ func (s *SchedulerStore) ListActiveStagingVolumes(ctx context.Context) ([]domain
 ListActiveStagingVolumes returns active staging volumes joined with their DAG run's state \(empty when the run row is gone\), for the GC \(ADR 0022\).
 
 <a name="SchedulerStore.ListAgentLostCandidates"></a>
-### func \(\*SchedulerStore\) [ListAgentLostCandidates](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/scheduler_store.go#L945>)
+### func \(\*SchedulerStore\) [ListAgentLostCandidates](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/scheduler_store.go#L985>)
 
 ```go
 func (s *SchedulerStore) ListAgentLostCandidates(ctx context.Context) ([]executor.AgentLostCandidate, error)
@@ -2361,7 +2556,7 @@ func (s *SchedulerStore) ListAgentLostCandidates(ctx context.Context) ([]executo
 ListAgentLostCandidates returns every \`running\` TI with a non\-null last\_heartbeat\_at, for the scheduler's TI heartbeat reaper \(\#128\). The reaper applies the threshold per row so the SQL stays simple.
 
 <a name="SchedulerStore.ListBusyWarmWorkerPods"></a>
-### func \(\*SchedulerStore\) [ListBusyWarmWorkerPods](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/scheduler_store.go#L1118>)
+### func \(\*SchedulerStore\) [ListBusyWarmWorkerPods](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/scheduler_store.go#L1158>)
 
 ```go
 func (s *SchedulerStore) ListBusyWarmWorkerPods(ctx context.Context) (map[string]bool, error)
@@ -2370,7 +2565,7 @@ func (s *SchedulerStore) ListBusyWarmWorkerPods(ctx context.Context) (map[string
 ListBusyWarmWorkerPods returns the set of warm\-worker pod names currently serving a \`running\` attempt \(ADR 0058 N1d\-b\): a warm worker is BUSY iff some \`running\` task\_instance is durably bound to it \(warm\_worker\_id = the pod's own name\). The busy\-aware warm\-pool reconciler reads this once per tick to classify each live warm pod as busy or idle, so scale\-down/drain deletes only IDLE workers and never kills an in\-flight attempt \(review findings M1/M2\). With warm pools off no TI is ever bound, so the set is always empty and every worker classifies as idle — byte\-for\-byte today. Implements executor.BusyWarmWorkerSource without the executor importing storage.
 
 <a name="SchedulerStore.ListProvisionalInfraFailures"></a>
-### func \(\*SchedulerStore\) [ListProvisionalInfraFailures](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/scheduler_store.go#L267>)
+### func \(\*SchedulerStore\) [ListProvisionalInfraFailures](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/scheduler_store.go#L307>)
 
 ```go
 func (s *SchedulerStore) ListProvisionalInfraFailures(ctx context.Context) ([]executor.ProvisionalInfraFailure, error)
@@ -2379,7 +2574,7 @@ func (s *SchedulerStore) ListProvisionalInfraFailures(ctx context.Context) ([]ex
 ListProvisionalInfraFailures returns the provisional infra marks \(failed, infra, not yet confirmed\) of queued or running runs, oldest first and bounded, for the reconciler's confirmation pass.
 
 <a name="SchedulerStore.ListReapCandidates"></a>
-### func \(\*SchedulerStore\) [ListReapCandidates](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/scheduler_store.go#L858>)
+### func \(\*SchedulerStore\) [ListReapCandidates](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/scheduler_store.go#L898>)
 
 ```go
 func (s *SchedulerStore) ListReapCandidates(ctx context.Context) ([]executor.ReapCandidate, error)
@@ -2388,7 +2583,7 @@ func (s *SchedulerStore) ListReapCandidates(ctx context.Context) ([]executor.Rea
 ListReapCandidates returns every dag\_run currently in 'running' state with the timestamp of its most recent activity, for the scheduler's orphan reaper. The query \(sqlc.runs.ListOrphanCandidates\) is the authority on how to compute the timestamp; the reaper only decides whether each one is past its threshold.
 
 <a name="SchedulerStore.ListRunningTasks"></a>
-### func \(\*SchedulerStore\) [ListRunningTasks](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/scheduler_store.go#L1176>)
+### func \(\*SchedulerStore\) [ListRunningTasks](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/scheduler_store.go#L1216>)
 
 ```go
 func (s *SchedulerStore) ListRunningTasks(ctx context.Context, grace time.Duration, after executor.ReapCursor) ([]executor.PodLostCandidate, error)
@@ -2397,7 +2592,7 @@ func (s *SchedulerStore) ListRunningTasks(ctx context.Context, grace time.Durati
 ListRunningTasks returns the \`running\`, non\-warm TIs that have been running for at least grace, with the timestamp each entered running, for the pod\-lost reaper \(\#527\), one page after the cursor \(R\-07\). The reaper still applies the pod\-liveness check per row.
 
 <a name="SchedulerStore.ListStaleQueuedCandidates"></a>
-### func \(\*SchedulerStore\) [ListStaleQueuedCandidates](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/scheduler_store.go#L1052>)
+### func \(\*SchedulerStore\) [ListStaleQueuedCandidates](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/scheduler_store.go#L1092>)
 
 ```go
 func (s *SchedulerStore) ListStaleQueuedCandidates(ctx context.Context, threshold time.Duration, after executor.ReapCursor) ([]executor.StaleQueuedCandidate, error)
@@ -2406,7 +2601,7 @@ func (s *SchedulerStore) ListStaleQueuedCandidates(ctx context.Context, threshol
 ListStaleQueuedCandidates returns one page of the TIs \`queued\` for at least threshold, with their queued\_at, after the cursor, for the dispatch\-lost reaper \(\#202, R\-07\). The reaper re\-checks the threshold per row.
 
 <a name="SchedulerStore.ListWarmBoundRunningTIs"></a>
-### func \(\*SchedulerStore\) [ListWarmBoundRunningTIs](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/scheduler_store.go#L1088>)
+### func \(\*SchedulerStore\) [ListWarmBoundRunningTIs](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/scheduler_store.go#L1128>)
 
 ```go
 func (s *SchedulerStore) ListWarmBoundRunningTIs(ctx context.Context) ([]executor.WarmBoundTI, error)
@@ -2415,7 +2610,7 @@ func (s *SchedulerStore) ListWarmBoundRunningTIs(ctx context.Context) ([]executo
 ListWarmBoundRunningTIs returns every \`running\` TI durably bound to a warm worker \(warm\_worker\_id IS NOT NULL\), for the warm\-worker\-lost reaper \(ADR 0058 N1d\-a2\). With warm pools off no TI is ever bound, so this is always empty and the reaper is inert.
 
 <a name="SchedulerStore.MarkQueued"></a>
-### func \(\*SchedulerStore\) [MarkQueued](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/scheduler_store.go#L557>)
+### func \(\*SchedulerStore\) [MarkQueued](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/scheduler_store.go#L597>)
 
 ```go
 func (s *SchedulerStore) MarkQueued(ctx context.Context, runID, taskID string, expectNextDispatchAt *time.Time) (bool, error)
@@ -2424,7 +2619,7 @@ func (s *SchedulerStore) MarkQueued(ctx context.Context, runID, taskID string, e
 MarkQueued moves a task from the scheduled slot this tick planned to queued after its dispatch was accepted. expectNextDispatchAt is the next\_dispatch\_at the tick read \(nil when unset\). It reports false, with no error, when the row has moved on: a buffered worker already failed or re\-offered the task, or the agent already reported \(see MarkTaskInstanceQueued\).
 
 <a name="SchedulerStore.MarkRunAlertDelivered"></a>
-### func \(\*SchedulerStore\) [MarkRunAlertDelivered](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/scheduler_store.go#L729>)
+### func \(\*SchedulerStore\) [MarkRunAlertDelivered](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/scheduler_store.go#L769>)
 
 ```go
 func (s *SchedulerStore) MarkRunAlertDelivered(ctx context.Context, runID string, attempt int) error
@@ -2433,7 +2628,7 @@ func (s *SchedulerStore) MarkRunAlertDelivered(ctx context.Context, runID string
 MarkRunAlertDelivered stamps a run's on\-failure alert as delivered, for the attempt the caller won. The attempt is part of the predicate so a stamp from a send that an operator clear has since superseded matches no row — see the query.
 
 <a name="SchedulerStore.MarkStagingDeleted"></a>
-### func \(\*SchedulerStore\) [MarkStagingDeleted](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/scheduler_store.go#L843>)
+### func \(\*SchedulerStore\) [MarkStagingDeleted](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/scheduler_store.go#L883>)
 
 ```go
 func (s *SchedulerStore) MarkStagingDeleted(ctx context.Context, pvcName, reason string) error
@@ -2442,7 +2637,7 @@ func (s *SchedulerStore) MarkStagingDeleted(ctx context.Context, pvcName, reason
 MarkStagingDeleted records that a staging volume's PVC was deleted and why \(run\_succeeded | ttl\_expired | orphaned\).
 
 <a name="SchedulerStore.MarkTaskAgentLost"></a>
-### func \(\*SchedulerStore\) [MarkTaskAgentLost](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/scheduler_store.go#L1014>)
+### func \(\*SchedulerStore\) [MarkTaskAgentLost](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/scheduler_store.go#L1054>)
 
 ```go
 func (s *SchedulerStore) MarkTaskAgentLost(ctx context.Context, taskInstanceID string, tryNumber, attemptEpoch int) (bool, error)
@@ -2451,7 +2646,7 @@ func (s *SchedulerStore) MarkTaskAgentLost(ctx context.Context, taskInstanceID s
 MarkTaskAgentLost transitions one TI to \`failed\` with the agent\_lost reason. The WHERE state='running' guard makes this idempotent and prevents a late terminal report being overwritten: if the row already moved, we touch zero rows and return nil. It is pinned to the listed attempt, \(tryNumber, attemptEpoch\) \(ADR 0051 amendment\): a mark computed for a superseded execution is a no\-op on its replacement.
 
 <a name="SchedulerStore.MarkTaskCredentialCeiling"></a>
-### func \(\*SchedulerStore\) [MarkTaskCredentialCeiling](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/scheduler_store.go#L1035>)
+### func \(\*SchedulerStore\) [MarkTaskCredentialCeiling](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/scheduler_store.go#L1075>)
 
 ```go
 func (s *SchedulerStore) MarkTaskCredentialCeiling(ctx context.Context, taskInstanceID string, tryNumber, attemptEpoch int) (bool, error)
@@ -2460,7 +2655,7 @@ func (s *SchedulerStore) MarkTaskCredentialCeiling(ctx context.Context, taskInst
 MarkTaskCredentialCeiling fails one running TI whose attempt outlived auth.max\_attempt\_credential\_lifetime \(\#1461\) as a task failure with the credential\_ceiling reason: no infra kind, so the planner applies the task's retry policy instead of re\-placing it, and no provisional mark, since there is no infra guess for the reconciler to confirm. Guarded and pinned to the listed attempt exactly like MarkTaskAgentLost.
 
 <a name="SchedulerStore.MarkTaskDispatchFailed"></a>
-### func \(\*SchedulerStore\) [MarkTaskDispatchFailed](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/scheduler_store.go#L996>)
+### func \(\*SchedulerStore\) [MarkTaskDispatchFailed](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/scheduler_store.go#L1036>)
 
 ```go
 func (s *SchedulerStore) MarkTaskDispatchFailed(ctx context.Context, runID, taskID, reason string) error
@@ -2469,7 +2664,7 @@ func (s *SchedulerStore) MarkTaskDispatchFailed(ctx context.Context, runID, task
 MarkTaskDispatchFailed transitions a TI to \`failed\` after its asynchronous dispatch failed inside the BufferedDispatcher worker \(\#127\). The SQL guard only targets scheduled/queued rows, so a TI that already moved to running or terminal between the worker accepting the request and the dispatch failing is left alone \(defense in depth — the agent's late progress report wins over the dispatcher's "I failed" claim\).
 
 <a name="SchedulerStore.MarkTaskDispatchLost"></a>
-### func \(\*SchedulerStore\) [MarkTaskDispatchLost](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/scheduler_store.go#L1137>)
+### func \(\*SchedulerStore\) [MarkTaskDispatchLost](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/scheduler_store.go#L1177>)
 
 ```go
 func (s *SchedulerStore) MarkTaskDispatchLost(ctx context.Context, taskInstanceID string, tryNumber, attemptEpoch int) (bool, error)
@@ -2478,7 +2673,7 @@ func (s *SchedulerStore) MarkTaskDispatchLost(ctx context.Context, taskInstanceI
 MarkTaskDispatchLost transitions one TI to \`failed\` with the dispatch\_lost reason. The WHERE state='queued' guard makes this idempotent: a TI that has since been dispatched \(real progress landed\) is left alone, and so is a row on a different \(tryNumber, attemptEpoch\) than the one listed \(ADR 0051 amendment\). It returns whether a row was actually updated.
 
 <a name="SchedulerStore.MarkTaskPodLost"></a>
-### func \(\*SchedulerStore\) [MarkTaskPodLost](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/scheduler_store.go#L1212>)
+### func \(\*SchedulerStore\) [MarkTaskPodLost](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/scheduler_store.go#L1252>)
 
 ```go
 func (s *SchedulerStore) MarkTaskPodLost(ctx context.Context, taskInstanceID string, tryNumber, attemptEpoch int) (bool, error)
@@ -2487,7 +2682,7 @@ func (s *SchedulerStore) MarkTaskPodLost(ctx context.Context, taskInstanceID str
 MarkTaskPodLost transitions one TI to \`failed\` with the pod\_lost reason. The WHERE state='running' guard makes it idempotent: a TI that has since moved on \(a late terminal report landed\) is left alone, and so is a row on a different \(tryNumber, attemptEpoch\) than the one listed \(ADR 0051 amendment\).
 
 <a name="SchedulerStore.MarkTaskPodLostOOMKilled"></a>
-### func \(\*SchedulerStore\) [MarkTaskPodLostOOMKilled](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/scheduler_store.go#L1224>)
+### func \(\*SchedulerStore\) [MarkTaskPodLostOOMKilled](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/scheduler_store.go#L1264>)
 
 ```go
 func (s *SchedulerStore) MarkTaskPodLostOOMKilled(ctx context.Context, taskInstanceID string, tryNumber, attemptEpoch int) (bool, error)
@@ -2496,7 +2691,7 @@ func (s *SchedulerStore) MarkTaskPodLostOOMKilled(ctx context.Context, taskInsta
 MarkTaskPodLostOOMKilled is MarkTaskPodLost for an attempt whose warm worker's container the kubelet reported OOMKilled: the same infra mark and guards, with a failure message that names the OOM kill \(\#1218\).
 
 <a name="SchedulerStore.MarkTaskStartExpired"></a>
-### func \(\*SchedulerStore\) [MarkTaskStartExpired](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/scheduler_store.go#L1157>)
+### func \(\*SchedulerStore\) [MarkTaskStartExpired](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/scheduler_store.go#L1197>)
 
 ```go
 func (s *SchedulerStore) MarkTaskStartExpired(ctx context.Context, taskInstanceID string, tryNumber, attemptEpoch int) (bool, error)
@@ -2505,7 +2700,7 @@ func (s *SchedulerStore) MarkTaskStartExpired(ctx context.Context, taskInstanceI
 MarkTaskStartExpired fails one queued TI whose task pod never started before its attempt credential ran out, as an infra failure the planner re\-places off the retry budget with a fresh credential \(\#1126\). Same guards as MarkTaskDispatchLost: state='queued' and the listed \(tryNumber, attemptEpoch\). It returns whether a row was actually updated.
 
 <a name="SchedulerStore.MaterializeTasks"></a>
-### func \(\*SchedulerStore\) [MaterializeTasks](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/scheduler_store.go#L323>)
+### func \(\*SchedulerStore\) [MaterializeTasks](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/scheduler_store.go#L363>)
 
 ```go
 func (s *SchedulerStore) MaterializeTasks(ctx context.Context, runID string, tasks []domain.TaskSpec) error
@@ -2514,7 +2709,7 @@ func (s *SchedulerStore) MaterializeTasks(ctx context.Context, runID string, tas
 MaterializeTasks creates a none\-state task instance for each task in the run, in one batched COPY rather than T INSERT round\-trips. The rows are identical to the per\-task loop this replaced: try\_number pinned to 1, state none, and max\_tries derived from the task's retries \(default 1\). An empty task set is a no\-op \(a DAG with no tasks materializes nothing\).
 
 <a name="SchedulerStore.PoolBudgets"></a>
-### func \(\*SchedulerStore\) [PoolBudgets](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/scheduler_store.go#L384>)
+### func \(\*SchedulerStore\) [PoolBudgets](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/scheduler_store.go#L424>)
 
 ```go
 func (s *SchedulerStore) PoolBudgets(ctx context.Context) (map[string]int, error)
@@ -2523,7 +2718,7 @@ func (s *SchedulerStore) PoolBudgets(ctx context.Context) (map[string]int, error
 PoolBudgets returns every named pool's slot cap keyed by scheduler.PoolKey\(tenantID, name\) — the cross\-DAG admission budget the pool gate enforces \(ADR 0053 Stage 3\). The scheduler calls it once per tick, and only on the Pro path; Lite never loads pool budgets.
 
 <a name="SchedulerStore.ReapRun"></a>
-### func \(\*SchedulerStore\) [ReapRun](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/scheduler_store.go#L897>)
+### func \(\*SchedulerStore\) [ReapRun](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/scheduler_store.go#L937>)
 
 ```go
 func (s *SchedulerStore) ReapRun(ctx context.Context, runID string, quietBefore time.Time) (bool, error)
@@ -2532,7 +2727,7 @@ func (s *SchedulerStore) ReapRun(ctx context.Context, runID string, quietBefore 
 ReapRun fails an orphaned dag run, then any of its still\-active task instances, inside a single transaction, and reports whether it did. The list the reaper decided from is only a snapshot, so the orphan predicate is re\-checked atomically here: the run's task instances are share\-locked first, without waiting \(a task instance being written counts as activity and makes the reap a no\-op\), then the run UPDATE applies the same predicate ListReapCandidates does \(still running, no live task instance, last activity at or before quietBefore\). If zero rows are touched the run is no longer an orphan \(a task instance moved, fresh activity landed, or a competing finalizer settled it\), the transaction rolls back without touching any task instance, and ReapRun returns false so the caller leaves the run's pods alone. This guarantees we cannot leave a run as \`success\`/\`failed\` while flipping its TIs to \`failed \(orphaned\)\`, nor fail a run that resumed between the list and the reap. Idempotent: a second call on an already\-failed run returns false.
 
 <a name="SchedulerStore.RecordDispatchBackpressure"></a>
-### func \(\*SchedulerStore\) [RecordDispatchBackpressure](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/scheduler_store.go#L511>)
+### func \(\*SchedulerStore\) [RecordDispatchBackpressure](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/scheduler_store.go#L551>)
 
 ```go
 func (s *SchedulerStore) RecordDispatchBackpressure(ctx context.Context, runID, taskID string, nextAt time.Time) error
@@ -2541,7 +2736,7 @@ func (s *SchedulerStore) RecordDispatchBackpressure(ctx context.Context, runID, 
 RecordDispatchBackpressure backs off a scheduled task after a retriable\-forever cluster\-backpressure dispatch failure \(quota 403 / APF 429\), setting nextAt WITHOUT incrementing dispatch\_attempts so it never accumulates toward the dispatch\_failed cap \(ADR 0053\).
 
 <a name="SchedulerStore.RecordDispatchFailure"></a>
-### func \(\*SchedulerStore\) [RecordDispatchFailure](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/scheduler_store.go#L495>)
+### func \(\*SchedulerStore\) [RecordDispatchFailure](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/scheduler_store.go#L535>)
 
 ```go
 func (s *SchedulerStore) RecordDispatchFailure(ctx context.Context, runID, taskID string, nextAt time.Time) error
@@ -2550,7 +2745,7 @@ func (s *SchedulerStore) RecordDispatchFailure(ctx context.Context, runID, taskI
 RecordDispatchFailure increments a scheduled task's dispatch\-failure counter and backs off its next attempt to nextAt \(ADR 0031 Amendment A\).
 
 <a name="SchedulerStore.RecordDispatchUnavailable"></a>
-### func \(\*SchedulerStore\) [RecordDispatchUnavailable](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/scheduler_store.go#L531>)
+### func \(\*SchedulerStore\) [RecordDispatchUnavailable](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/scheduler_store.go#L571>)
 
 ```go
 func (s *SchedulerStore) RecordDispatchUnavailable(ctx context.Context, runID, taskID string, now time.Time, minDelay, maxDelay time.Duration) (since, nextAt time.Time, applied bool, err error)
@@ -2559,7 +2754,7 @@ func (s *SchedulerStore) RecordDispatchUnavailable(ctx context.Context, runID, t
 RecordDispatchUnavailable re\-offers a task whose pod create failed because the Kubernetes API was unavailable \(\#1606\): back to scheduled, WITHOUT incrementing dispatch\_attempts, held for as long as the task has already been riding the outage out, clamped to \[minDelay, maxDelay\]. It returns the start of the task's outage window, stamped with now on the first such failure of the episode, so the caller can fail the task once the window passes its bound \(ADR 0093\), and the next\_dispatch\_at it wrote. applied is false when the task is no longer scheduled or queued.
 
 <a name="SchedulerStore.RecordStagingVolume"></a>
-### func \(\*SchedulerStore\) [RecordStagingVolume](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/scheduler_store.go#L828>)
+### func \(\*SchedulerStore\) [RecordStagingVolume](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/scheduler_store.go#L868>)
 
 ```go
 func (s *SchedulerStore) RecordStagingVolume(ctx context.Context, tenantID, dagID, runID, pvcName, size string) error
@@ -2568,7 +2763,7 @@ func (s *SchedulerStore) RecordStagingVolume(ctx context.Context, tenantID, dagI
 RecordStagingVolume records a per\-run staging volume as active, keyed by PVC name \(idempotent — called per task as the PVC is ensured\). ADR 0022.
 
 <a name="SchedulerStore.RedispatchReschedule"></a>
-### func \(\*SchedulerStore\) [RedispatchReschedule](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/scheduler_store.go#L647>)
+### func \(\*SchedulerStore\) [RedispatchReschedule](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/scheduler_store.go#L687>)
 
 ```go
 func (s *SchedulerStore) RedispatchReschedule(ctx context.Context, runID, taskID string) error
@@ -2577,7 +2772,7 @@ func (s *SchedulerStore) RedispatchReschedule(ctx context.Context, runID, taskID
 RedispatchReschedule returns a task parked in up\_for\_reschedule to 'none' for re\-dispatch, preserving try\_number \(reschedule is not a retry; \#380\).
 
 <a name="SchedulerStore.RequeueDispatch"></a>
-### func \(\*SchedulerStore\) [RequeueDispatch](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/scheduler_store.go#L579>)
+### func \(\*SchedulerStore\) [RequeueDispatch](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/scheduler_store.go#L619>)
 
 ```go
 func (s *SchedulerStore) RequeueDispatch(ctx context.Context, runID, taskID string, countAttempt, clearUnavailable bool, nextAt time.Time) (bool, error)
@@ -2586,7 +2781,7 @@ func (s *SchedulerStore) RequeueDispatch(ctx context.Context, runID, taskID stri
 RequeueDispatch re\-offers a task whose buffered dispatch failed in the worker: back to scheduled, held until nextAt, with one more dispatch attempt when countAttempt. clearUnavailable closes the outage window of ADR 0093 \(the apiserver answered the create\). It reports false when the task is no longer scheduled or queued.
 
 <a name="SchedulerStore.ResetForInfraReplace"></a>
-### func \(\*SchedulerStore\) [ResetForInfraReplace](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/scheduler_store.go#L477>)
+### func \(\*SchedulerStore\) [ResetForInfraReplace](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/scheduler_store.go#L517>)
 
 ```go
 func (s *SchedulerStore) ResetForInfraReplace(ctx context.Context, runID, taskID string) (bool, error)
@@ -2595,7 +2790,7 @@ func (s *SchedulerStore) ResetForInfraReplace(ctx context.Context, runID, taskID
 ResetForInfraReplace returns a task instance failed by a reaper as infra \(last\_failure\_kind='infra'\) to 'none' so the scheduler re\-runs it, bumping infra\_attempts instead of try\_number — an infrastructure fault must not consume the user's retry budget \(ADR 0051 Phase 1\). It uses the failed\+infra\-guarded query so a late terminal report or a non\-infra failure at state='failed' cannot be re\-placed off\-budget. The bool reports whether the guarded update fired \(exactly one row\): a false means the TI was no longer a failed\-infra candidate, so the caller must not record a re\-placement it did not perform.
 
 <a name="SchedulerStore.ResetForRetry"></a>
-### func \(\*SchedulerStore\) [ResetForRetry](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/scheduler_store.go#L453>)
+### func \(\*SchedulerStore\) [ResetForRetry](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/scheduler_store.go#L493>)
 
 ```go
 func (s *SchedulerStore) ResetForRetry(ctx context.Context, runID, taskID string) (bool, error)
@@ -2604,7 +2799,7 @@ func (s *SchedulerStore) ResetForRetry(ctx context.Context, runID, taskID string
 ResetForRetry returns a task instance to 'none', clears its timestamps, and increments its try number so the scheduler re\-evaluates and re\-runs it. It uses the up\_for\_retry\-guarded query so a stale retry decision cannot reset a TI that has since been re\-dispatched \(audit follow\-up; see the query doc\). The bool reports whether the guarded update actually fired \(exactly one row\): a false means the TI was no longer up\_for\_retry and nothing was reset, so the caller must not record a retry it did not perform.
 
 <a name="SchedulerStore.ScheduledDAGs"></a>
-### func \(\*SchedulerStore\) [ScheduledDAGs](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/scheduler_store.go#L742>)
+### func \(\*SchedulerStore\) [ScheduledDAGs](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/scheduler_store.go#L782>)
 
 ```go
 func (s *SchedulerStore) ScheduledDAGs(ctx context.Context, now time.Time) ([]scheduler.ScheduledDAG, error)
@@ -2613,7 +2808,7 @@ func (s *SchedulerStore) ScheduledDAGs(ctx context.Context, now time.Time) ([]sc
 ScheduledDAGs lists the scheduled DAGs that may be due at now: those with no stored next due time and those whose time is at or before now \(\#2175\).
 
 <a name="SchedulerStore.SetNextRunAt"></a>
-### func \(\*SchedulerStore\) [SetNextRunAt](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/scheduler_store.go#L767>)
+### func \(\*SchedulerStore\) [SetNextRunAt](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/scheduler_store.go#L807>)
 
 ```go
 func (s *SchedulerStore) SetNextRunAt(ctx context.Context, tenantID, dagID string, epoch int64, at time.Time) error
@@ -2622,7 +2817,7 @@ func (s *SchedulerStore) SetNextRunAt(ctx context.Context, tenantID, dagID strin
 SetNextRunAt stores when the DAG is next due, unless its schedule epoch moved past epoch since it was listed: a new version or a deleted run cleared the time, and the next tick computes it again from the DAG as it is now.
 
 <a name="SchedulerStore.SetProvisionalInfraMarks"></a>
-### func \(\*SchedulerStore\) [SetProvisionalInfraMarks](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/scheduler_store.go#L262>)
+### func \(\*SchedulerStore\) [SetProvisionalInfraMarks](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/scheduler_store.go#L302>)
 
 ```go
 func (s *SchedulerStore) SetProvisionalInfraMarks(on bool)
@@ -2631,7 +2826,7 @@ func (s *SchedulerStore) SetProvisionalInfraMarks(on bool)
 SetProvisionalInfraMarks makes every reaper infra mark provisional until the pod reconciler confirms it \(ADR 0052 amendment, part 2\). main.go calls it only when the Kubernetes reconciler is wired with this store as its confirmer; without a confirmer a provisional mark would wait for the liveness valve on every reap.
 
 <a name="SchedulerStore.SetRunState"></a>
-### func \(\*SchedulerStore\) [SetRunState](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/scheduler_store.go#L661>)
+### func \(\*SchedulerStore\) [SetRunState](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/scheduler_store.go#L701>)
 
 ```go
 func (s *SchedulerStore) SetRunState(ctx context.Context, runID string, from, to domain.DagRunState) (bool, error)
@@ -2640,7 +2835,7 @@ func (s *SchedulerStore) SetRunState(ctx context.Context, runID string, from, to
 SetRunState moves a run from the state the caller read to another one. It reports false when no row moved: the run is no longer in from \(a clear re\-opened it, a user marked it\), so it is left as it is \(\#2047\).
 
 <a name="SchedulerStore.SetTaskNote"></a>
-### func \(\*SchedulerStore\) [SetTaskNote](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/scheduler_store.go#L434>)
+### func \(\*SchedulerStore\) [SetTaskNote](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/scheduler_store.go#L474>)
 
 ```go
 func (s *SchedulerStore) SetTaskNote(ctx context.Context, runID, taskID, note string) error
@@ -2649,7 +2844,7 @@ func (s *SchedulerStore) SetTaskNote(ctx context.Context, runID, taskID, note st
 SetTaskNote attaches operational context to a task instance, shown in the UI.
 
 <a name="SchedulerStore.SetWarmExecution"></a>
-### func \(\*SchedulerStore\) [SetWarmExecution](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/scheduler_store.go#L251>)
+### func \(\*SchedulerStore\) [SetWarmExecution](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/scheduler_store.go#L291>)
 
 ```go
 func (s *SchedulerStore) SetWarmExecution(exec config.ExecutionSection, policy *domain.ExecutionPolicy, placement domain.WarmPolicy)
@@ -2658,7 +2853,7 @@ func (s *SchedulerStore) SetWarmExecution(exec config.ExecutionSection, policy *
 SetWarmExecution records the operator's warm\-pool config so ActiveWarmTargets can resolve each active dag\_version's effective warm target, the execution allowlist so it skips a version whose image the allowlist refuses \(nil allows every image\), and the warm placement decision dispatch applies so it skips a version none of whose tasks dispatch would place on a warm worker \(\#2065\). main.go calls it only when warm pools are enabled; left unset, warm pools read as off \(every target 0\).
 
 <a name="SchedulerStore.StartQueuedRun"></a>
-### func \(\*SchedulerStore\) [StartQueuedRun](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/scheduler_store.go#L677>)
+### func \(\*SchedulerStore\) [StartQueuedRun](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/scheduler_store.go#L717>)
 
 ```go
 func (s *SchedulerStore) StartQueuedRun(ctx context.Context, runID, tenantID string) (bool, error)
