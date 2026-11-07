@@ -113,6 +113,9 @@ type apiExtras struct {
 	authenticator auth.Authenticator
 	issuer        api.TrustedIssuer
 	issuerOrigins []string
+	// sharedLimits is the Redis counter the sign-in rate limits share across
+	// API replicas (#2357), nil without Redis (Lite).
+	sharedLimits auth.SharedCounter
 }
 
 // withConfiguredIssuer returns e with the trusted issuer auth.trusted_issuer
@@ -253,7 +256,8 @@ func buildAPIServer(cfg *config.ServerConfig, tel *observability.Telemetry, auth
 			// withAPITokens puts the API tokens (ADR 0074) in front of it unless
 			// auth.api_tokens.disabled is true.
 			Authenticator:        requestAuthenticator(authn, extras.authenticator, tel.Logger),
-			RateLimiter:          auth.NewRateLimiter(loginRateLimit(cfg), time.Minute),
+			RateLimiter:          auth.NewRateLimiter(loginRateLimit(cfg), time.Minute).Share(extras.sharedLimits, "login"),
+			SharedRateLimits:     extras.sharedLimits,
 			TokenTTLSecs:         cfg.Auth.JWT.TokenTTLSeconds,
 			TokenRenewer:         authn,
 			TokenMaxLifetimeSecs: cfg.Auth.JWT.MaxLifetimeSeconds,
@@ -396,4 +400,15 @@ func serveHTTP(ctx context.Context, logger *slog.Logger, servesAPI bool, apiSrv,
 		go serve(srv, errCh)
 	}
 	return awaitShutdown(ctx, errCh, logger, servers...)
+}
+
+// sharedRateLimits returns the Redis counter the sign-in rate limits share
+// across API replicas when Redis is the datastore, or nil (Lite, or no Redis),
+// which keeps every limiter in process (#2357).
+func sharedRateLimits(redisHealth api.HealthChecker) auth.SharedCounter {
+	rd, ok := redisHealth.(*storage.Redis)
+	if !ok || rd == nil {
+		return nil
+	}
+	return storage.NewRedisRateCounter(rd.Client)
 }

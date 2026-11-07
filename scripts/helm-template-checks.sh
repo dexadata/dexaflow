@@ -63,6 +63,8 @@ expect_substring 'name: LEOFLOW_AUTH_SECRET_LIVENESS_MODE'     "secret liveness 
 # but it is what decides whether a task receives the whole tenant vault, so the
 # chart has to be where an operator finds it and its default.
 expect_substring 'name: LEOFLOW_AUTH_SECRET_SCOPING'           "secret scoping policy env entry in deployment (ADR 0055)"
+# The attempt credential ceiling is stamped for the same reason (#955).
+expect_substring 'name: LEOFLOW_AUTH_MAX_ATTEMPT_CREDENTIAL_LIFETIME' "attempt credential ceiling env entry in deployment (ADR 0055)"
 
 # Migration Job must be hardened the same way as the Deployment (#174):
 # restricted-PSA clusters require runAsNonRoot+numeric runAsUser on EVERY

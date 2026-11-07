@@ -109,7 +109,7 @@ run for each, is on
 
 | `/readyz` reason | Cause / fix |
 |---|---|
-| `schema absent` | The database has no `schema_migrations` table: it is empty, or `database.url` points at another database. If the data should be there, restore it first ([backup and restore](/operate/backup-restore/)). To migrate it, run `helm upgrade <release> oci://ghcr.io/dexadata/charts/dexaflow -n <namespace> --version <chart version> --reuse-values`, which runs the migration Job again, or your own migration step when `migrations.enabled` is false. |
+| `schema absent` | The database has no `schema_migrations` table: it is empty, or `database.url` points at another database. If the data should be there, restore it first ([backup and restore](/operate/backup-restore/)). To migrate it, run `helm upgrade <release> oci://ghcr.io/dexadata/charts/dexaflow -n <namespace> --version <chart version> --reset-then-reuse-values`, which runs the migration Job again, or your own migration step when `migrations.enabled` is false. |
 | `schema behind vN, requires vM` | The migrations of this release have not all run: a restore of an older backup, a lagging replica, or a rollout whose migration Job failed ([the migration Job](#the-migration-job)). Run the same `helm upgrade`. |
 | `schema dirty at vN` | A migration to a version other than the one this binary requires is marked dirty. It may still be running; if no migration Job is, follow [an interrupted migration](/operate/upgrades/#an-interrupted-migration). A version dirty at the one the binary requires stops boot with `schema is dirty at vN, the version this binary requires`. |
 | `schema unreadable` | The server reached the database at boot but cannot read the version now. The log line's `error` field has the cause. |
@@ -157,7 +157,7 @@ What to do depends on which database you want:
 | You want | Do |
 |---|---|
 | The database this release had | Restore it or point `database.url` back at it ([backup and restore](/operate/backup-restore/)). The server checks again on its own and starts when the id matches. |
-| This database, which belongs to another installation | Adopt it: set `installation.id` to the id it carries and upgrade, `helm upgrade <release> oci://ghcr.io/dexadata/charts/dexaflow -n <namespace> --version <chart version> --reuse-values --set installation.id=<the id it carries>`. The Job migrates it and records that id in the ConfigMap. |
+| This database, which belongs to another installation | Adopt it: set `installation.id` to the id it carries and upgrade, `helm upgrade <release> oci://ghcr.io/dexadata/charts/dexaflow -n <namespace> --version <chart version> --reset-then-reuse-values --set installation.id=<the id it carries>`. The Job migrates it and records that id in the ConfigMap. |
 | An empty database: the data is gone and you start over | Accept it with a new id: the same `helm upgrade` with `--set installation.id=$(uuidgen)`. The Job migrates the empty database and writes the new id into it and into the ConfigMap. |
 
 Changing `installation.id` rolls the control plane pods, so they read the new

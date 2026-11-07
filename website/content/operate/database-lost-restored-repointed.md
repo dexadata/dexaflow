@@ -27,7 +27,7 @@ never migrates a database it does not recognize:
   a release `dexaflow` in the namespace `dexaflow` the reason reads:
 
   ```text
-  schema absent: apply the migrations: `helm upgrade dexaflow oci://ghcr.io/dexadata/charts/dexaflow -n dexaflow --version {{< latest-version >}} --reuse-values` runs the migration Job again; the server checks again on its own
+  schema absent: apply the migrations: `helm upgrade dexaflow oci://ghcr.io/dexadata/charts/dexaflow -n dexaflow --version {{< latest-version >}} --reset-then-reuse-values` runs the migration Job again; the server checks again on its own
   ```
 
   With `migrations.enabled: false` it names your own migration step and the
@@ -65,9 +65,9 @@ Each reason and its fix are in
 
 | What happened | What the release reports | What to run |
 |---|---|---|
-| The database was emptied: an `emptyDir` Postgres rescheduled, a volume lost or recreated | `database replaced: no schema`; the Job fails with exit code 8 | If a backup exists, restore it (next row). If the data is gone, start over on purpose: `helm upgrade <release> oci://ghcr.io/dexadata/charts/dexaflow -n <namespace> --version <chart version> --reuse-values --set installation.id=$(uuidgen)`. Then move Postgres to a persistent volume or a managed service. |
+| The database was emptied: an `emptyDir` Postgres rescheduled, a volume lost or recreated | `database replaced: no schema`; the Job fails with exit code 8 | If a backup exists, restore it (next row). If the data is gone, start over on purpose: `helm upgrade <release> oci://ghcr.io/dexadata/charts/dexaflow -n <namespace> --version <chart version> --reset-then-reuse-values --set installation.id=$(uuidgen)`. Then move Postgres to a persistent volume or a managed service. |
 | A backup of this installation was restored, at the same version | ready again, nothing to do | Nothing: the backup carries the same installation id. A pod that was serving keeps serving; restart the pods if the restored tenants were recreated ([backup and restore](/operate/backup-restore/)). |
-| A backup of this installation was restored, older than the release, or a failover landed on a lagging replica | `schema behind vN, requires vM` | The command the reason names: `helm upgrade <release> oci://ghcr.io/dexadata/charts/dexaflow -n <namespace> --version <chart version> --reuse-values`, which runs the migration Job again. |
+| A backup of this installation was restored, older than the release, or a failover landed on a lagging replica | `schema behind vN, requires vM` | The command the reason names: `helm upgrade <release> oci://ghcr.io/dexadata/charts/dexaflow -n <namespace> --version <chart version> --reset-then-reuse-values`, which runs the migration Job again. |
 | A backup taken before 0.5.6, which has no installation id, was restored | `database replaced: no installation id` | Accept it once with a new id: the same `helm upgrade` with `--set installation.id=$(uuidgen)`. |
 | `database.url` now points at another installation's database, on purpose | `database replaced: another installation id` | Adopt it: the same `helm upgrade` with `--set installation.id=<the id it carries>` (`psql "$DATABASE_URL" -c 'SELECT id FROM installation'`). |
 | `database.url` now points at the wrong database, by mistake | `database replaced: ...` | Point `database.url` back at the right database. The pods start once the id matches. |

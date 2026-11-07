@@ -34,6 +34,7 @@ var serverDefaults = map[string]any{
 	// keeps one shared pool, no statement timeout and no lifetime jitter.
 	// Registered so the DEXAFLOW_/LEOFLOW_DATABASE_* variables bind.
 	"database.scheduler_max_conns":         0,
+	"database.agent_max_conns":             0,
 	"database.statement_timeout_ms":        0,
 	"database.conn_max_lifetime_jitter_ms": 0,
 	// Empty by default: no installation id is compared (Lite, and installs
@@ -41,7 +42,8 @@ var serverDefaults = map[string]any{
 	"database.installation_id": "",
 	// Off by default: migrations run in the chart's hook Job (ADR 0090
 	// decision 4 makes self-migration opt-in).
-	"database.migrate_on_boot": false,
+	"database.migrate_on_boot":    false,
+	"database.row_level_security": false,
 	// Empty by default: the process was not installed by the Helm chart, and
 	// the recovery hint keeps its placeholders. The chart sets all of them.
 	"helm.release":       "",
@@ -58,7 +60,9 @@ var serverDefaults = map[string]any{
 	// Registered so AutomaticEnv binds LEOFLOW_REDIS_CA_FILE (the Helm chart sets
 	// it when redis.caConfigMap is configured); without it, verified TLS to a
 	// managed rediss:// endpoint silently falls back to system roots only (#725).
-	"redis.ca_file":              "",
+	"redis.ca_file": "",
+	// Warn, do not refuse, on an eviction policy other than noeviction (#2354).
+	"redis.require_noeviction":   false,
 	"auth.provider":              "jwt",
 	"auth.jwt.secret":            "",
 	"auth.jwt.token_ttl_seconds": 3600,

@@ -1,6 +1,6 @@
 # Default values for the Dexaflow control plane chart.
 
-# -- Install profile (#2323): `cluster` turns on the defaults the scheduler design assumes (buffered dispatch with 512 slots and 16 workers, Kubernetes client QPS 50 / burst 100 with a separate maintenance client at 20 / 40, and `GOMEMLIMIT` at `goMemLimit.percent` of the memory limit); `legacy` keeps the defaults of charts before 0.5.10. Empty (default): a fresh install gets `cluster`, and `helm upgrade` keeps the profile of the live release, so a release installed before profiles stays `legacy`. `helm template` and GitOps renderers cannot see the live release and get `cluster`: set `legacy` there to keep an older release's values. Each value the profile governs wins over it once set. The dedicated scheduler database pool (`database.schedulerMaxConns`) is not part of the profile until #1624 lands.
+# -- Install profile (#2323): `cluster` turns on the defaults the scheduler design assumes (buffered dispatch with 512 slots and 16 workers, Kubernetes client QPS 50 / burst 100 with a separate maintenance client at 20 / 40, and `GOMEMLIMIT` at `goMemLimit.percent` of the memory limit); `legacy` keeps the defaults of charts before 0.5.10. Empty (default): a fresh install gets `cluster`, and `helm upgrade` keeps the profile of the live release, so a release installed before profiles stays `legacy`. `helm template` and GitOps renderers cannot see the live release and get `cluster`: set `legacy` there to keep an older release's values. Each value the profile governs wins over it once set. The dedicated database pools (`database.schedulerMaxConns`, `database.agentMaxConns`) are not part of the profile: they add connections on every pod, so size them against the Postgres connection budget and set them together by hand.
 profile: ""
 
 image:
@@ -339,6 +339,8 @@ database:
   maxIdleConns: 2
   # -- Size of a dedicated pool for the scheduler loop, its reapers and janitors, so API traffic that holds every `maxOpenConns` connection cannot stall a scheduler tick. Counts on top of `maxOpenConns`, and is opened only by a replica that runs the scheduler (`config.scheduler.enabled`). 0 (default) keeps them on the main pool.
   schedulerMaxConns: 0
+  # -- Size of a dedicated pool for the agent handlers (heartbeats, state reports and reschedules; XCom, connection and secret reads stay on the main pool), so API traffic that holds every `maxOpenConns` connection cannot block a heartbeat while the reapers, on the scheduler pool, judge agents silent (#1624). Set it together with `schedulerMaxConns`; 4 serves a few hundred running tasks. Counts on top of `maxOpenConns`, and is opened only by a replica that runs the scheduler. 0 (default) keeps them on the main pool.
+  agentMaxConns: 0
   # -- `statement_timeout` in milliseconds for the main pool, which serves the API (30000 is a reasonable bound). Never applied to the leader election connection, the health checks, the scheduler pool or migrations; deleting a DAG, clearing its history and the XCom janitor lift it for their own transaction. Without `schedulerMaxConns` the scheduler shares the main pool and so this timeout, so set both together. Applied with `SET` after each connection opens, so it works through PgBouncer in session mode; in transaction mode set `statement_timeout` on the database role instead and leave this at 0. 0 (default) sets none.
   statementTimeoutMs: 0
   # -- Random extra lifetime, in milliseconds, added to each pooled connection so replicas started together do not all reconnect at once. 0 (default) adds none.
@@ -352,6 +354,8 @@ redis:
   existingSecret: ""
   # -- Name of a ConfigMap with a `ca.crt` key containing the PEM CA bundle the client trusts when negotiating TLS to a `rediss://` URL (#312). Required when the managed-Redis server cert is signed by a provider / per-instance CA that is not in the system roots — Memorystore SERVER_AUTHENTICATION, ElastiCache in-transit encryption, Azure Cache for Redis. Mounted read-only at `/etc/leoflow/redis-ca` and exposed to the server via `LEOFLOW_REDIS_CA_FILE`. Leave empty when Redis uses a public CA or no TLS.
   caConfigMap: ""
+  # -- Refuse to boot unless Redis runs `maxmemory-policy noeviction`, or when the policy cannot be read (#2354). XCom values carry a TTL, so a `volatile-*` policy, the default of several managed services, evicts them first under memory pressure and the downstream task fails with "not found". Off, an unsafe policy logs a warning at boot, sets `dexaflow_redis_eviction_policy_safe` to 0 and fires `DexaflowRedisEvictionPolicyUnsafe`.
+  requireNoEviction: false
 
 auth:
   # Trusted-issuer handoff (#1284): a platform that already signs its users in
@@ -427,6 +431,8 @@ auth:
   secretLivenessMode: observe
   # -- Scope-by-declaration policy for secret delivery: `permissive` (default) delivers the WHOLE tenant vault to every task regardless of what its `leoflow.yaml` declares, and only logs + audits a warning when a task declared a narrower set, an empty one included; `enforce` delivers only the declared subset; `off` disables scoping and its warning entirely. `enforce` denies secrets to a DAG that declares NONE, which is most DAGs while the declaration schema is new, so run `permissive` first and read the scope-warning trail before flipping. The trail records a DAG that declares nothing, or whose declared names were since deleted from the vault, with `declared=0` (#800); it only covers DAGs that ran while you watched. Operator-scoped, never DAG-author-settable.
   secretScoping: permissive
+  # -- Ceiling on how long one attempt's agent credential may be renewed by heartbeats (ADR 0055), as a Go duration such as `24h` or `90m`. It is also the `activeDeadlineSeconds` floor of a task pod with no `execution_timeout` and the per-attempt watchdog of a warm worker. An attempt still running past it fails with `credential_ceiling`, subject to its retries. A non-positive value such as `0s` disables all three, leaves a wedged task with no wall-clock bound of its own, and logs a `WARN` at boot. Always stamped; an `extraEnv` entry for the same variable still wins. Sets `auth.max_attempt_credential_lifetime`.
+  maxAttemptCredentialLifetime: 24h
 
   # OIDC / SSO login (server `auth.provider: oidc`). OFF by default, and off means
   # absent: with `enabled: false` not one of the keys below reaches the pod, so an
@@ -955,6 +961,16 @@ metrics:
       oldestQueuedSeconds: 600
       # -- `DexaflowMixedVersions` opens a ticket when processes report more than one version for this long. Longer than your slowest rollout.
       mixedVersionsFor: 30m
+  grafanaDashboard:
+    # -- Render a ConfigMap with the Dexaflow overview dashboard (scheduler loop and schedule delay, leader step-downs, task queue wait, failure ratio, dispatch, API traffic and errors, database pool and Redis). The Grafana sidecar of kube-prometheus-stack loads every ConfigMap carrying `labels`. Needs a Prometheus data source that scrapes `/metrics` (`metrics.serviceMonitor.enabled`). The JSON is also in the chart's `dashboards/` directory for a manual import.
+    enabled: false
+    # -- Namespace of the ConfigMap. Defaults to the release namespace; set it to the namespace the Grafana sidecar watches when it does not search all namespaces.
+    namespace: ""
+    # -- Labels the Grafana sidecar selects dashboards by. `grafana_dashboard: "1"` is the kube-prometheus-stack default.
+    labels:
+      grafana_dashboard: "1"
+    # -- Annotations on the ConfigMap, for example `grafana_folder: Dexaflow` to choose the folder with a sidecar that reads it.
+    annotations: {}
 
 ingress:
   # -- Enable an Ingress resource exposing the control plane via HTTP/HTTPS. Requires an Ingress controller (nginx/traefik/etc.) in the cluster.

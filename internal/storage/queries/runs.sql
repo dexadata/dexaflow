@@ -421,14 +421,18 @@ WHERE tenant_id = sqlc.arg(tenant_id) AND dag_run_id = sqlc.arg(dag_run_id)
   AND (sqlc.narg('task_id_prefix_pattern')::text IS NULL OR task_id ILIKE sqlc.narg('task_id_prefix_pattern') || '%')
   AND (sqlc.narg('pool')::text IS NULL OR pool = sqlc.narg('pool'));
 
--- name: ListTaskInstancesByRuns :many
--- The batched form of ListTaskInstancesByRun for the scheduler tick: every
--- active run's task instances in one round trip instead of one per run. Rows
--- come grouped by run and, within a run, in the same task_id order the per-run
--- query returns, so the caller can split them without re-sorting.
-SELECT * FROM task_instances
-WHERE dag_run_id = ANY(sqlc.arg(dag_run_ids)::uuid[])
-ORDER BY dag_run_id, task_id;
+-- name: ListTaskInstancePlanStateByRuns :many
+-- The scheduler tick's read (#2325): for every active run, in one round trip,
+-- only the columns the planner's projection reads (taskInstanceMaps), not the
+-- whole row. The pod, node, log and error columns a settled attempt carries
+-- are most of a row's width and nothing in planning reads them. No ORDER BY:
+-- the caller groups by dag_run_id itself and the projection builds maps, so a
+-- sort (which spilled to disk at 100k rows) buys nothing.
+SELECT dag_run_id, task_id, state, try_number, max_tries, ended_at,
+       reschedule_at, dispatch_attempts, next_dispatch_at, last_failure_kind,
+       infra_confirmed_at, infra_attempts
+FROM task_instances
+WHERE dag_run_id = ANY(sqlc.arg(dag_run_ids)::uuid[]);
 
 -- name: ListTaskInstanceAttempts :many
 -- Returns every attempt for (run, task), oldest first. UNIONs the current
@@ -1635,6 +1639,17 @@ WHERE ti.state = 'running'
   AND ti.last_heartbeat_at IS NOT NULL
 ORDER BY ti.last_heartbeat_at
 LIMIT 100;
+
+-- name: CountHeartbeatFleet :one
+-- Counts the running TIs that have heartbeated at least once, and those whose
+-- last heartbeat is older than the cut-off, for the agent-lost reaper's
+-- mass-silence guard (#1624). Read only when ListAgentLostCandidates returned a
+-- silent attempt; idx_ti_state covers the running rows.
+SELECT count(*)::bigint AS total,
+       (count(*) FILTER (WHERE last_heartbeat_at < sqlc.arg(stale_before)::timestamptz))::bigint AS stale
+FROM task_instances
+WHERE state = 'running'
+  AND last_heartbeat_at IS NOT NULL;
 
 -- name: MarkTaskDispatchFailed :exec
 -- Fails a TI whose asynchronous dispatch (BufferedDispatcher worker) errored

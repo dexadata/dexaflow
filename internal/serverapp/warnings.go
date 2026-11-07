@@ -22,6 +22,9 @@ func validateStartup(cfg *config.ServerConfig) error {
 	if err := cfg.Validate(); err != nil {
 		return err
 	}
+	if _, err := forcePolicy(cfg); err != nil {
+		return err
+	}
 	return executor.ValidateResilienceLadder(resilienceLadder(cfg))
 }
 

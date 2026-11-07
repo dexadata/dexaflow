@@ -27,6 +27,7 @@ on:
       - E2E external secrets (k3d + LocalStack)
       - E2E performance gates
       - E2E replaced database
+      - Chaos weekly
       - Soak harness smoke (short, bounded)
       - Fuzz
       - Image scan

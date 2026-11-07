@@ -42,7 +42,8 @@ tests:
       - contains:
           path: spec.template.spec.containers[0].env
           content: {name: GOMEMLIMIT, value: 409MiB}
-      # The dedicated scheduler pool waits for #1624.
+      # The dedicated database pools add connections on every pod, so they stay
+      # out of the profile and are set by hand.
       - notContains:
           path: spec.template.spec.containers[0].env
           content: {name: LEOFLOW_DATABASE_SCHEDULER_MAX_CONNS}

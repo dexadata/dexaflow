@@ -1,0 +1,12 @@
+kind: Added
+body: |-
+  **Redis eviction policy check.** The control plane reads `maxmemory_policy`
+  from `INFO memory` at boot and every 30 seconds. A policy other than
+  `noeviction`, which lets Redis delete the XCom values of running DAGs under
+  memory pressure, logs a warning that names the risk;
+  `redis.require_noeviction` (Helm `redis.requireNoEviction`) refuses to boot
+  instead. New gauges `dexaflow_redis_eviction_policy_safe`,
+  `dexaflow_redis_used_memory_bytes` and `dexaflow_redis_evicted_keys`, and
+  two chart alerts with runbooks: `DexaflowRedisEvictingKeys` (page) and
+  `DexaflowRedisEvictionPolicyUnsafe` (ticket) (#2354).
+time: 2026-11-06T19:40:00.000000000+00:00

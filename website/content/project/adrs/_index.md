@@ -76,6 +76,7 @@ this page.
 - [ADR 0060: External secrets resolution — pod-side, provider-neutral SecretResolver](/project/adrs/0060-external-secrets-resolution/)
 - [ADR 0061: Secret locality — private scratch, masked on read](/project/adrs/0061-secret-locality/)
 - [ADR 0062: Release branches per minor, main always open](/project/adrs/0062-release-branches-and-open-main/)
+- [ADR 0063: An operator executor policy forces pod fields on every task pod](/project/adrs/0063-executor-policy/)
 - [ADR 0064: Branching and skip: in-pod decision, scheduler-side skip cascade](/project/adrs/0064-branching-and-skip/)
 - [ADR 0065: Lite key migration off the published key](/project/adrs/0065-lite-key-migration/)
 - [ADR 0066: Weighted pool slots and an operator resource unit](/project/adrs/0066-weighted-pool-slots-and-resource-unit/)
@@ -116,6 +117,7 @@ this page.
 - [ADR 0101: mutation testing measures the tests, and coverage is gated per core package](/project/adrs/0101-mutation-testing-and-coverage-policy/)
 - [ADR 0102: patches are cut from main until main diverges from the minor](/project/adrs/0102-patches-from-main-until-main-diverges/)
 - [ADR 0103: cross-DAG waits and triggers are evaluated by the scheduler, without a pod](/project/adrs/0103-cross-dag-dependencies-in-the-scheduler/)
+- [ADR 0104: row level security binds each request's connection to its tenant](/project/adrs/0104-row-level-security/)
 - [ADR 0107 (proposed): a stable channel on top of the weekly patch train](/project/adrs/0107-stable-channel-on-the-weekly-train/)
 
 ## Template
