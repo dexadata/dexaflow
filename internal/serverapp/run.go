@@ -88,6 +88,16 @@ func openVerifiedPostgres(ctx context.Context, cfg *config.ServerConfig, tel *ob
 		pg.Close()
 		return nil, werr
 	}
+	// With row level security on, the main pool binds every request's
+	// connection to its tenant (ADR 0104). The binding is only a barrier when
+	// the tables enforce it and the server's role does not bypass it, so a
+	// half-done setup refuses to boot instead of looking protected.
+	if cfg.Database.RowLevelSecurity {
+		if rerr := pg.CheckRowSecurity(ctx); rerr != nil {
+			pg.Close()
+			return nil, rerr
+		}
+	}
 	return pg, nil
 }
 
@@ -283,7 +293,7 @@ func Run(ctx context.Context, opts Options) error {
 	// The API side (HTTP + embedded UI) is built only in the api/"all" role. The
 	// scheduler role serves no API, so none of the UI/handler machinery is even
 	// constructed: apiSrv stays nil and serveHTTP omits it.
-	apiSrv, aerr := startAPISide(ctx, cfg, tel, authn, pg, repo, xcomReader, logSink, logTailer, checks, executorInfo, schedulerHealth, servesAPI, apiExtras{ui: opts.UIServer, authenticator: opts.Authenticator, issuer: opts.TrustedIssuer, issuerOrigins: opts.TrustedIssuerOrigins})
+	apiSrv, aerr := startAPISide(ctx, cfg, tel, authn, pg, repo, xcomReader, logSink, logTailer, checks, executorInfo, schedulerHealth, servesAPI, apiExtras{ui: opts.UIServer, authenticator: opts.Authenticator, issuer: opts.TrustedIssuer, issuerOrigins: opts.TrustedIssuerOrigins, sharedLimits: sharedRateLimits(redisHealth)})
 	if aerr != nil {
 		return aerr
 	}
@@ -563,7 +573,16 @@ func selectDatastore(ctx context.Context, cfg *config.ServerConfig, pg *storage.
 	// Lite already returned above (no Redis), so metrics is always non-nil
 	// here on the Pro path.
 	stopObs := storage.AttachRedisObservability(ctx, rd, metrics, 5*time.Second)
+	// A policy other than noeviction lets Redis delete the XCom values of
+	// running DAGs under memory pressure (#2354): warn, or refuse to boot with
+	// redis.require_noeviction.
+	if _, cerr := storage.CheckRedisEviction(ctx, rd, cfg.Redis.RequireNoEviction, logger); cerr != nil {
+		stopObs()
+		return nil, nil, nil, nil, errors.Join(fmt.Errorf("redis: %w", cerr), rd.Close())
+	}
+	stopMem := storage.WatchRedisMemory(ctx, rd, metrics, logger, 30*time.Second)
 	cleanup = func() {
+		stopMem()
 		stopObs()
 		if cerr := rd.Close(); cerr != nil {
 			logger.Error("closing redis", "error", cerr)

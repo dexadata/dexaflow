@@ -29,6 +29,7 @@ scripts/check-playwright-pin.sh
 scripts/check-pre-commit-git-env.sh
 scripts/check-python-host-interpreters.sh
 scripts/check-python-runtime-matrix.sh
+scripts/check-rc-validation.sh
 scripts/check-runtime-data-lock.sh
 scripts/check-runtime-data-pins.sh
 scripts/check-service-image-registry.sh

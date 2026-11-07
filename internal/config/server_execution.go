@@ -10,6 +10,13 @@ import (
 // ExecutorSection configures how tasks are executed.
 type ExecutorSection struct {
 	HTTP HTTPExecutorSection `mapstructure:"http"`
+	// Policy is the raw YAML of executor.policy, the pod fields the operator
+	// forces on every task pod (ADR 0063), parsed and validated at boot by
+	// dispatch.ParseForcePolicy. It is read straight from the config file named
+	// by DEXAFLOW_CONFIG, because a node selector key such as
+	// "kubernetes.io/os" carries dots that viper would split, and tolerations
+	// cannot travel as environment variables. Empty means no policy.
+	Policy []byte `mapstructure:"-" yaml:"policy"`
 	// TaskNamespace is the Kubernetes namespace the server creates task pods and
 	// per-run staging PVCs in. It MUST match the namespace the Helm chart grants
 	// the executor Role in (chart `taskNamespace` → LEOFLOW_EXECUTOR_TASK_NAMESPACE);

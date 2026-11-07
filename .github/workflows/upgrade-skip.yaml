@@ -1,0 +1,67 @@
+name: Skip-version upgrade
+
+# Upgrade a database seeded with 1 M runs and 5 M task instances from the
+# oldest supported release straight to the commit, all the migrations in
+# between in one step (#2311): every migration under its bound, no INVALID
+# index, the schema equal to a fresh install, the control plane ready and a
+# DAG run to success on it. test/upgrade/skip-version.sh does the work; its
+# OLDEST_SUPPORTED names the release it starts from. Weekly, on every release
+# candidate tag, and by hand (with another starting tag if needed).
+on:
+  schedule:
+    - cron: "0 5 * * 0"
+  push:
+    tags: ["v*-rc.*"]
+  workflow_dispatch:
+    inputs:
+      from:
+        description: "Release tag to upgrade from (empty: the script's OLDEST_SUPPORTED)"
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  skip-version-upgrade:
+    name: Skip-version upgrade (1 M runs, oldest supported to this commit)
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    services:
+      postgres:
+        image: mirror.gcr.io/library/postgres:16
+        env:
+          POSTGRES_USER: leoflow
+          POSTGRES_PASSWORD: leoflow
+          POSTGRES_DB: leoflow_dev
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U leoflow -d leoflow_dev"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 5
+          --shm-size 1g
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          # The old release's migration files are read from its tag.
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Upgrade from the oldest supported release
+        env:
+          PG_URL: postgres://leoflow:leoflow@localhost:5432/postgres?sslmode=disable
+          FROM: ${{ inputs.from }}
+        run: bash test/upgrade/skip-version.sh

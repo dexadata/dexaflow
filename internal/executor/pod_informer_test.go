@@ -2,6 +2,7 @@ package executor
 
 import (
 	"context"
+	"reflect"
 	"testing"
 	"time"
 
@@ -180,4 +181,74 @@ func TestCachedPodActiveLooksUpOnlyTheAttemptsTry(t *testing.T) {
 	if !pi.CachedPodActive(Attempt{RunID: longRun, TaskID: "extract", TryNumber: 1}) {
 		t.Error("a pod whose run id label is hashed must be found by its attempt")
 	}
+}
+
+// The informer caches hold every managed pod for the life of the process, and
+// metadata.managedFields is often the largest part of a pod that nothing in the
+// control plane reads (#2326). Both caches store pods without it, and keep the
+// labels, status and owner references the reapers and the warm pool read.
+func TestPodInformerCachesStripManagedFields(t *testing.T) {
+	withManagedFields := func(p *corev1.Pod) *corev1.Pod {
+		p.ManagedFields = []metav1.ManagedFieldsEntry{{Manager: "kubelet", Operation: metav1.ManagedFieldsOperationUpdate}}
+		p.OwnerReferences = []metav1.OwnerReference{{APIVersion: "v1", Kind: "Pod", Name: "owner", UID: "u-1"}}
+		return p
+	}
+	assertTrimmed := func(t *testing.T, cached *corev1.Pod, want *corev1.Pod) {
+		t.Helper()
+		if len(cached.ManagedFields) != 0 {
+			t.Errorf("cache holds managed fields: %+v", cached.ManagedFields)
+		}
+		if !reflect.DeepEqual(cached.Labels, want.Labels) {
+			t.Errorf("labels = %v, want %v", cached.Labels, want.Labels)
+		}
+		if cached.Status.Phase != want.Status.Phase {
+			t.Errorf("phase = %q, want %q", cached.Status.Phase, want.Status.Phase)
+		}
+		if !reflect.DeepEqual(cached.OwnerReferences, want.OwnerReferences) {
+			t.Errorf("owner references = %v, want %v", cached.OwnerReferences, want.OwnerReferences)
+		}
+	}
+
+	t.Run("task pods", func(t *testing.T) {
+		p := withManagedFields(informerPod("p-mf", "run-a", "extract", corev1.PodRunning))
+		want := p.DeepCopy()
+		pi := NewPodInformer(fake.NewClientset(p), "leoflow")
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		pi.Start(ctx)
+		if !pi.WaitForCacheSync(ctx) {
+			t.Fatal("cache did not sync")
+		}
+		cached, err := pi.lister.Pods("leoflow").Get("p-mf")
+		if err != nil {
+			t.Fatalf("cached pod: %v", err)
+		}
+		assertTrimmed(t, cached, want)
+	})
+
+	t.Run("warm pods", func(t *testing.T) {
+		p := withManagedFields(&corev1.Pod{
+			ObjectMeta: metav1.ObjectMeta{
+				Name: "warm-mf", Namespace: "leoflow",
+				Labels: map[string]string{warmWorkerLabelKey: warmWorkerLabelVal, warmDagVersionLabelKey: "v1"},
+			},
+			Status: corev1.PodStatus{Phase: corev1.PodRunning},
+		})
+		want := p.DeepCopy()
+		wi, err := NewWarmPodInformer(fake.NewClientset(p), "leoflow")
+		if err != nil {
+			t.Fatalf("NewWarmPodInformer: %v", err)
+		}
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		wi.Start(ctx)
+		if !wi.WaitForCacheSync(ctx) {
+			t.Fatal("cache did not sync")
+		}
+		cached, err := wi.lister.Pods("leoflow").Get("warm-mf")
+		if err != nil {
+			t.Fatalf("cached pod: %v", err)
+		}
+		assertTrimmed(t, cached, want)
+	})
 }

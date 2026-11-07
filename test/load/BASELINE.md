@@ -76,12 +76,19 @@ runs, spec cache warm.
 
 | Benchmark | Case | Time | Memory | Allocations |
 |---|---|---:|---:|---:|
-| `BenchmarkActiveRunsIntegration` | 200 runs x 500 task instances | 555 ms | 555 MiB | 1,326,364 |
+| `BenchmarkActiveRunsIntegration`, v0.5.10 | 200 runs x 500 task instances | 555 ms | 555 MiB | 1,326,364 |
+| `BenchmarkActiveRunsIntegration`, #2325 | 200 runs x 500 task instances | 140 ms | 90 MiB | 363,600 |
 
-This is the read before planning, every tick, and it is 27 times the planning
-cost of the same 200 x 500 case above (`BenchmarkStepSteadyState`, 20.9 ms on
-a fake store). It is the bar of B4 in the release checklist; #2325 and #2332
-are the work meant to lower it.
+This is the read before planning, every tick. Before #2325 it was 27 times the
+planning cost of the same 200 x 500 case above (`BenchmarkStepSteadyState`,
+20.9 ms on a fake store). #2325 reads only the twelve columns the projection
+uses, drops the server-side sort (it spilled to disk at this size), sizes the
+result from the previous tick and stops allocating a scan target per row:
+benchstat over 6 runs on the same host shows -74% time and -84% memory. The
+query now runs in about 48 ms on the server (`EXPLAIN ANALYZE`, from 174 ms);
+most of what is left is decoding 100,000 rows that are mostly settled, which
+#2332 (read settled rows only when a run changed) removes. It is the bar of B4
+in the release checklist.
 
 ## Query plans at scale
 

@@ -45,18 +45,18 @@ func (s *Server) EnableWarmPools(onReclaim func(ReclaimEvent)) {
 // slot-free signals up.
 //
 // Inert-when-off: if warm pools are not wired the handler refuses immediately
-// with FailedPrecondition — the flag-gated dormant state.
+// with FailedPrecondition, the flag-gated dormant state.
 //
 // Identity: the registry key is the worker's AUTHENTICATED identity from the
 // stream's bearer token (via identify), NOT the dag_version_id in the register
-// payload — a worker cannot claim an arbitrary identity through the message. The
+// payload: a worker cannot claim an arbitrary identity through the message. The
 // payload's dag_version_id only names which pool the worker serves and must be
 // non-empty.
 //
 // After registration two flows run concurrently: the receive loop drains
 // WorkerMessages (acks feed the H1 lease machine, slot-free frees the worker)
 // while the main select pumps assignments from the worker's outbound channel
-// down the stream. The handler exits — deregistering the worker (defer) — on
+// down the stream. The handler exits, deregistering the worker (defer), on
 // context cancellation, the control plane's shutdown signal (SetShutdown), a
 // stream Send error, the receive loop ending (clean EOF or a transport
 // error), a newer registration superseding this stream after it went silent

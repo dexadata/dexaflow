@@ -102,6 +102,10 @@ func NewWarmPodInformer(clientset kubernetes.Interface, namespace string) (*Warm
 		now:            time.Now,
 	}
 	w.cachedNames = w.listCachedNames
+	// Managed fields are often the largest part of a cached pod and nothing
+	// reads them (#2326). SetTransform only fails once the informer has
+	// started, which it has not.
+	_ = w.informer.SetTransform(stripManagedFields) //nolint:errcheck // cannot fail before Start
 	if _, err := w.informer.AddEventHandler(cache.ResourceEventHandlerFuncs{
 		AddFunc: func(obj any) {
 			// A create we were waiting for landed: the reconcile it held back

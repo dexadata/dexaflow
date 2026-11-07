@@ -68,8 +68,16 @@ func startSchedulerSide(ctx context.Context, cfg *config.ServerConfig, pg *stora
 	// is otherwise silent. gRPC exposes no such number, so the counter rides on
 	// the interceptor chain and the stop func reads it.
 	inflight := agentrpc.NewInflightHandlers()
-	grpcSrv, agentSrv, gerr := startAgentGRPC(ctx, cfg.Server.GRPCAddr, authn, execStore, repo, xcomSvc, logSink, logTailer, cfg.Logs.Tail.Publish == config.LogTailPublishOnDemand, cfg.Logs.Tail.ReplayBudgetBytes, allowInsecureSecrets, cfg.Auth.SecretScoping, cfg.Auth.SecretLivenessMode, cfg.Auth.MaxAttemptCredentialLifetime, xchg, cfg.Server.GRPCTLSCert, cfg.Server.GRPCTLSKey, warmReg, inflight, metrics, logger)
+	// Heartbeats and state reports write through their own pool when
+	// database.agent_max_conns is set (#1624), so API traffic that holds every
+	// main pool connection cannot silence them while the reapers keep reaping.
+	agentExec, releaseAgentPG, aerr := agentExecStore(ctx, pg, execStore, cfg.Database, logger)
+	if aerr != nil {
+		return nil, false, nil, aerr
+	}
+	grpcSrv, agentSrv, gerr := startAgentGRPC(ctx, cfg.Server.GRPCAddr, authn, agentExec, repo, xcomSvc, logSink, logTailer, cfg.Logs.Tail.Publish == config.LogTailPublishOnDemand, cfg.Logs.Tail.ReplayBudgetBytes, allowInsecureSecrets, cfg.Auth.SecretScoping, cfg.Auth.SecretLivenessMode, cfg.Auth.MaxAttemptCredentialLifetime, xchg, cfg.Server.GRPCTLSCert, cfg.Server.GRPCTLSKey, warmReg, inflight, metrics, logger)
 	if gerr != nil {
+		releaseAgentPG()
 		return nil, false, nil, gerr
 	}
 	// Meter task tokens that predate the attempt_epoch claim (ADR 0051 amendment)
@@ -81,10 +89,12 @@ func startSchedulerSide(ctx context.Context, cfg *config.ServerConfig, pg *stora
 	// The scheduler loop, its reapers and the janitors run on their own pool
 	// when database.scheduler_max_conns is set, so API traffic cannot starve
 	// them; unset, schedPG is pg and nothing changes. The agent gRPC handlers
-	// above stay on the main pool with the repository they share with the API.
+	// above write their execution store through the agent pool, and read the
+	// repository they share with the API on the main pool.
 	schedPG, releaseSchedPG, perr := pg.ForScheduler(ctx, schedulerDatabase(cfg))
 	if perr != nil {
 		stopGRPCWithin(grpcSrv, grpcStopTimeout, logger, inflight.Count)
+		releaseAgentPG()
 		return nil, false, nil, fmt.Errorf("scheduler pool: %w", perr)
 	}
 	schedExec := execStore
@@ -106,6 +116,7 @@ func startSchedulerSide(ctx context.Context, cfg *config.ServerConfig, pg *stora
 			// second way to stop the same server is a way for the two to drift, and
 			// the one that cannot exhaust the pod's grace is the one to keep.
 			stopGRPCWithin(grpcSrv, grpcStopTimeout, logger, inflight.Count)
+			releaseAgentPG()
 			return nil, false, nil, serr
 		}
 		// Warm-pool Hole B: gate the assignment stream to the scheduler LEADER. This
@@ -148,8 +159,24 @@ func startSchedulerSide(ctx context.Context, cfg *config.ServerConfig, pg *stora
 		drain()
 		stopGRPCWithin(grpcSrv, grpcStopTimeout, logger, inflight.Count)
 		releaseSchedPG()
+		releaseAgentPG()
 	}
 	return health, podDispatch, stop, nil
+}
+
+// agentExecStore returns the execution store the agent gRPC handlers use and
+// a func that releases its pool: execStore itself while database.agent_max_conns
+// is unset, else a store over the dedicated agent pool (#1624).
+func agentExecStore(ctx context.Context, pg *storage.Postgres, execStore *storage.ExecutionStore, db config.DatabaseSection, logger *slog.Logger) (*storage.ExecutionStore, func(), error) {
+	agentPG, release, err := pg.ForAgents(ctx, db)
+	if err != nil {
+		return nil, nil, fmt.Errorf("agent pool: %w", err)
+	}
+	if agentPG == pg {
+		return execStore, release, nil
+	}
+	logger.Info("agent handlers use a dedicated database pool", "max_conns", db.AgentMaxConns)
+	return execStore.OnPool(agentPG), release, nil
 }
 
 func startScheduler(ctx context.Context, cfg *config.ServerConfig, pg *storage.Postgres, repo *storage.Repository, execStore *storage.ExecutionStore, authn *auth.JWTAuthenticator, warmPools *agentrpc.WorkerRegistry, logSink logs.Sink, extraHooks []admission.Hook, logger *slog.Logger, metrics *observability.Metrics) (*scheduler.Scheduler, bool, io.Closer, error) {

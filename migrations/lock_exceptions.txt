@@ -1,0 +1,10 @@
+# Reviewed exceptions to the migration lock check (#2312, lock_safety.go).
+#
+# One line per finding a migration newer than the baseline is allowed to keep:
+#
+#   <file> <rule> <reason>
+#
+# The reason says why the lock is safe on a production-sized table, or why
+# there is no safe pattern, and names the review that accepted it. A line
+# that matches no finding fails the check, so a fixed migration takes its
+# exception out with it. Keep this file empty when you can.

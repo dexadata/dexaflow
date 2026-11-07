@@ -454,8 +454,8 @@ func (r *WorkerRegistry) Assign(dagVersion string, a *agentv1.WorkAssignment) bo
 }
 
 // Ack settles the lease for assignmentID. started=true marks the worker busy,
-// cancels the lease (no reclaim), and returns the WarmBinding to persist — the
-// acked attempt's (run, task, try) plus the worker's pod name — with ok=true.
+// cancels the lease (no reclaim), and returns the WarmBinding to persist (the
+// acked attempt's (run, task, try) plus the worker's pod name) with ok=true.
 // started=false reclaims the assignment and returns ok=false. An ack for an
 // unknown assignment (already settled, or expired past its tombstone) also
 // returns ok=false. Only ok=true carries a non-nil binding the handler should

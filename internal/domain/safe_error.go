@@ -23,7 +23,7 @@ import (
 // error cannot leak by omission.
 //
 // Message is returned to API clients verbatim. Never interpolate a driver,
-// filesystem, or network error into it — pass the caller-facing facts (a role
+// filesystem, or network error into it: pass the caller-facing facts (a role
 // name, a declared variable, a configured cap) and let the underlying error
 // reach the log through the wrap chain.
 type SafeError struct {
@@ -52,7 +52,7 @@ func (e *SafeError) ClientMessage() string { return e.Message }
 
 // Safef builds a SafeError in class with the formatted message. The message is
 // shown to API clients verbatim, so it must contain only facts the caller
-// supplied or Dexaflow chose — never a driver, filesystem, or network error.
+// supplied or Dexaflow chose, never a driver, filesystem, or network error.
 func Safef(class error, format string, a ...any) error {
 	return &SafeError{Message: fmt.Sprintf(format, a...), Class: class}
 }

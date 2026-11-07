@@ -1,0 +1,10 @@
+kind: Added
+body: |-
+  **Grafana dashboard in the chart.** `metrics.grafanaDashboard.enabled`
+  installs an overview dashboard as a ConfigMap the Grafana sidecar of
+  kube-prometheus-stack loads: scheduler loop and schedule delay, leader
+  step-downs, task queue wait and failure ratio, dispatch, API traffic and
+  errors, database pool and Redis. The JSON is also in the chart's
+  `dashboards/` directory for a manual import, and a test holds every metric
+  and label it and the alert rules query to what the server registers (#1577).
+time: 2026-11-06T19:55:00.000000000+00:00

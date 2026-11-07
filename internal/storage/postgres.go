@@ -71,6 +71,9 @@ type Postgres struct {
 	// schedulerPool is the dedicated scheduler pool while ForScheduler keeps
 	// one open, read by PoolCollector. Nil when the scheduler shares Pool.
 	schedulerPool atomic.Pointer[pgxpool.Pool]
+	// agentPool is the agent RPC handlers' dedicated pool while ForAgents
+	// keeps one open, read by PoolCollector. Nil when they share Pool.
+	agentPool atomic.Pointer[pgxpool.Pool]
 }
 
 // probePool returns the pool health checks must use: the dedicated one when it
@@ -119,6 +122,9 @@ func mainPoolConfig(cfg config.DatabaseSection) (*pgxpool.Config, error) {
 	if err != nil {
 		return nil, err
 	}
+	if cfg.RowLevelSecurity {
+		enableTenantBinding(pc)
+	}
 	if cfg.StatementTimeoutMS > 0 {
 		set := "SET statement_timeout = " + strconv.Itoa(cfg.StatementTimeoutMS)
 		pc.AfterConnect = func(ctx context.Context, conn *pgx.Conn) error {
@@ -162,6 +168,17 @@ func schedulerPoolConfig(cfg config.DatabaseSection) (*pgxpool.Config, error) {
 	n := cfg.SchedulerMaxConns
 	if n <= 0 || n > math.MaxInt32 {
 		return nil, fmt.Errorf("database.scheduler_max_conns must be between 1 and %d, got %d", math.MaxInt32, n)
+	}
+	return smallPoolConfig(cfg, int32(n))
+}
+
+// agentPoolConfig builds the config of the agent RPC handlers' dedicated
+// pool, sized by database.agent_max_conns (#1624). Like the scheduler pool it
+// keeps no idle floor and never carries the API statement timeout.
+func agentPoolConfig(cfg config.DatabaseSection) (*pgxpool.Config, error) {
+	n := cfg.AgentMaxConns
+	if n <= 0 || n > math.MaxInt32 {
+		return nil, fmt.Errorf("database.agent_max_conns must be between 1 and %d, got %d", math.MaxInt32, n)
 	}
 	return smallPoolConfig(cfg, int32(n))
 }
@@ -430,18 +447,45 @@ func (p *Postgres) ForScheduler(ctx context.Context, cfg config.DatabaseSection)
 	if err != nil {
 		return nil, nil, err
 	}
+	return p.dedicated(ctx, pc, "scheduler", &p.schedulerPool)
+}
+
+// ForAgents returns the handle the agent gRPC handlers should use, and a func
+// that releases it (#1624).
+//
+// With database.agent_max_conns unset it is p itself and the release func does
+// nothing: heartbeats and state reports share the main pool with the API, as
+// they always have. With it set, it is a dedicated pool of that size, without
+// the API statement timeout, so API traffic that holds every main pool
+// connection cannot block a heartbeat write while the reapers, on the
+// scheduler pool, read last_heartbeat_at and judge the agent silent. The
+// dedicated handle shares p's spec cache.
+func (p *Postgres) ForAgents(ctx context.Context, cfg config.DatabaseSection) (*Postgres, func(), error) {
+	if cfg.AgentMaxConns <= 0 {
+		return p, func() {}, nil
+	}
+	pc, err := agentPoolConfig(cfg)
+	if err != nil {
+		return nil, nil, err
+	}
+	return p.dedicated(ctx, pc, "agent", &p.agentPool)
+}
+
+// dedicated opens a pool from pc, tracks it in slot for PoolCollector and
+// returns a handle over it that shares p's spec cache.
+func (p *Postgres) dedicated(ctx context.Context, pc *pgxpool.Config, name string, slot *atomic.Pointer[pgxpool.Pool]) (*Postgres, func(), error) {
 	pool, err := pgxpool.NewWithConfig(ctx, pc)
 	if err != nil {
-		return nil, nil, fmt.Errorf("creating scheduler pool: %w", err)
+		return nil, nil, fmt.Errorf("creating %s pool: %w", name, err)
 	}
 	if err := connectWithRetry(ctx, pool.Ping, pgStartupBudget, pgStartupBackoff); err != nil {
 		pool.Close()
 		return nil, nil, err
 	}
-	sched := &Postgres{Pool: pool, Queries: queries.New(pool), specs: sharedSpecCache(p)}
-	p.trackSchedulerPool(pool)
-	return sched, func() {
-		p.trackSchedulerPool(nil)
+	handle := &Postgres{Pool: pool, Queries: queries.New(pool), specs: sharedSpecCache(p)}
+	slot.Store(pool)
+	return handle, func() {
+		slot.Store(nil)
 		pool.Close()
 	}, nil
 }
