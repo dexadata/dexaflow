@@ -92,8 +92,9 @@ Every pull request that changes shipped behavior records what changed. It does
 make changelog          # or: changie new
 ```
 
-`changie` asks for a kind (Added / Changed / Deprecated / Removed / Fixed /
-Security) and a one-line body, then writes `.changes/unreleased/<slug>.yaml`.
+`changie` asks for a kind (Breaking / Upgrade / Added / Changed / Deprecated /
+Removed / Fixed / Security; Highlights is written for the release, not per
+PR) and a one-line body, then writes `.changes/unreleased/<slug>.yaml`.
 Commit that file with your change. The release cut assembles every pending
 fragment into `CHANGELOG.md` under `## [Unreleased]`, so the entry reaches the
 published changelog without anyone hand-merging it.
@@ -138,8 +139,8 @@ Dependabot is exempt automatically.
 
 The **docs guard** works the same way for the docs site. A PR that changes a
 chart value, the authoring schema, a CLI command, a server setting, a
-migration, the OpenAPI document, or adds a changelog fragment of kind Added,
-Changed, Deprecated or Removed updates `website/content/` in the same PR. When
+migration, the OpenAPI document, or adds a changelog fragment of kind
+Breaking, Upgrade, Added, Changed, Deprecated or Removed updates `website/content/` in the same PR. When
 nothing in it is user-discoverable, add a line with the reason to the PR
 description (the **`skip-docs`** label is optional):
 
@@ -161,8 +162,9 @@ PR needs both:
 
 - the **`breaking-change`** label, which a maintainer applies after agreeing
   to the break, and
-- a changelog fragment of kind `Changed` or `Removed` that names what broke and
-  what users do about it.
+- a changelog fragment of kind `Breaking` (preferred: it opens the release
+  notes), `Changed` or `Removed` that names what broke and what users do about
+  it.
 
 Run it locally against `main` before pushing:
 

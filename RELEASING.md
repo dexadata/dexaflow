@@ -192,6 +192,27 @@ What checks it, and when:
   `scripts/changelog-sync.sh X.Y.Z` (no flag) applies the sync to the
   checkout you are in, for a pull request you open yourself.
 
+## Release notes
+
+`scripts/release-notes.sh` composes the GitHub Release body from the
+version's section of `CHANGELOG.md`. It opens with what an operator reads
+before upgrading (#1557), then the per kind lists:
+
+1. **Highlights**, from the `Highlights` entries: three to five lines on what
+   the release is for. The person preparing the release writes them, as one
+   fragment of kind `Highlights` (`make changelog`) merged to the branch being
+   cut before the GA cut, and before the rc cut when the rc should carry them.
+   A release without a `Highlights` entry has no Highlights section.
+2. **Breaking changes**, from the `Breaking` entries, or "None.".
+3. **Action required**, from the `Upgrade` entries (a migration and its
+   expected duration, a new required setting, a removed flag, each linking
+   its section of `operate/upgrades.md`), or "None.", followed by a link to
+   the upgrades guide.
+
+An entry is printed once: the three kinds above are not repeated in the lists
+that follow. Run `scripts/release-notes.sh vX.Y.Z` on the prepared branch to
+read the body before the tag.
+
 ## The flow the script runs
 
 1. **Preflight**: required tools (bash 4 or newer, GNU sed and GNU date on
