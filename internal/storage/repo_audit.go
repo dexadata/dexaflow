@@ -92,6 +92,40 @@ func (r *Repository) RecordUserCreatedAudit(ctx context.Context, tenant, actorUs
 	return nil
 }
 
+// RecordResourceAudit logs an accepted admin write to a named resource of the
+// tenant, such as variable.update or pool.delete (#2228), with the acting user
+// as the owner, scoped to resourceType and resourceID. metadata holds the
+// names of the fields the request set and other non-secret detail; the caller
+// never passes a secret value. The resource's name is also written to the
+// metadata under resourceType, since the EventLog shape of the API has no
+// field for a resource other than a DAG.
+func (r *Repository) RecordResourceAudit(ctx context.Context, tenant, actorUserID, action, resourceType, resourceID string, metadata map[string]string) error {
+	tid, err := r.tenantID(ctx, tenant)
+	if err != nil {
+		return err
+	}
+	var uid pgtype.UUID
+	if u, perr := parseUUID(actorUserID); perr == nil {
+		uid = u
+	}
+	fields := map[string]any{}
+	for k, v := range metadata {
+		fields[k] = v
+	}
+	fields[resourceType] = resourceID
+	meta, err := json.Marshal(fields)
+	if err != nil {
+		return fmt.Errorf("encoding audit metadata: %w", err)
+	}
+	if err := r.q.CreateAuditLog(ctx, queries.CreateAuditLogParams{
+		TenantID: tid, UserID: uid, Action: action,
+		ResourceType: strPtr(resourceType), ResourceID: strPtr(resourceID), Metadata: meta,
+	}); err != nil {
+		return fmt.Errorf("writing resource audit: %w", err)
+	}
+	return nil
+}
+
 // RecordAuthEvent records an authentication event to the audit log (H5): OIDC
 // login success/failure, tenant-pin rejection, JIT provisioning, break-glass
 // login, and logout. It NEVER records tokens or the client secret, only the
