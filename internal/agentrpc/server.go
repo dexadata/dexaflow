@@ -292,7 +292,7 @@ func (s *Server) SetTailReplayBudget(maxBytes int64, meter TailReplayMeter) {
 
 // tailGateFor builds the live-tail gate for one attempt's log stream.
 func (s *Server) tailGateFor(ref logs.Ref) *tailGate {
-	return newTailGate(s.tail, ref, time.Now, s.tailOnDemand, s.tailBudget)
+	return newTailGate(s.tail, ref, time.Now, s.tailOnDemand, s.tailBudget).queued()
 }
 
 // Register acknowledges an agent's startup and returns the server clock.

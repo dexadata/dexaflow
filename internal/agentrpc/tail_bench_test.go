@@ -57,3 +57,36 @@ func BenchmarkStreamLogsLineNoTail(b *testing.B) {
 		}
 	}
 }
+
+// BenchmarkStreamLogsLinePublishInline is the per-line cost of StreamLogs with
+// every line published from the receive loop, one PUBLISH per line, as before
+// #2356: logs.tail.publish always, or on_demand with a follower.
+func BenchmarkStreamLogsLinePublishInline(b *testing.B) {
+	benchStreamLogsPublish(b, false)
+}
+
+// BenchmarkStreamLogsLinePublishQueued is the same with the stream's publish
+// queue (#2356): the loop hands the line over and the queue publishes what
+// piled up in one pipelined round trip.
+func BenchmarkStreamLogsLinePublishQueued(b *testing.B) {
+	benchStreamLogsPublish(b, true)
+}
+
+func benchStreamLogsPublish(b *testing.B, queued bool) {
+	tailer := benchRedisTailer(b)
+	ref := logs.Ref{TenantID: "t", DagID: "d", RunID: "bench", TaskID: "task", TryNumber: 1}
+	gate := newTailGate(tailer, ref, time.Now, false, nil)
+	if queued {
+		gate = gate.queued()
+	}
+	publish := func(line string) { gate.publish(context.Background(), line) }
+	line := &agentv1.LogLine{Time: timestamppb.Now(), Message: "INFO processed batch 42 of 1000 in 12ms", Stream: "stdout"}
+	b.ReportAllocs()
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		if err := writeLine(discardWriter{}, line, publish, nil); err != nil {
+			b.Fatal(err)
+		}
+	}
+	gate.close() // the queued lines count: the stream ends only once they are out
+}

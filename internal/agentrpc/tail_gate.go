@@ -68,6 +68,7 @@ var (
 // empty the ring from another stream's loop (evict); mu guards the ring for it.
 type tailGate struct {
 	pub    LogPublisher
+	queue  *publishQueue      // nil: publish inline, from the caller (tests)
 	probe  LogSubscriberProbe // nil: publish every line
 	ref    logs.Ref
 	now    func() time.Time
@@ -100,8 +101,19 @@ func newTailGate(pub LogPublisher, ref logs.Ref, now func() time.Time, onDemand 
 	return g
 }
 
-// close releases what the gate holds when its stream ends.
+// queued makes the gate publish through a queue of its own instead of from
+// the caller (#2356); the server's gates all do.
+func (g *tailGate) queued() *tailGate {
+	g.queue = newPublishQueue(g.pub, g.ref)
+	return g
+}
+
+// close releases what the gate holds when its stream ends, after publishing
+// what its queue still holds.
 func (g *tailGate) close() {
+	if g.queue != nil {
+		g.queue.close()
+	}
 	if g.budget == nil {
 		return
 	}
@@ -278,6 +290,10 @@ func (r *replayRing) reset() {
 }
 
 func (g *tailGate) send(ctx context.Context, line string) {
+	if g.queue != nil {
+		g.queue.push(ctx, line)
+		return
+	}
 	if err := g.pub.Publish(ctx, g.ref, line); err != nil {
 		slog.Warn("publishing log tail", "task", g.ref.TaskID, "error", err)
 	}

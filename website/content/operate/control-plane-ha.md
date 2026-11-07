@@ -118,8 +118,9 @@ in steady state. Nothing is lost, only detected later.
 ### The install profile
 
 A fresh install renders the chart's `cluster` profile: buffered dispatch,
-raised Kubernetes client limits with a separate maintenance client, and
-`GOMEMLIMIT` from the memory limit. An upgrade keeps the profile the release
+raised Kubernetes client limits with a separate maintenance client,
+`GOMEMLIMIT` from the memory limit, and the live log tail published only while
+someone follows an attempt (`logs.tail.publish: on_demand`, from 0.5.12). An upgrade keeps the profile the release
 was installed with, so releases from before 0.5.10 stay on `legacy` until you
 set `profile: cluster`. The HA overlay below is independent of it. See
 [Upgrading to 0.5.10](/operate/upgrades/#upgrading-to-0510-the-install-profile).
