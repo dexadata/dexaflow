@@ -48,7 +48,7 @@ var ErrIssuerUnavailable = errors.New("trusted issuer unavailable")
 ```
 
 <a name="Authenticator"></a>
-## type [Authenticator](<https://github.com/dexadata/dexaflow/blob/main/pkg/authn/authn.go#L116-L119>)
+## type [Authenticator](<https://github.com/dexadata/dexaflow/blob/main/pkg/authn/authn.go#L123-L126>)
 
 Authenticator checks the token of a request and issues tokens for a username and password.
 
@@ -62,7 +62,7 @@ type Authenticator interface {
 ```
 
 <a name="Credentials"></a>
-## type [Credentials](<https://github.com/dexadata/dexaflow/blob/main/pkg/authn/authn.go#L101-L105>)
+## type [Credentials](<https://github.com/dexadata/dexaflow/blob/main/pkg/authn/authn.go#L108-L112>)
 
 Credentials are what POST /api/v2/auth/token was sent: the tenant name \("default" when the request named none\), the username and the password. The tenant and the username are trimmed of surrounding space; the password never is.
 
@@ -75,7 +75,7 @@ type Credentials struct {
 ```
 
 <a name="Identity"></a>
-## type [Identity](<https://github.com/dexadata/dexaflow/blob/main/pkg/authn/authn.go#L122-L137>)
+## type [Identity](<https://github.com/dexadata/dexaflow/blob/main/pkg/authn/authn.go#L129-L144>)
 
 Identity is what a trusted issuer's token says about its holder.
 
@@ -99,7 +99,7 @@ type Identity struct {
 ```
 
 <a name="Permission"></a>
-## type [Permission](<https://github.com/dexadata/dexaflow/blob/main/pkg/authn/authn.go#L43-L46>)
+## type [Permission](<https://github.com/dexadata/dexaflow/blob/main/pkg/authn/authn.go#L44-L47>)
 
 Permission is an action on a resource, such as \{Action: "read", Resource: "dag"\}. The action "admin" grants every action on its resource, and the resource "\*" every resource.
 
@@ -111,7 +111,7 @@ type Permission struct {
 ```
 
 <a name="TrustedIssuer"></a>
-## type [TrustedIssuer](<https://github.com/dexadata/dexaflow/blob/main/pkg/authn/authn.go#L143-L150>)
+## type [TrustedIssuer](<https://github.com/dexadata/dexaflow/blob/main/pkg/authn/authn.go#L150-L157>)
 
 TrustedIssuer verifies the handoff tokens of the operator's trusted issuer \(POST /api/v2/auth/session\). A verified token opens a UI session for the active user of the identity's tenant that is linked to Provider under the identity's Subject. A token never creates a user and never brings roles.
 
@@ -127,7 +127,7 @@ type TrustedIssuer interface {
 ```
 
 <a name="User"></a>
-## type [User](<https://github.com/dexadata/dexaflow/blob/main/pkg/authn/authn.go#L50-L76>)
+## type [User](<https://github.com/dexadata/dexaflow/blob/main/pkg/authn/authn.go#L51-L83>)
 
 User is an authenticated principal: who it is, the tenant it acts in, and what it may do there.
 
@@ -158,11 +158,17 @@ type User struct {
     // bearer minted for auth.trusted_issuer.deploy_audience. Only the server
     // sets it: it is cleared on a User a replaced Authenticator returns.
     DeployAudience bool
+    // SessionsValidAfter is when the user was last deactivated, zero if
+    // never. A session that began at or before it is refused, so
+    // reactivating a user does not bring back the sessions it had. Only the
+    // server sets it: it is cleared on a User a replaced Authenticator
+    // returns.
+    SessionsValidAfter time.Time
 }
 ```
 
 <a name="User.HasPermission"></a>
-### func \(\*User\) [HasPermission](<https://github.com/dexadata/dexaflow/blob/main/pkg/authn/authn.go#L85>)
+### func \(\*User\) [HasPermission](<https://github.com/dexadata/dexaflow/blob/main/pkg/authn/authn.go#L92>)
 
 ```go
 func (u *User) HasPermission(action, resource string) bool
@@ -207,7 +213,7 @@ true
 </details>
 
 <a name="User.HasScope"></a>
-### func \(\*User\) [HasScope](<https://github.com/dexadata/dexaflow/blob/main/pkg/authn/authn.go#L79>)
+### func \(\*User\) [HasScope](<https://github.com/dexadata/dexaflow/blob/main/pkg/authn/authn.go#L86>)
 
 ```go
 func (u *User) HasScope(scope string) bool

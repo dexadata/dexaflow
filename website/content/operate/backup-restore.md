@@ -205,7 +205,7 @@ release you deploy and keep the time it took next to the target.
 
 **Postgres, from a snapshot or a point in time.** Restore into a new instance
 (the provider's restore never overwrites the running one), then point the
-release at it with `helm upgrade --reuse-values --set database.url=...`. The
+release at it with `helm upgrade --reset-then-reuse-values --set database.url=...`. The
 restored database carries the installation id of this installation, so the
 control plane accepts it. Restart the control plane pods afterwards
 (`kubectl rollout restart deployment`): each pod caches tenant ids for its

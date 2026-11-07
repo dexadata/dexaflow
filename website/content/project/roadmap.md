@@ -5,26 +5,50 @@ aliases:
 # --- end AUTO redirect aliases ---
 title: Roadmap
 weight: 20
-description: Where Dexaflow is heading next, and the historical road to the first release.
+description: What Dexaflow ships next and when, by release, with the 1.0 criteria; the road to the first release is kept as an archive.
 ---
 
 ## Current roadmap
 
 Planning lives in GitHub issues, each assigned to the release milestone it is
-planned for. Two public views read from them:
-
-- **[Dexaflow roadmap](https://github.com/orgs/dexadata/projects/4)**, a GitHub
-  Project with the open issues by release, as a timeline, a board and a table.
-- **[Milestones](https://github.com/dexadata/dexaflow/milestones)**, one per
-  release, with progress and a target date.
-
-Patch releases (`v0.5.x`) carry fixes and small features roughly once a week;
-the next minor (`v0.6.0`) has no date yet. Milestone dates are targets, not
-commitments: a release ships when its milestone is done and its candidate
-passes the release gates in [RELEASING.md](https://github.com/dexadata/dexaflow/blob/main/RELEASING.md).
+planned for. The [Dexaflow roadmap](https://github.com/orgs/dexadata/projects/4)
+project shows them by release as a timeline, a board and a table, and each
+[milestone](https://github.com/dexadata/dexaflow/milestones) has its progress
+and target date. Dates are targets, not commitments: a release ships when its
+milestone is done and its candidate passes the release gates in
+[RELEASING.md](https://github.com/dexadata/dexaflow/blob/main/RELEASING.md).
 To propose work, open an issue; a maintainer sets its milestone.
 
-## The road to v0.1
+**Cadence.** A patch about every week, and a minor every two to three months
+(0.5.0 on 2026-10-02, 0.6.0 targeted for 2026-12-11), as the
+[versioning policy](/project/versioning/) describes.
+
+### Now: the last 0.5 patches
+
+| Release | Target | Focus |
+|---|---|---|
+| [v0.5.11](https://github.com/dexadata/dexaflow/milestone/15) | 2026-11-20 | Scheduler standby and failover, scheduler read cost, multi-tenant fixes |
+| [v0.5.12](https://github.com/dexadata/dexaflow/milestone/16) | 2026-11-27 | The last 0.5 patch: tenant isolation tests on every route, audit of admin writes, shared rate limits, live log tail cost, release notes and governance |
+
+### Next: 0.6
+
+| Release | Target | Focus |
+|---|---|---|
+| [v0.6.0](https://github.com/dexadata/dexaflow/milestone/6) | 2026-12-11 (candidate about 2026-12-01) | Reliability and security for production: row level security as an option, lease and failover hardening, the gaps of the production readiness review |
+| [v0.6.1](https://github.com/dexadata/dexaflow/milestone/17) | 2026-12-18 | Follow-ups of 0.6.0 and features moved out of 0.5 |
+| [v0.6.2](https://github.com/dexadata/dexaflow/milestone/18) | 2027-01-08 | |
+| [v0.6.3](https://github.com/dexadata/dexaflow/milestone/19) | 2027-01-15 | |
+
+### Later: 1.0
+
+[v1.0.0](https://github.com/dexadata/dexaflow/milestone/22) targets the end
+of February 2027. Its exit criteria are in
+[#1958](https://github.com/dexadata/dexaflow/issues/1958) and their tracking in
+[#2317](https://github.com/dexadata/dexaflow/issues/2317): what a production
+install needs to be supported, the API and configuration surfaces that become
+stable, and the evidence (soak, chaos, upgrade tests) a release must carry.
+
+## Archive: the road to v0.1
 
 {{% alert title="Historical: the first release shipped" color="info" %}}
 This page captured the plan **before v0.1**. The `v0.x` line has since

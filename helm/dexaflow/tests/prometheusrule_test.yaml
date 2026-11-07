@@ -87,7 +87,7 @@ tests:
           value: dexaflow-ticket
       - lengthEqual:
           path: spec.groups[0].rules
-          count: 10
+          count: 11
       - lengthEqual:
           path: spec.groups[1].rules
           count: 8

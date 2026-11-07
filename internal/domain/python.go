@@ -119,7 +119,7 @@ func checkRetiredPython(p pythonVersionSchema) error {
 // This is the one list. scripts/check-python-runtime-matrix.sh asserts that the
 // release matrix, the Makefile target, the runtime Dockerfile and the
 // configuration reference all agree with it, because a published image nobody
-// can select — and a selectable version nobody publishes — both surface as a
+// can select, and a selectable version nobody publishes, both surface as a
 // `docker pull` 404 inside the user's own build.
 func SupportedPythonVersions() ([]string, error) {
 	p, err := pythonSupport()

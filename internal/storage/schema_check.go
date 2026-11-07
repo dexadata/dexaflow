@@ -218,7 +218,7 @@ func checkSchemaReady(dbVersion uint, exists, dirty bool, latest uint) error {
 // serving nothing (#1023). One SELECT against a single-row table, so it is cheap
 // enough to run per probe; the caller bounds it with the probe's own deadline.
 //
-// The verdict is checkSchemaReady, NOT the boot gate — see there for the one
+// The verdict is checkSchemaReady, NOT the boot gate; see there for the one
 // state where the two must disagree.
 func (p *Postgres) SchemaReady(ctx context.Context) error {
 	st, err := p.schemaState(ctx)

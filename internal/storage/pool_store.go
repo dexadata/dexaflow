@@ -49,7 +49,7 @@ func (r *Repository) GetPool(ctx context.Context, tenant, name string) (domain.P
 }
 
 // SetPool creates or updates a pool (its slot cap and description). The
-// is_default flag is not writable through this path — only the seed migration
+// is_default flag is not writable through this path: only the seed migration
 // marks the implicit default pool.
 func (r *Repository) SetPool(ctx context.Context, tenant string, p domain.Pool) error {
 	return r.withTenantWrite(ctx, tenant, func(tid pgtype.UUID) error {

@@ -119,6 +119,7 @@ this page.
 - [ADR 0103: cross-DAG waits and triggers are evaluated by the scheduler, without a pod](/project/adrs/0103-cross-dag-dependencies-in-the-scheduler/)
 - [ADR 0104: row level security binds each request's connection to its tenant](/project/adrs/0104-row-level-security/)
 - [ADR 0105: the split scheduler runs a leader and a standby](/project/adrs/0105-split-scheduler-standby/) (proposed)
+- [ADR 0107 (proposed): a stable channel on top of the weekly patch train](/project/adrs/0107-stable-channel-on-the-weekly-train/)
 
 ## Template
 

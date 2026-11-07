@@ -18,7 +18,7 @@ type HealthChecker interface {
 }
 
 // SchemaChecker is an optional capability a HealthChecker may also implement:
-// asserting that the dependency's SCHEMA — not just its connection — is the one
+// asserting that the dependency's SCHEMA, not just its connection, is the one
 // this binary requires. *storage.Postgres implements it; Redis and other
 // schema-less dependencies do not, and keep the Ping-only contract.
 //
