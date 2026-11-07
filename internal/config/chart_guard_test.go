@@ -156,6 +156,13 @@ var configFileOnly = map[string]string{
 	"auth.oidc.tenant_claims": "auth.oidc.tenantClaims",
 }
 
+// chartPending lists the config-file settings the chart cannot render yet,
+// each with the reason. An install sets them through its own config file
+// (DEXAFLOW_CONFIG). Remove an entry when the chart gains its value.
+var chartPending = map[string]string{
+	"executor.policy": "ADR 0063: read only from a YAML or JSON config file; the chart value is a separate change",
+}
+
 // mapSliceLeaves returns the mapstructure path of every map or slice field of
 // t, walking nested structs.
 func mapSliceLeaves(prefix string, typ reflect.Type, out map[string]reflect.Kind) {
@@ -225,6 +232,9 @@ func TestMapAndSliceSettingsAreReachable(t *testing.T) {
 		if _, ok := serverDefaults[key]; ok {
 			continue
 		}
+		if _, pending := chartPending[key]; pending {
+			continue
+		}
 		value, fileOnly := configFileOnly[key]
 		if !fileOnly {
 			t.Errorf("%s (%s) is neither registered in serverDefaults (env) nor a config-file key the chart renders: an install cannot set it", key, leaves[key])
@@ -232,6 +242,14 @@ func TestMapAndSliceSettingsAreReachable(t *testing.T) {
 		}
 		if !strings.Contains(tpl, ".Values."+value) {
 			t.Errorf("%s is config-file only, but no template reads the chart value %s to render it", key, value)
+		}
+	}
+	for key := range chartPending {
+		if _, ok := leaves[key]; !ok {
+			t.Errorf("chartPending names %s, which is not a map or slice setting of ServerConfig", key)
+		}
+		if _, ok := configFileOnly[key]; ok {
+			t.Errorf("%s is in both chartPending and configFileOnly: drop it from chartPending", key)
 		}
 	}
 	for key := range configFileOnly {
