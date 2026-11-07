@@ -98,8 +98,13 @@ type AuthDeps struct {
 	Authenticator auth.Authenticator
 	// RateLimiter caps the failed logins of POST /auth/token per client.
 	// Required.
-	RateLimiter  *auth.RateLimiter
-	TokenTTLSecs int
+	RateLimiter *auth.RateLimiter
+	// SharedRateLimits, when set, is the counter every API replica reaches
+	// (Redis): the limiters the server builds for its other sign-in routes
+	// count through it, so N replicas allow the configured limit and not N
+	// times it (#2357). Nil keeps them in process.
+	SharedRateLimits auth.SharedCounter
+	TokenTTLSecs     int
 	// TokenRenewer re-mints a still-valid user bearer with a fresh short TTL so a
 	// long CLI/dev session need not re-login every TokenTTLSecs (aresta #5). Nil
 	// leaves the renew route unregistered (renewal simply unavailable). In practice
@@ -378,4 +383,10 @@ func (d IssuerDeps) validate(jwtSecret string, need func(ok bool, field, why str
 	if d.ServiceToken != "" {
 		need(d.ServiceTenants != nil, "Issuers.ServiceTenants", "the service API stores tenants and users in it")
 	}
+}
+
+// rateLimiter builds a per-minute limiter for one sign-in route, counted
+// through Auth.SharedRateLimits under scope when it is set.
+func (d Dependencies) rateLimiter(perMinute int, scope string) *auth.RateLimiter {
+	return auth.NewRateLimiter(perMinute, time.Minute).Share(d.Auth.SharedRateLimits, scope)
 }

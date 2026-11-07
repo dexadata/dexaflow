@@ -420,6 +420,7 @@ holds, then re-run.
 | 056 (usage events pruned mark) | 56 | nothing: one transaction, rolled back, and every statement can be repeated | 55 |
 | 057 (UUIDv7 keys) | 57 | nothing: one transaction with a 5 s `lock_timeout`, rolled back, and every statement can be repeated | 56; retry when `dag_runs` and `task_instances` are quiet |
 | 058 (user session cutoff) | 58 | nothing: one transaction with a 5 s `lock_timeout`, rolled back, and every statement can be repeated | 57; retry when `users` is quiet |
+| 059 (tenant row security policies) | 59 | nothing: one transaction with a 5 s `lock_timeout`, rolled back, and every statement can be repeated | 58; retry when the tenant tables are quiet |
 
 **How to run `migrate force`.** The hook image is the `dexaflow-migrate`
 wrapper plus the SQL files at `/migrations`; it takes the golang-migrate CLI's
@@ -1306,10 +1307,37 @@ the profile, `0` and `false` included.
 | You want the new defaults on an existing release | `helm upgrade ... --set profile=cluster`. Task pods keep running; the control plane restarts with buffered dispatch. |
 | Rendered by `helm template`, ArgoCD or Flux | The renderer cannot read the live release and renders `cluster`. Set `profile: legacy` in your values **before** syncing 0.5.10 to keep the earlier behavior. |
 
-The dedicated scheduler database pool (`database.schedulerMaxConns`) is not part
-of the profile yet: with it on and the API pool saturated, agent heartbeats can
-stall while the reapers keep running on their own pool
+The dedicated database pools (`database.schedulerMaxConns` and
+`database.agentMaxConns`) are not part of the profile: they add connections on
+every pod, so size them against the Postgres connection budget and set them
+together. With only the scheduler pool set and the API pool saturated, agent
+heartbeats could stall while the reapers kept running on their own pool; the
+agent pool and the heartbeat reaper's mass-silence hold close that
 ([#1624](https://github.com/dexadata/dexaflow/issues/1624)).
+
+### Upgrading to 0.5.11: row level security policies
+
+0.5.11 applies one migration, 059.
+
+- **`059_tenant_row_security`** creates the function `dexaflow_bound_tenant()`
+  and a policy `dexaflow_tenant_barrier` on each of the sixteen tables with a
+  `tenant_id` column ([ADR 0104](/project/adrs/0104-row-level-security/),
+  [#2180](https://github.com/dexadata/dexaflow/issues/2180)). It turns row
+  level security on for none of them, so nothing reads or writes differently
+  until you choose to ([Row level security](/operate/multitenancy/#row-level-security)).
+  Creating a policy locks its table for an instant; the transaction waits at
+  most 5 seconds for each lock.
+
+**Rolling back 0.5.11.** The previous control plane boots against schema 059
+with the warning `database schema is ahead of this binary; proceeding`. It
+never binds a connection, so it passes every policy even with row level
+security on. The down migration turns row level security off on every tenant
+table before dropping the policies, so a table is never left enforcing with no
+policy:
+
+```sh
+migrate -path migrations -database "$DATABASE_URL" goto 58
+```
 
 ### Upgrading to 0.6.0: the UI refreshes every 5 seconds
 

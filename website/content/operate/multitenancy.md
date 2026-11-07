@@ -65,7 +65,59 @@ Each tenant has its own:
 
 Names are per tenant: two tenants can both have a DAG `nightly` or a
 connection `warehouse`. An id from another tenant answers `404`, as if it did
-not exist.
+not exist. The integration suite checks this for every API route on every
+pull request: it calls each route as one tenant with another tenant's ids and
+fails on any answer or write that reaches the other tenant's objects.
+
+## Row level security
+
+Every query the control plane makes carries its tenant, and the cross-tenant
+tests prove each one. Row level security adds a second barrier in Postgres
+itself, for a query that a future change forgets to scope
+([ADR 0104](/project/adrs/0104-row-level-security/),
+[#2180](https://github.com/dexadata/dexaflow/issues/2180)). It is off by
+default.
+
+With it on, each database connection that serves an API request of one tenant
+is bound to that tenant, and Postgres hides every other tenant's rows from it,
+whatever the SQL says: a read finds nothing, an update changes nothing, and an
+insert into another tenant is refused. Connections that serve no single tenant
+(the scheduler, the reapers and janitors, sign-in before a tenant is known, the
+operator service API) are not bound and see every row, as without it.
+
+Turn it on in two steps, after upgrading:
+
+1. Turn the policies on, with the migrate binary of your release and a role
+   that may alter the tables:
+
+   ```sh
+   dexaflow-migrate -database "$DATABASE_URL" rls on
+   ```
+
+   It enables and forces row level security on the sixteen tables with a
+   `tenant_id` column, in one transaction that waits at most 5 seconds for
+   each table's lock, and prints each table with the verdict
+   `row level security: on`. `rls status` prints the same without changing
+   anything. Until the server binds its connections, nothing changes: an
+   unbound connection passes every policy.
+2. Set `database.row_level_security: true` (`DEXAFLOW_DATABASE_ROW_LEVEL_SECURITY=true`,
+   or `extraEnv` in Helm) and restart the control plane.
+
+The server refuses to boot with the setting on when a tenant table is not
+enforcing its policy, and when it connects as a superuser or a role with
+`BYPASSRLS`: Postgres exempts those from every policy, so the barrier would only
+look present. The server's role may own the tables; `rls on` forces the
+policies on the owner too.
+
+To turn it off, set the value back to `false` first, then run `rls off`. The
+order does not matter for safety: a server that binds while the tables do not
+enforce only spends the binding, and tables that enforce while the server does
+not bind see no bound connection.
+
+What it costs is measured in ADR 0104: a bound connection pays one short
+statement when it changes tenant, and every read of a tenant table evaluates
+the policy. It needs session state, so it does not work behind PgBouncer in
+transaction pooling mode.
 
 ## What is shared
 
