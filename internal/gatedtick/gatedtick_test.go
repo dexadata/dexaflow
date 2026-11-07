@@ -164,3 +164,23 @@ func TestRunOrKickSkipsKickWhileFollower(t *testing.T) {
 	default:
 	}
 }
+
+// Run returns once its context is done, so a stopped loop leaves no goroutine
+// behind. The test waits for the return instead of relying on the deferred
+// cancel, which keeps the exit path covered on every run.
+func TestRunReturnsWhenContextDone(t *testing.T) {
+	ticks := make(chan time.Time)
+	ctx, cancel := context.WithCancel(context.Background())
+	returned := make(chan struct{})
+	go func() {
+		Run(ctx, "test", ticks, nil, discardLog(), func() {})
+		close(returned)
+	}()
+	ticks <- time.Now()
+	cancel()
+	select {
+	case <-returned:
+	case <-time.After(2 * time.Second):
+		t.Fatal("Run did not return after its context was canceled")
+	}
+}
