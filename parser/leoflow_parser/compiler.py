@@ -39,6 +39,7 @@ def compile_dag(
     """Compile the DAG in ``source`` into a dag.json dictionary."""
     config = _load_config(config_path)
     dag = _load_dag(source, config.get("dag_id"))
+    _reject_unhonored_dag_args(dag)
 
     spec: dict[str, Any] = {
         "schema_version": "1.0",
@@ -441,7 +442,29 @@ _UNHONORED_TASK_ARGS = {
     "depends_on_past": (False, "#2350"),
     "wait_for_downstream": (False, "#2350"),
     "priority_weight": (1, None),
+    "max_active_tis_per_dag": (None, "#2428"),
+    "max_active_tis_per_dagrun": (None, "#2428"),
 }
+
+# DAG arguments the scheduler does not honor, refused for the same reason
+# (#2336): a run timeout that never fires and an auto-pause after failed runs
+# that never pauses. Each maps to its Airflow default, which stays accepted.
+_UNHONORED_DAG_ARGS = {
+    "dagrun_timeout": None,
+    "max_consecutive_failed_dag_runs": 0,
+}
+
+
+def _reject_unhonored_dag_args(dag) -> None:
+    for name, default in _UNHONORED_DAG_ARGS.items():
+        value = getattr(dag, name, default)
+        if value == default:
+            continue
+        raise ValueError(
+            f"{name}={value!r} on DAG {dag.dag_id!r} is not honored by the Dexaflow "
+            "scheduler, which would ignore it and run the DAG with different "
+            f"semantics than Airflow. Remove it, or set it to {default!r}."
+        )
 
 
 def _reject_unhonored_args(task, dag) -> None:

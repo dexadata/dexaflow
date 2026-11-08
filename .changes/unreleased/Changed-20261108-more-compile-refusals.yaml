@@ -1,0 +1,11 @@
+kind: Changed
+body: |-
+  **More unhonored arguments are refused at compile.** `max_active_tis_per_dag`
+  and `max_active_tis_per_dagrun` on a task or in `default_args`, and
+  `dagrun_timeout` and `max_consecutive_failed_dag_runs` on a DAG, were
+  dropped from `dag.json` without a word, so the DAG ran without the cap, the
+  timeout or the auto-pause it asked for. `dexaflow compile` now refuses a
+  value other than the default, as it does for `depends_on_past` since #2336.
+  A DAG that sets one of them stops compiling until it removes it (#2336,
+  #2428).
+time: 2026-11-08T02:00:00.000000000+00:00
