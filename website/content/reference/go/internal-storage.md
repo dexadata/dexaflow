@@ -2098,13 +2098,13 @@ func (r *Repository) SetCurrentDagVersionAs(ctx context.Context, tenant string, 
 SetCurrentDagVersionAs is SetCurrentDagVersion for req, whose RequireDigest, while warn or enforce, the audit entry records with whether the target's image is pinned by digest \(\#1703\).
 
 <a name="Repository.SetDagRunState"></a>
-### func \(\*Repository\) [SetDagRunState](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/repo_runs.go#L575>)
+### func \(\*Repository\) [SetDagRunState](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/repo_runs.go#L578>)
 
 ```go
 func (r *Repository) SetDagRunState(ctx context.Context, tenant, dagID, runID, state string) error
 ```
 
-SetDagRunState sets a DAG run's state directly, backing the UI's mark run success/failed actions. Terminal states stamp ended\_at; re\-opening to a non\-terminal state clears it. started\_at is preserved.
+SetDagRunState sets a DAG run's state directly, backing the UI's mark run success/failed actions. Terminal states stamp ended\_at; re\-opening to a non\-terminal state clears it. started\_at is preserved. A terminal state is a verdict on the run's work too: in the same transaction its unfinished task instances are settled as Airflow 3 does, so a running attempt is told to stop and no task is left waiting forever \(\#2425\).
 
 <a name="Repository.SetImportError"></a>
 ### func \(\*Repository\) [SetImportError](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/repo_registration.go#L579>)
@@ -2143,7 +2143,7 @@ func (r *Repository) SetPool(ctx context.Context, tenant string, p domain.Pool) 
 SetPool creates or updates a pool \(its slot cap and description\). The is\_default flag is not writable through this path: only the seed migration marks the implicit default pool.
 
 <a name="Repository.SetTaskInstanceState"></a>
-### func \(\*Repository\) [SetTaskInstanceState](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/repo_runs.go#L607>)
+### func \(\*Repository\) [SetTaskInstanceState](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/repo_runs.go#L626>)
 
 ```go
 func (r *Repository) SetTaskInstanceState(ctx context.Context, tenant, dagID, runID, taskID, state string) error
@@ -2197,7 +2197,7 @@ func (r *Repository) SuspendTenant(ctx context.Context, tenant string, s domain.
 SuspendTenant suspends the tenant, or changes the mode or reason of its suspension \(\#2181\). From then on no new run is created for it, manual or scheduled; its DAGs keep their own paused flag. Under stop it also fails the tenant's queued and running task instances; the scheduler repeats that on every tick, so an attempt dispatched while this call ran is stopped too. An unknown tenant is ErrNotFound and a suspension the engine cannot apply is ErrValidation.
 
 <a name="Repository.TaskInstancesForRuns"></a>
-### func \(\*Repository\) [TaskInstancesForRuns](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/repo_runs.go#L626>)
+### func \(\*Repository\) [TaskInstancesForRuns](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/repo_runs.go#L645>)
 
 ```go
 func (r *Repository) TaskInstancesForRuns(ctx context.Context, tenant, dagID string, runIDs []string) ([]domain.TaskInstance, error)

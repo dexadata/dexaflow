@@ -44,23 +44,30 @@ func TestSettledRunsIntegration(t *testing.T) {
 			t.Fatalf("run of %s not found", dagID)
 		}
 		refs[name] = ref
-		state := name
-		if ti, ok := map[string]domain.TaskState{
+		ti, withTI := map[string]domain.TaskState{
 			"failed_with_running_ti": domain.TaskStateRunning,
 			// removed is settled: a clear marks it on a finished run's task
 			// instance whose task the new version dropped (ADR 0086).
 			"failed_with_removed_ti": domain.TaskStateRemoved,
-		}[name]; ok {
+		}[name]
+		state := name
+		if withTI {
+			state = "failed"
+		}
+		if err := repo.SetDagRunState(ctx, "default", dagID, "r", state); err != nil {
+			t.Fatalf("set state: %v", err)
+		}
+		// The task instance is written after the run's state: marking a run
+		// failed settles its unfinished task instances (#2425), so a failed
+		// run with a running task instance only arises from a write that
+		// races the verdict, which this reproduces.
+		if withTI {
 			if err := sched.MaterializeTasks(ctx, ref.Run, tasks); err != nil {
 				t.Fatal(err)
 			}
 			if err := sched.ApplyTransition(ctx, ref.Run, "t", ti); err != nil {
 				t.Fatal(err)
 			}
-			state = "failed"
-		}
-		if err := repo.SetDagRunState(ctx, "default", dagID, "r", state); err != nil {
-			t.Fatalf("set state: %v", err)
 		}
 	}
 	otherTenant := executor.RunRef{Tenant: "00000000-0000-0000-0000-000000000001", Run: refs["success"].Run}
