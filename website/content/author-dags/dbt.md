@@ -394,8 +394,10 @@ leaving it is a migration rather than an edit.
 **It cannot express a task that is not a dbt model.** No sensors, no provider
 operators, no Python or Bash. And because those live on the DAG object a
 `dag.py` builds, it also has nowhere to declare `start_date`, `catchup`,
-`max_active_runs` or DAG-level `params`. (`end_date` and `max_active_tasks` are
-not author-settable on *either* path yet — [#797](https://github.com/dexadata/dexaflow/issues/797).)
+`max_active_runs`, `max_active_tasks` or DAG-level `params`. (`max_active_tasks`
+is settable in a `dag.py` since 0.5.11, a cap per DAG run
+([#2427](https://github.com/dexadata/dexaflow/issues/2427)); `end_date` is not
+author-settable on either path yet.)
 A top-level `connections:`/`variables:` is worse than rejected — the schema accepts
 it and the compiled DAG silently drops it ([#997](https://github.com/dexadata/dexaflow/issues/997)).
 `retries` and `resources` can be scoped per task; `alerts` and `staging` are

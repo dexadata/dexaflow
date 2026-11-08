@@ -153,6 +153,12 @@ class DAG:
         self.description = kwargs.get("description")
         self.start_date = kwargs.get("start_date")
         self.max_active_runs = kwargs.get("max_active_runs")
+        # max_active_tasks caps the task instances active at once in each run
+        # of the DAG, as in Airflow 3 (#2427). The removed Airflow 2 alias
+        # concurrency is kept only so the compiler can refuse it by name.
+        self.max_active_tasks = kwargs.get("max_active_tasks")
+        if "concurrency" in kwargs:
+            self.concurrency = kwargs["concurrency"]
         self.catchup = kwargs.get("catchup")
         # Airflow's is_paused_upon_creation: whether the DAG starts paused when
         # it is first registered, overriding the server's

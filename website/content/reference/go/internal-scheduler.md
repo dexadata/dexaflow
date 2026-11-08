@@ -180,7 +180,7 @@ func TaskTransitions() [][2]domain.TaskState
 TaskTransitions lists every legal task state transition as \(from, to\) pairs, sorted, for tests that check the storage queries against the table.
 
 <a name="Alerter"></a>
-## type [Alerter](<https://github.com/dexadata/dexaflow/blob/main/internal/scheduler/scheduler.go#L626-L631>)
+## type [Alerter](<https://github.com/dexadata/dexaflow/blob/main/internal/scheduler/scheduler.go#L624-L629>)
 
 Alerter dispatches a DAG's on\-failure alert rules for a run that finalized in the failed state. Implementations resolve each rule's managed connection to an endpoint and send \(Slack/webhook\). The scheduler calls it from a detached goroutine, so an implementation may block on network I/O without stalling the tick; it MUST treat every send as best\-effort, a delivery failure is logged, never propagated, so alerting can never fail a run.
 
@@ -257,7 +257,7 @@ type AsyncDispatchStore interface {
 ```
 
 <a name="Dispatcher"></a>
-## type [Dispatcher](<https://github.com/dexadata/dexaflow/blob/main/internal/scheduler/scheduler.go#L348-L350>)
+## type [Dispatcher](<https://github.com/dexadata/dexaflow/blob/main/internal/scheduler/scheduler.go#L346-L348>)
 
 Dispatcher launches a task instance for execution. The scheduler dispatches a task as it becomes queued; the concrete implementation builds the executor request and routes it to the right executor.
 
@@ -392,7 +392,7 @@ type PoolWait struct {
 ```
 
 <a name="Recorder"></a>
-## type [Recorder](<https://github.com/dexadata/dexaflow/blob/main/internal/scheduler/scheduler.go#L314-L343>)
+## type [Recorder](<https://github.com/dexadata/dexaflow/blob/main/internal/scheduler/scheduler.go#L312-L341>)
 
 Recorder records scheduler metrics. observability.Metrics implements it.
 
@@ -430,7 +430,7 @@ type Recorder interface {
 ```
 
 <a name="RunState"></a>
-## type [RunState](<https://github.com/dexadata/dexaflow/blob/main/internal/scheduler/scheduler.go#L41-L180>)
+## type [RunState](<https://github.com/dexadata/dexaflow/blob/main/internal/scheduler/scheduler.go#L41-L178>)
 
 RunState is the scheduler's snapshot of a dag run: its topology and the current state of each task.
 
@@ -533,18 +533,16 @@ type RunState struct {
     // from the dag.json alongside Tasks. nil means no alerting; the scheduler
     // dispatches these rules once the run finalizes as failed.
     Alerts *domain.AlertsConfig
-    // MaxActiveTasks is the DAG's per-DAG task-concurrency cap (Airflow's
-    // max_active_tasks, ADR 0053 Stage 1), loaded from the spec. Zero or negative
-    // means unlimited, the admission gate is a no-op, so a DAG that never sets it
-    // (and all of Lite) plans exactly as before.
+    // MaxActiveTasks is the DAG's task-concurrency cap per DAG run (Airflow 3's
+    // max_active_tasks, ADR 0053 Stage 1 as amended by #2427), loaded from the
+    // spec. Zero or negative means unlimited, the admission gate is a no-op, so a
+    // DAG that never sets it (and all of Lite) plans exactly as before.
     MaxActiveTasks int
-    // ActiveTaskCount is the DAG-wide number of currently non-terminal (queued or
-    // running) task instances across every active run of this DAG, plus any this
-    // tick already admitted for the same DAG in earlier sibling runs. PlanRun
-    // subtracts it from MaxActiveTasks to derive this run's admission headroom, so
-    // the cap holds per-DAG across runs and one tick cannot breach it. The Step
-    // loop populates it; it defaults to zero, leaving the gate unlimited when
-    // MaxActiveTasks is unset.
+    // ActiveTaskCount is the number of this run's task instances that are
+    // queued or running. PlanRun subtracts it from MaxActiveTasks to derive the
+    // run's admission headroom; other runs of the DAG do not count, as in
+    // Airflow 3. The Step loop populates it (runActiveTasks); it defaults to
+    // zero, leaving the gate unlimited when MaxActiveTasks is unset.
     ActiveTaskCount int
     // PoolsEnabled turns on the named-pool slot gate (ADR 0053 Stage 3). The
     // Step loop sets it from the scheduler's pools flag (scheduler.pools.enabled).
@@ -578,7 +576,7 @@ type RunState struct {
 ```
 
 <a name="ScheduledDAG"></a>
-## type [ScheduledDAG](<https://github.com/dexadata/dexaflow/blob/main/internal/scheduler/scheduler.go#L186-L209>)
+## type [ScheduledDAG](<https://github.com/dexadata/dexaflow/blob/main/internal/scheduler/scheduler.go#L184-L207>)
 
 ScheduledDAG is a cron\-scheduled DAG and the logical date of its latest run. Catchup and StartDate drive the per\-tick catchup decision \(\#129\): when a leader has been down across multiple slots, catchup=true backfills every missed slot while catchup=false jumps straight to the most recent one.
 
@@ -610,7 +608,7 @@ type ScheduledDAG struct {
 ```
 
 <a name="Scheduler"></a>
-## type [Scheduler](<https://github.com/dexadata/dexaflow/blob/main/internal/scheduler/scheduler.go#L367-L449>)
+## type [Scheduler](<https://github.com/dexadata/dexaflow/blob/main/internal/scheduler/scheduler.go#L365-L447>)
 
 Scheduler advances dag runs by applying the planning rules each tick.
 
@@ -621,7 +619,7 @@ type Scheduler struct {
 ```
 
 <a name="NewScheduler"></a>
-### func [NewScheduler](<https://github.com/dexadata/dexaflow/blob/main/internal/scheduler/scheduler.go#L452>)
+### func [NewScheduler](<https://github.com/dexadata/dexaflow/blob/main/internal/scheduler/scheduler.go#L450>)
 
 ```go
 func NewScheduler(store Store, logger *slog.Logger, interval time.Duration) *Scheduler
@@ -630,7 +628,7 @@ func NewScheduler(store Store, logger *slog.Logger, interval time.Duration) *Sch
 NewScheduler builds a Scheduler over the given store, ticking every interval.
 
 <a name="Scheduler.ClearSteppingDown"></a>
-### func \(\*Scheduler\) [ClearSteppingDown](<https://github.com/dexadata/dexaflow/blob/main/internal/scheduler/scheduler.go#L568>)
+### func \(\*Scheduler\) [ClearSteppingDown](<https://github.com/dexadata/dexaflow/blob/main/internal/scheduler/scheduler.go#L566>)
 
 ```go
 func (s *Scheduler) ClearSteppingDown()
@@ -639,7 +637,7 @@ func (s *Scheduler) ClearSteppingDown()
 ClearSteppingDown ends the step\-down window opened by MarkSteppingDown. Idempotent, calling it when no step\-down is active is a no\-op.
 
 <a name="Scheduler.ConfineUndefinedPools"></a>
-### func \(\*Scheduler\) [ConfineUndefinedPools](<https://github.com/dexadata/dexaflow/blob/main/internal/scheduler/scheduler.go#L604>)
+### func \(\*Scheduler\) [ConfineUndefinedPools](<https://github.com/dexadata/dexaflow/blob/main/internal/scheduler/scheduler.go#L602>)
 
 ```go
 func (s *Scheduler) ConfineUndefinedPools()
@@ -657,7 +655,7 @@ func (s *Scheduler) EnableEagerPromotion()
 EnableEagerPromotion turns on scheduler.eager\_promotion: same\-tick re\-planning of a run after its own state changes, and early ticks on Wake. Off by default \(ADR 0062\), in which case the tick promotes one step per interval and Wake is inert. Call once before the scheduler starts running.
 
 <a name="Scheduler.EnablePools"></a>
-### func \(\*Scheduler\) [EnablePools](<https://github.com/dexadata/dexaflow/blob/main/internal/scheduler/scheduler.go#L599>)
+### func \(\*Scheduler\) [EnablePools](<https://github.com/dexadata/dexaflow/blob/main/internal/scheduler/scheduler.go#L597>)
 
 ```go
 func (s *Scheduler) EnablePools()
@@ -666,7 +664,7 @@ func (s *Scheduler) EnablePools()
 EnablePools turns on the cross\-DAG named\-pool admission gate \(ADR 0053 Stage 3\). main calls it when scheduler.pools.enabled is on, which unset means the cluster edition. Left unset, the pool gate stays a no\-op and the tick never queries pool budgets, so planning is byte\-identical. Call once before the scheduler starts ticking.
 
 <a name="Scheduler.Heartbeat"></a>
-### func \(\*Scheduler\) [Heartbeat](<https://github.com/dexadata/dexaflow/blob/main/internal/scheduler/scheduler.go#L709>)
+### func \(\*Scheduler\) [Heartbeat](<https://github.com/dexadata/dexaflow/blob/main/internal/scheduler/scheduler.go#L707>)
 
 ```go
 func (s *Scheduler) Heartbeat() (bool, time.Time)
@@ -675,7 +673,7 @@ func (s *Scheduler) Heartbeat() (bool, time.Time)
 Heartbeat reports whether the scheduling loop is live and when it last ticked. Only a leader is expected to tick, so a non\-leader \(a follower, or an instance that stepped down after losing the lock\) reports healthy without ticking, it is correctly idle, not stalled. A leader is healthy during the startup grace \(before its first tick\) and while ticks stay within a small multiple of the loop interval; a stalled leader goes unhealthy so the UI/monitor surfaces it.
 
 <a name="Scheduler.IsLeading"></a>
-### func \(\*Scheduler\) [IsLeading](<https://github.com/dexadata/dexaflow/blob/main/internal/scheduler/scheduler.go#L547>)
+### func \(\*Scheduler\) [IsLeading](<https://github.com/dexadata/dexaflow/blob/main/internal/scheduler/scheduler.go#L545>)
 
 ```go
 func (s *Scheduler) IsLeading() bool
@@ -684,7 +682,7 @@ func (s *Scheduler) IsLeading() bool
 IsLeading reports whether this instance currently holds scheduler leadership. Background sweeps that mutate cluster state, the pod reconciler and the staging\-volume GC, gate on this so that at replicaCount\>1 only the leader sweeps; otherwise every replica would reconcile and delete the same pods.
 
 <a name="Scheduler.LeaderSince"></a>
-### func \(\*Scheduler\) [LeaderSince](<https://github.com/dexadata/dexaflow/blob/main/internal/scheduler/scheduler.go#L535>)
+### func \(\*Scheduler\) [LeaderSince](<https://github.com/dexadata/dexaflow/blob/main/internal/scheduler/scheduler.go#L533>)
 
 ```go
 func (s *Scheduler) LeaderSince() time.Time
@@ -693,7 +691,7 @@ func (s *Scheduler) LeaderSince() time.Time
 LeaderSince reports when this instance last acquired scheduler leadership, or the zero time if it is not currently leading. The agent\-lost reaper uses it to suppress reaping within a grace window after a \(re\-\)election \(\#858\).
 
 <a name="Scheduler.MarkSteppingDown"></a>
-### func \(\*Scheduler\) [MarkSteppingDown](<https://github.com/dexadata/dexaflow/blob/main/internal/scheduler/scheduler.go#L559>)
+### func \(\*Scheduler\) [MarkSteppingDown](<https://github.com/dexadata/dexaflow/blob/main/internal/scheduler/scheduler.go#L557>)
 
 ```go
 func (s *Scheduler) MarkSteppingDown(reason string)
@@ -702,7 +700,7 @@ func (s *Scheduler) MarkSteppingDown(reason string)
 MarkSteppingDown records that a graceful step\-down has begun. The campaign loop calls this BEFORE canceling the scheduler's run\-context, so any in\-flight reaper/Step that returns "context canceled" inside the window logs at WARN \(expected\) instead of ERROR. It also increments the step\-down counter labeled by reason, so operators can alert on the \*rate\* of churn \(rate\(...\[5m\]\)\) instead of grep'ing log content. ClearSteppingDown closes the window; outside it, context.Canceled stays ERROR, the tripwire that catches an unexpected cancel a flat downgrade would silently swallow.
 
 <a name="Scheduler.RecordReacquireSince"></a>
-### func \(\*Scheduler\) [RecordReacquireSince](<https://github.com/dexadata/dexaflow/blob/main/internal/scheduler/scheduler.go#L574>)
+### func \(\*Scheduler\) [RecordReacquireSince](<https://github.com/dexadata/dexaflow/blob/main/internal/scheduler/scheduler.go#L572>)
 
 ```go
 func (s *Scheduler) RecordReacquireSince(stepDownAt time.Time)
@@ -711,7 +709,7 @@ func (s *Scheduler) RecordReacquireSince(stepDownAt time.Time)
 RecordReacquireSince records the time spent stepped down \(\#311\). It is called by the campaign loop immediately after a successful re\-acquire, with the timestamp captured at the moment of step\-down. A zero stepDownAt \(no prior step\-down, first acquisition at boot\) is ignored.
 
 <a name="Scheduler.Run"></a>
-### func \(\*Scheduler\) [Run](<https://github.com/dexadata/dexaflow/blob/main/internal/scheduler/scheduler.go#L641>)
+### func \(\*Scheduler\) [Run](<https://github.com/dexadata/dexaflow/blob/main/internal/scheduler/scheduler.go#L639>)
 
 ```go
 func (s *Scheduler) Run(ctx context.Context) error
@@ -722,7 +720,7 @@ Run drives the scheduling loop until ctx is canceled. The loop is crash\-proof: 
 With eager promotion on, a Wake also starts a tick, no sooner than wakeGap after the start of the previous one, and restarts the interval so it stays the upper bound between ticks. With it off the wake channel is nil, which never fires, so the loop ticks on the interval alone.
 
 <a name="Scheduler.SetAlertConcurrency"></a>
-### func \(\*Scheduler\) [SetAlertConcurrency](<https://github.com/dexadata/dexaflow/blob/main/internal/scheduler/scheduler.go#L613>)
+### func \(\*Scheduler\) [SetAlertConcurrency](<https://github.com/dexadata/dexaflow/blob/main/internal/scheduler/scheduler.go#L611>)
 
 ```go
 func (s *Scheduler) SetAlertConcurrency(n int)
@@ -731,7 +729,7 @@ func (s *Scheduler) SetAlertConcurrency(n int)
 SetAlertConcurrency caps how many on\-failure alert dispatches may run at once \(\#424\). n \< 1 is treated as 1. Mainly a config/test seam; the default is defaultAlertConcurrency.
 
 <a name="Scheduler.SetAlerter"></a>
-### func \(\*Scheduler\) [SetAlerter](<https://github.com/dexadata/dexaflow/blob/main/internal/scheduler/scheduler.go#L608>)
+### func \(\*Scheduler\) [SetAlerter](<https://github.com/dexadata/dexaflow/blob/main/internal/scheduler/scheduler.go#L606>)
 
 ```go
 func (s *Scheduler) SetAlerter(a Alerter)
@@ -740,7 +738,7 @@ func (s *Scheduler) SetAlerter(a Alerter)
 SetAlerter attaches the on\-failure alerter \(optional; \#424\). Without it, or for a DAG with no alert rules, the scheduler finalizes failures silently.
 
 <a name="Scheduler.SetDispatchTenantLimit"></a>
-### func \(\*Scheduler\) [SetDispatchTenantLimit](<https://github.com/dexadata/dexaflow/blob/main/internal/scheduler/scheduler.go#L494>)
+### func \(\*Scheduler\) [SetDispatchTenantLimit](<https://github.com/dexadata/dexaflow/blob/main/internal/scheduler/scheduler.go#L492>)
 
 ```go
 func (s *Scheduler) SetDispatchTenantLimit(n int)
@@ -749,7 +747,7 @@ func (s *Scheduler) SetDispatchTenantLimit(n int)
 SetDispatchTenantLimit caps how many tasks one tenant may dispatch in one tick \(scheduler.dispatch.max\_per\_tenant\_per\_tick\), so a tenant with a wide fan\-out or many runs leaves dispatch room for the others. 0 or less means no cap. Call before the scheduler starts ticking.
 
 <a name="Scheduler.SetDispatchTickBudget"></a>
-### func \(\*Scheduler\) [SetDispatchTickBudget](<https://github.com/dexadata/dexaflow/blob/main/internal/scheduler/scheduler.go#L483>)
+### func \(\*Scheduler\) [SetDispatchTickBudget](<https://github.com/dexadata/dexaflow/blob/main/internal/scheduler/scheduler.go#L481>)
 
 ```go
 func (s *Scheduler) SetDispatchTickBudget(d time.Duration)
@@ -758,7 +756,7 @@ func (s *Scheduler) SetDispatchTickBudget(d time.Duration)
 SetDispatchTickBudget sets how long one tick may spend dispatching \(scheduler.dispatch.tick\_budget\). 0 or less disables the budget, which dispatches every ready task in the tick however long it takes. Call before the scheduler starts ticking.
 
 <a name="Scheduler.SetDispatcher"></a>
-### func \(\*Scheduler\) [SetDispatcher](<https://github.com/dexadata/dexaflow/blob/main/internal/scheduler/scheduler.go#L592>)
+### func \(\*Scheduler\) [SetDispatcher](<https://github.com/dexadata/dexaflow/blob/main/internal/scheduler/scheduler.go#L590>)
 
 ```go
 func (s *Scheduler) SetDispatcher(d Dispatcher)
@@ -767,7 +765,7 @@ func (s *Scheduler) SetDispatcher(d Dispatcher)
 SetDispatcher attaches the executor dispatcher \(optional; without it the scheduler advances state only and launches nothing\).
 
 <a name="Scheduler.SetLeading"></a>
-### func \(\*Scheduler\) [SetLeading](<https://github.com/dexadata/dexaflow/blob/main/internal/scheduler/scheduler.go#L519>)
+### func \(\*Scheduler\) [SetLeading](<https://github.com/dexadata/dexaflow/blob/main/internal/scheduler/scheduler.go#L517>)
 
 ```go
 func (s *Scheduler) SetLeading(on bool)
@@ -785,7 +783,7 @@ func (s *Scheduler) SetPoolStarvationThreshold(d time.Duration)
 SetPoolStarvationThreshold sets scheduler.pool\_starvation\_threshold: how long a task held only by its pool waits before the pool is reserved for it. Zero \(the default for a Scheduler built without it\) disables reservations. Call before the scheduler ticks.
 
 <a name="Scheduler.SetRecorder"></a>
-### func \(\*Scheduler\) [SetRecorder](<https://github.com/dexadata/dexaflow/blob/main/internal/scheduler/scheduler.go#L588>)
+### func \(\*Scheduler\) [SetRecorder](<https://github.com/dexadata/dexaflow/blob/main/internal/scheduler/scheduler.go#L586>)
 
 ```go
 func (s *Scheduler) SetRecorder(r Recorder)
@@ -794,7 +792,7 @@ func (s *Scheduler) SetRecorder(r Recorder)
 SetRecorder attaches a metrics recorder \(optional\).
 
 <a name="Scheduler.SetStepTimeout"></a>
-### func \(\*Scheduler\) [SetStepTimeout](<https://github.com/dexadata/dexaflow/blob/main/internal/scheduler/scheduler.go#L512>)
+### func \(\*Scheduler\) [SetStepTimeout](<https://github.com/dexadata/dexaflow/blob/main/internal/scheduler/scheduler.go#L510>)
 
 ```go
 func (s *Scheduler) SetStepTimeout(d time.Duration)
@@ -803,7 +801,7 @@ func (s *Scheduler) SetStepTimeout(d time.Duration)
 SetStepTimeout overrides the per\-tick timeout \(optional; mainly for tests\).
 
 <a name="Scheduler.StalledFor"></a>
-### func \(\*Scheduler\) [StalledFor](<https://github.com/dexadata/dexaflow/blob/main/internal/scheduler/scheduler.go#L728>)
+### func \(\*Scheduler\) [StalledFor](<https://github.com/dexadata/dexaflow/blob/main/internal/scheduler/scheduler.go#L726>)
 
 ```go
 func (s *Scheduler) StalledFor(limit time.Duration) (bool, time.Time)
@@ -812,7 +810,7 @@ func (s *Scheduler) StalledFor(limit time.Duration) (bool, time.Time)
 StalledFor reports whether this process leads and its scheduling loop has not started an iteration for longer than limit, with the time of the last one. A follower, and a leader before its first tick, are never stalled. A database outage does not stall the loop: Step marks its start before it reads anything and fails fast, so only a loop that stopped iterating \(a blocked goroutine\) is reported. It backs the opt\-in liveness check of server.liveness\_scheduler\_stall \(\#539\).
 
 <a name="Scheduler.Step"></a>
-### func \(\*Scheduler\) [Step](<https://github.com/dexadata/dexaflow/blob/main/internal/scheduler/scheduler.go#L748>)
+### func \(\*Scheduler\) [Step](<https://github.com/dexadata/dexaflow/blob/main/internal/scheduler/scheduler.go#L746>)
 
 ```go
 func (s *Scheduler) Step(ctx context.Context) error
@@ -821,7 +819,7 @@ func (s *Scheduler) Step(ctx context.Context) error
 Step runs one deterministic scheduling iteration over every active run. Each run is advanced in isolation \(see advanceSafely\): a panic or error in one run is contained, so it never blocks the other runs or new\-run creation. The reaper runs independently of createDueRuns success, they share no dependency, and silencing the reaper when scheduling has a hiccup would let orphans accumulate exactly when the operator is most likely to notice the counter is wrong. The first non\-nil infra\-level error is returned \(logged by the caller\); the later phases still execute.
 
 <a name="Scheduler.SteppingDown"></a>
-### func \(\*Scheduler\) [SteppingDown](<https://github.com/dexadata/dexaflow/blob/main/internal/scheduler/scheduler.go#L585>)
+### func \(\*Scheduler\) [SteppingDown](<https://github.com/dexadata/dexaflow/blob/main/internal/scheduler/scheduler.go#L583>)
 
 ```go
 func (s *Scheduler) SteppingDown() bool
@@ -839,7 +837,7 @@ func (s *Scheduler) Wake()
 Wake asks the loop to tick now instead of at the next interval, typically because a task just settled and its downstreams may be ready. It never blocks: wakes coalesce into at most one pending tick. With eager promotion off the loop does not listen and Wake does nothing. A woken follower runs its usual empty tick, so leader\-only semantics are unchanged.
 
 <a name="Store"></a>
-## type [Store](<https://github.com/dexadata/dexaflow/blob/main/internal/scheduler/scheduler.go#L213-L311>)
+## type [Store](<https://github.com/dexadata/dexaflow/blob/main/internal/scheduler/scheduler.go#L211-L309>)
 
 Store is the scheduler's view of persistent state. The concrete implementation is sqlc\-backed; tests use a fake.
 
@@ -979,7 +977,7 @@ func (g *TaskGraph) Lookup(taskID string) (int, bool)
 Lookup returns the position of the task with the given id \(its first occurrence\), or false when the task is not in the list.
 
 <a name="TenantStopper"></a>
-## type [TenantStopper](<https://github.com/dexadata/dexaflow/blob/main/internal/scheduler/scheduler.go#L1146-L1148>)
+## type [TenantStopper](<https://github.com/dexadata/dexaflow/blob/main/internal/scheduler/scheduler.go#L1132-L1134>)
 
 TenantStopper is the optional store seam of the stop suspension mode \(\#2181\): it fails the queued and running task instances of a tenant suspended in stop mode and returns how many it failed. A store without it leaves stop applying only what drain does.
 

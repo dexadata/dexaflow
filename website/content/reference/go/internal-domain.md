@@ -948,7 +948,7 @@ type ConnectionPatch struct {
 ```
 
 <a name="CurrentVersionChange"></a>
-## type [CurrentVersionChange](<https://github.com/dexadata/dexaflow/blob/main/internal/domain/run.go#L124-L128>)
+## type [CurrentVersionChange](<https://github.com/dexadata/dexaflow/blob/main/internal/domain/run.go#L127-L131>)
 
 CurrentVersionChange is the outcome of making a version current: the version that was current before \(From\), the one that is current now \(To\), and whether anything changed \(false when To was already current\).
 
@@ -961,22 +961,25 @@ type CurrentVersionChange struct {
 ```
 
 <a name="DAG"></a>
-## type [DAG](<https://github.com/dexadata/dexaflow/blob/main/internal/domain/run.go#L10-L28>)
+## type [DAG](<https://github.com/dexadata/dexaflow/blob/main/internal/domain/run.go#L10-L31>)
 
 DAG is a registered DAG with its scheduling metadata \(distinct from DAGSpec, which is the compiled artifact\).
 
 ```go
 type DAG struct {
-    DagID          string
-    Description    string
-    Owner          string
-    Tags           []string
-    Schedule       *string
-    ScheduleTZ     string
-    StartDate      *time.Time
-    IsPaused       bool
-    IsActive       bool
-    MaxActiveRuns  int
+    DagID         string
+    Description   string
+    Owner         string
+    Tags          []string
+    Schedule      *string
+    ScheduleTZ    string
+    StartDate     *time.Time
+    IsPaused      bool
+    IsActive      bool
+    MaxActiveRuns int
+    // MaxActiveTasks is the max_active_tasks of the DAG's current version, a
+    // cap per DAG run (#2427); zero when the DAG declares none (no cap).
+    MaxActiveTasks int
     Catchup        bool
     LastParsedTime *time.Time
     // CurrentVersion is the LABEL of the DAG's current registered version, empty
@@ -1006,9 +1009,9 @@ type DAGSpec struct {
     StartDate     string   `json:"start_date,omitempty"`
     EndDate       *string  `json:"end_date,omitempty"`
     MaxActiveRuns int      `json:"max_active_runs,omitempty"`
-    // MaxActiveTasks caps how many of this DAG's task instances may be
-    // concurrently non-terminal (queued or running) across all of its active
-    // runs — Airflow's per-DAG max_active_tasks (ADR 0053 Stage 1). Zero (the
+    // MaxActiveTasks caps how many task instances of each run of this DAG may
+    // be queued or running at once, Airflow 3's max_active_tasks, which is per
+    // DAG run (ADR 0053 Stage 1, #2427). Zero (the
     // default) means unlimited: a DAG that never sets it, and all of Lite, plans
     // exactly as before. The scheduler enforces it in PlanRun's scheduled→queued
     // admission gate.
@@ -1101,7 +1104,7 @@ func (d *DAGSpec) ValidateSchedule() error
 ValidateSchedule checks that a DAG's cron schedule is parseable. An empty or absent schedule \(manual\-only\) and the recognized non\-cron Airflow schedules \(@once, @continuous\) are valid. A malformed cron expression, a 4\-field cron, a typo, is rejected here so it fails loudly at compile time; otherwise the scheduler silently can't parse it and the DAG simply never runs, with no error surfaced anywhere \(the worst failure mode\). The parser is robfig/cron's ParseStandard \(through ParseCron\), the same one the scheduler uses, so what validates here is exactly what the scheduler can run \(see scheduler/cron.go\).
 
 <a name="DagFilter"></a>
-## type [DagFilter](<https://github.com/dexadata/dexaflow/blob/main/internal/domain/run.go#L31-L46>)
+## type [DagFilter](<https://github.com/dexadata/dexaflow/blob/main/internal/domain/run.go#L34-L49>)
 
 DagFilter specifies filtering, searching, and sorting options for listing DAGs.
 
@@ -1125,7 +1128,7 @@ type DagFilter struct {
 ```
 
 <a name="DagPromotion"></a>
-## type [DagPromotion](<https://github.com/dexadata/dexaflow/blob/main/internal/domain/run.go#L161-L164>)
+## type [DagPromotion](<https://github.com/dexadata/dexaflow/blob/main/internal/domain/run.go#L164-L167>)
 
 DagPromotion names where a promoted version came from: the source target's name as the promoting CLI knows it, and the source control plane's URL \(empty when not sent\).
 
@@ -1137,7 +1140,7 @@ type DagPromotion struct {
 ```
 
 <a name="DagRegistered"></a>
-## type [DagRegistered](<https://github.com/dexadata/dexaflow/blob/main/internal/domain/run.go#L171-L175>)
+## type [DagRegistered](<https://github.com/dexadata/dexaflow/blob/main/internal/domain/run.go#L174-L178>)
 
 DagRegistered is the outcome of a register: whether a new version was created \(false when the content was already registered\), whether the register created the DAG itself \(its first version\), and the DAG's is\_paused afterwards. For a dry run each field is what the register would have done.
 
@@ -1150,7 +1153,7 @@ type DagRegistered struct {
 ```
 
 <a name="DagRegistration"></a>
-## type [DagRegistration](<https://github.com/dexadata/dexaflow/blob/main/internal/domain/run.go#L147-L156>)
+## type [DagRegistration](<https://github.com/dexadata/dexaflow/blob/main/internal/domain/run.go#L150-L159>)
 
 DagRegistration is one register of a compiled DAG version: the spec, its canonical hash, the registering user \(empty when none\) and an optional is\_paused for the DAG. IsPaused nil keeps Airflow's rule: a DAG the register creates starts paused per its is\_paused\_upon\_creation or the server's dags\_are\_paused\_at\_creation, and an existing DAG keeps its state. IsPaused set is the DAG's state after the register, created or not. DryRun runs every check and step of the register and then undoes it, so the outcome says what the register would do and nothing is written, audit included. PromotedFrom, when set, names the control plane the version was promoted from \(\`dexaflow promote\`\), recorded in the register's audit entry. BuildInfo, when set, is where the version was built, stored with the version the register creates and recorded in its audit entry; a register that creates no version \(the content is already registered\) changes no build info. RequireDigest is the deploy.require\_digest the register was admitted under \(\#1703\); while it is warn or enforce, the audit entry records it and whether the image is pinned by digest.
 
@@ -1168,7 +1171,7 @@ type DagRegistration struct {
 ```
 
 <a name="DagRun"></a>
-## type [DagRun](<https://github.com/dexadata/dexaflow/blob/main/internal/domain/run.go#L178-L200>)
+## type [DagRun](<https://github.com/dexadata/dexaflow/blob/main/internal/domain/run.go#L181-L203>)
 
 DagRun is an execution of a DAG, identified by dag\_id \+ run\_id.
 
@@ -1199,7 +1202,7 @@ type DagRun struct {
 ```
 
 <a name="DagRunFilter"></a>
-## type [DagRunFilter](<https://github.com/dexadata/dexaflow/blob/main/internal/domain/run.go#L49-L60>)
+## type [DagRunFilter](<https://github.com/dexadata/dexaflow/blob/main/internal/domain/run.go#L52-L63>)
 
 DagRunFilter specifies filtering options for listing DAG runs.
 
@@ -1261,7 +1264,7 @@ func (s DagRunState) Valid() bool
 Valid reports whether s is one of the dag\_run\_state values. A raw value the database cannot cast must be refused before the query, as the client's mistake, not a server fault \(\#2202\).
 
 <a name="DagSetCurrent"></a>
-## type [DagSetCurrent](<https://github.com/dexadata/dexaflow/blob/main/internal/domain/run.go#L113-L119>)
+## type [DagSetCurrent](<https://github.com/dexadata/dexaflow/blob/main/internal/domain/run.go#L116-L122>)
 
 DagSetCurrent is one request to make a registered version of DagID current again \(\#1702\): the version Selector names, on behalf of ActorUserID \(empty when none\), after Admit accepts its spec. RequireDigest is the deploy.require\_digest it was admitted under \(\#1703\); while it is warn or enforce, the audit entry records it and whether the image is pinned.
 
@@ -1290,7 +1293,7 @@ type DagStats struct {
 ```
 
 <a name="DagVersion"></a>
-## type [DagVersion](<https://github.com/dexadata/dexaflow/blob/main/internal/domain/run.go#L74-L99>)
+## type [DagVersion](<https://github.com/dexadata/dexaflow/blob/main/internal/domain/run.go#L77-L102>)
 
 DagVersion is a registered version of a DAG. VersionNumber is the 1\-based ordinal the UI uses \(the stored version label is free\-form\).
 
@@ -1324,7 +1327,7 @@ type DagVersion struct {
 ```
 
 <a name="DagVersionSelector"></a>
-## type [DagVersionSelector](<https://github.com/dexadata/dexaflow/blob/main/internal/domain/run.go#L103-L106>)
+## type [DagVersionSelector](<https://github.com/dexadata/dexaflow/blob/main/internal/domain/run.go#L106-L109>)
 
 DagVersionSelector names one registered version of a DAG, by its label \(Version\) or by its version\_number \(Number\). Exactly one is set.
 
@@ -2304,7 +2307,7 @@ type TaskConfig struct {
 ```
 
 <a name="TaskInstance"></a>
-## type [TaskInstance](<https://github.com/dexadata/dexaflow/blob/main/internal/domain/run.go#L203-L241>)
+## type [TaskInstance](<https://github.com/dexadata/dexaflow/blob/main/internal/domain/run.go#L206-L244>)
 
 TaskInstance is an execution of a task within a DagRun.
 
@@ -2351,7 +2354,7 @@ type TaskInstance struct {
 ```
 
 <a name="TaskInstanceFilter"></a>
-## type [TaskInstanceFilter](<https://github.com/dexadata/dexaflow/blob/main/internal/domain/run.go#L63-L70>)
+## type [TaskInstanceFilter](<https://github.com/dexadata/dexaflow/blob/main/internal/domain/run.go#L66-L73>)
 
 TaskInstanceFilter specifies filtering options for listing task instances.
 

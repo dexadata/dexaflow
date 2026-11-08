@@ -108,6 +108,7 @@ func TestCorrectnessInvariantsFireEvenInsideAFaultWindow(t *testing.T) {
 		{"success archived into history", func(s *sample) { s.SuccessInHistory = 1 }, "success_archived"},
 		{"upstream-failed task ran", func(s *sample) { s.UpstreamFailedExecuted = 1 }, "upstream_failed_task_ran"},
 		{"dag import error", func(s *sample) { s.ImportErrors = 1 }, "import_error"},
+		{"fan-out past max_active_tasks", func(s *sample) { s.FanoutMaxActive = 5 }, "max_active_tasks_exceeded"},
 		{"leader stepped down", func(s *sample) { s.StepDowns = 1 }, "leader_churn"},
 		{"task had no executor", func(s *sample) { s.Undispatchable = 1 }, "undispatchable_task"},
 	}

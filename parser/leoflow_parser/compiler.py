@@ -85,6 +85,9 @@ def compile_dag(
     mar = getattr(dag, "max_active_runs", None)
     if isinstance(mar, int) and not isinstance(mar, bool) and mar > 0:
         spec["max_active_runs"] = mar
+    mat = _max_active_tasks(dag)
+    if mat is not None:
+        spec["max_active_tasks"] = mat
     if getattr(dag, "catchup", None) is True:
         spec["catchup"] = True
     # Both values are kept: False makes a DAG start active on a server that
@@ -94,6 +97,39 @@ def compile_dag(
     if isinstance(paused, bool):
         spec["is_paused_upon_creation"] = paused
     return spec
+
+
+_MAX_ACTIVE_TASKS_DOCS = (
+    "https://dexaflow.dexadata.ai/author-dags/dag-authoring/"
+    "#task-concurrency-per-run-max_active_tasks"
+)
+
+
+def _max_active_tasks(dag) -> int | None:
+    """The DAG's max_active_tasks, a cap per DAG run as in Airflow 3 (#2427).
+
+    None when unset, so a DAG that sets none keeps its compiled shape. A value
+    that is not a positive integer is refused rather than dropped: the author
+    asked for a cap, and running without one would be a silent change. The
+    Airflow 2 name ``concurrency``, removed in Airflow 3, is refused by name.
+    """
+    if hasattr(dag, "concurrency"):
+        raise ValueError(
+            f"DAG {dag.dag_id!r} sets concurrency={dag.concurrency!r}, which Airflow 3 "
+            "removed. Use max_active_tasks instead: it caps the task instances active "
+            f"at once in each run of the DAG (see {_MAX_ACTIVE_TASKS_DOCS})."
+        )
+    value = getattr(dag, "max_active_tasks", None)
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+        raise ValueError(
+            f"DAG {dag.dag_id!r} sets max_active_tasks={value!r}; it must be a "
+            "positive integer, the number of task instances that may be queued or "
+            "running at once in each run of the DAG. Remove it for no cap "
+            f"(see {_MAX_ACTIVE_TASKS_DOCS})."
+        )
+    return value
 
 
 def _load_config(path: str) -> dict[str, Any]:

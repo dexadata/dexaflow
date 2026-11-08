@@ -203,8 +203,10 @@ return value.
 
 ## Beyond the basics
 
-- **`max_active_tasks`** caps how many map tasks run in parallel (cluster
-  pressure, GPU slots). Set it on the DAG.
+- **`max_active_tasks`** caps how many map tasks of one run run in parallel
+  (cluster pressure, GPU slots). Set it on the DAG; it applies to each run,
+  as in Airflow 3, so use a [pool](/operate/pools/) to cap tasks across runs
+  ([Task concurrency per run](/author-dags/dag-authoring/#task-concurrency-per-run-max_active_tasks)).
 - **`retries`** + **`retry_delay_seconds`** make each map task survive
   transient infrastructure flakes.
 - **Per-task `resources`** in `dexaflow.yaml` give each trial its own CPU /

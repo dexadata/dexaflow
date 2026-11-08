@@ -126,6 +126,26 @@ in 3.0 and relocated to `apache-airflow-providers-standard`. Importing one (e.g.
 message pointing at the replacement — use
 `from airflow.providers.standard.operators.bash import BashOperator` instead.
 
+### Task concurrency per run (`max_active_tasks`)
+
+`max_active_tasks` on `DAG(...)` or `@dag(...)` caps how many task instances of
+**each run** of the DAG may be queued or running at once, as in Airflow 3. The
+other ready tasks of the run wait in `scheduled` until one of its tasks
+finishes. Two runs of the DAG each get the full cap, so the DAG as a whole can
+have up to `max_active_runs` times `max_active_tasks` tasks active:
+
+```python
+with DAG("fan_out", schedule="@daily", max_active_runs=2, max_active_tasks=4):
+    ...  # at most 4 tasks of each run at once, 8 for the DAG
+```
+
+Unset means no cap. The value must be a positive integer; anything else is
+refused at compile. `concurrency`, the Airflow 2 name that Airflow 3 removed,
+is refused with a message naming `max_active_tasks`. To cap tasks across all
+runs of a DAG, or across DAGs, use a [pool](/operate/pools/). Before 0.5.11
+the compiler dropped `max_active_tasks`, so a DAG that set it ran without a
+cap ([#2427](https://github.com/dexadata/dexaflow/issues/2427)).
+
 ### Supported task types
 
 Dexaflow runs the common types on a **native fast path** and everything else — any
@@ -366,6 +386,9 @@ issue.
   paused after failed runs, so the DAG behaved as if they were unset. Their
   defaults (`None`, `0`) still compile. Use `execution_timeout` on the tasks
   to bound a run.
+- **`concurrency=` on the DAG**: refused at compile; Airflow 3 removed it. Use
+  [`max_active_tasks`](#task-concurrency-per-run-max_active_tasks), a cap per
+  DAG run.
 
 **Operators and sensors**
 
