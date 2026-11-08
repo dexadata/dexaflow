@@ -283,7 +283,7 @@ response says only which *kind* of failure it was:
 |---|---|---|
 | 400 | `the request was rejected by a validation rule` | Input a caller can fix. Rules Dexaflow states itself (an unknown role, an undeclared variable or connection) name the offending value instead. |
 | 404 | `the requested resource does not exist` | No such DAG, run, task instance, variable, connection or pool for this tenant. |
-| 409 | `the request conflicts with the current state of the resource` | A duplicate write, or a rule such as the `max_active_runs` cap, which names itself. |
+| 409 | `the request conflicts with the current state of the resource` | A duplicate write, or a rule that names itself, such as a suspended tenant. A trigger at the `max_active_runs` cap is not one: since 0.5.11 it answers 201 with the run queued. |
 | 499 | `the client closed the request before it completed` | The caller went away (the UI supersedes in-flight grid requests routinely). Not a server fault. |
 | 500 | `the request could not be completed; see the server logs` | A server-side failure. The cause is in the log line for that request. |
 

@@ -116,8 +116,9 @@ Take **B**.
    `trigger_run_id` or, when absent, a deterministic id derived from the
    source run and task. The insert is idempotent on that id, so a retry or a
    leader change never starts a second run. `reset_dag_run=True` clears the
-   existing run instead of failing on the duplicate. The run honors the
-   target DAG's `max_active_runs` and paused state, records the source DAG,
+   existing run instead of failing on the duplicate. The run is created
+   `queued` and waits under the target DAG's `max_active_runs` and paused
+   state, as a manual trigger does since #2426; it records the source DAG,
    run and task, and writes an audit event. With `wait_for_completion=True`
    the task then waits on that run exactly as in item 2; otherwise it
    succeeds once the run exists.

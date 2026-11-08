@@ -1366,6 +1366,22 @@ policy:
 migrate -path migrations -database "$DATABASE_URL" goto 58
 ```
 
+### Upgrading to 0.5.11: a trigger at max_active_runs is queued
+
+A manual trigger of a DAG that already has `max_active_runs` runs queued or
+running is now accepted with the run in `queued`, as Airflow does
+([#2426](https://github.com/dexadata/dexaflow/issues/2426)); the scheduler
+starts it when a slot frees, oldest logical date first. Until 0.5.11 it
+answered 409 (`dag "x" is at max_active_runs cap of N`). The same holds for
+`dexaflow runs trigger`, `dexaflow deploy --trigger` and any script that calls
+`POST /api/v2/dags/{dag_id}/dagRuns`.
+
+A caller that relied on the 409 to drop a trigger while the DAG was busy now
+queues every one of them. To keep dropping them, check the DAG's active runs
+before triggering (`GET /api/v2/dags/{dag_id}/dagRuns?state=queued&state=running`).
+Scheduled runs are unchanged: the schedule still creates none while the DAG is
+at the cap. The tenant's `max_runs_per_day` still refuses a trigger with 403.
+
 ### Upgrading to 0.5.12: the live log tail is published on demand
 
 Under the `cluster` profile, `logs.tail.publish` now renders `on_demand` when

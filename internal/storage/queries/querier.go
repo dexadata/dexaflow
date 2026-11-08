@@ -80,9 +80,6 @@ type Querier interface {
 	// keeps every tenant's ladder equal to default's as later migrations change it.
 	CopyDefaultSystemRoles(ctx context.Context, tenantID pgtype.UUID) error
 	CountAPITokens(ctx context.Context, arg CountAPITokensParams) (int64, error)
-	// Counts queued+running runs for a single DAG; used by the manual-trigger
-	// path to enforce max_active_runs (#200) before insert.
-	CountActiveDagRunsByDagID(ctx context.Context, arg CountActiveDagRunsByDagIDParams) (int64, error)
 	CountAuditLogs(ctx context.Context, arg CountAuditLogsParams) (int64, error)
 	CountConnections(ctx context.Context, tenantID pgtype.UUID) (int64, error)
 	CountConnectionsFiltered(ctx context.Context, arg CountConnectionsFilteredParams) (int64, error)
