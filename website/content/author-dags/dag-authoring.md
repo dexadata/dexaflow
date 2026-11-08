@@ -376,6 +376,16 @@ issue.
   they were not set. Their default values (`False`, `False`, `1`) still
   compile. `depends_on_past` and `wait_for_downstream` are planned in
   [#2350](https://github.com/dexadata/dexaflow/issues/2350).
+- **`max_active_tis_per_dag` and `max_active_tis_per_dagrun`**: refused at
+  compile from 0.5.10, on a task or in `default_args`, for the same reason:
+  the cap was dropped and the task ran without it. Unset (`None`) still
+  compiles. Planned in
+  [#2428](https://github.com/dexadata/dexaflow/issues/2428).
+- **`dagrun_timeout` and `max_consecutive_failed_dag_runs`** on the DAG:
+  refused at compile from 0.5.10. A run never timed out and the DAG never
+  paused after failed runs, so the DAG behaved as if they were unset. Their
+  defaults (`None`, `0`) still compile. Use `execution_timeout` on the tasks
+  to bound a run.
 - **`concurrency=` on the DAG**: refused at compile; Airflow 3 removed it. Use
   [`max_active_tasks`](#task-concurrency-per-run-max_active_tasks), a cap per
   DAG run.

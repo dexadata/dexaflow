@@ -5,7 +5,7 @@ weight: 1050
 description: "ADR 0105: in split mode the scheduler Deployment may run two replicas, a leader and a standby on the same advisory lock, with a PodDisruptionBudget of its own, so the restricted API identity of ADR 0049 no longer costs dispatch failover."
 ---
 
-**Status:** Proposed
+**Status:** Accepted
 **Date:** 2026-11-06
 **Amends:** ADR 0049 (split api and scheduler roles), which pinned the scheduler Deployment to one replica
 **Relates:** ADR 0009 (leader election), ADR 0031 (the database as the source of truth)

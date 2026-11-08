@@ -571,7 +571,10 @@ func resetTaskInstances(ctx context.Context, q *queries.Queries, run queries.Dag
 
 // SetDagRunState sets a DAG run's state directly, backing the UI's mark run
 // success/failed actions. Terminal states stamp ended_at; re-opening to a
-// non-terminal state clears it. started_at is preserved.
+// non-terminal state clears it. started_at is preserved. A terminal state is a
+// verdict on the run's work too: in the same transaction its unfinished task
+// instances are settled as Airflow 3 does, so a running attempt is told to
+// stop and no task is left waiting forever (#2425).
 func (r *Repository) SetDagRunState(ctx context.Context, tenant, dagID, runID, state string) error {
 	dag, err := r.resolveDag(ctx, tenant, dagID)
 	if err != nil {
@@ -591,10 +594,26 @@ func (r *Repository) SetDagRunState(ctx context.Context, tenant, dagID, runID, s
 	if domain.DagRunState(state) == domain.DagRunStateQueued {
 		started = pgtype.Timestamptz{}
 	}
-	if _, err := r.q.UpdateDagRunState(ctx, queries.UpdateDagRunStateParams{
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("beginning run state tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }() //nolint:errcheck // best-effort; the commit path returns the meaningful error
+	qtx := r.q.WithTx(tx)
+	if _, err := qtx.UpdateDagRunState(ctx, queries.UpdateDagRunStateParams{
 		ID: run.ID, State: queries.DagRunState(state), StartedAt: started, EndedAt: ended, TenantID: run.TenantID,
 	}); err != nil {
 		return fmt.Errorf("setting dag run state: %w", err)
+	}
+	if domain.DagRunState(state).IsTerminal() {
+		if _, err := qtx.SettleTaskInstancesForRunVerdict(ctx, queries.SettleTaskInstancesForRunVerdictParams{
+			Verdict: state, TenantID: run.TenantID, DagRunID: run.ID,
+		}); err != nil {
+			return fmt.Errorf("settling the task instances of the run: %w", err)
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("committing run state tx: %w", err)
 	}
 	return nil
 }
