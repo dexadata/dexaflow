@@ -1,0 +1,14 @@
+kind: Changed
+body: |-
+  **`max_active_tasks` set in a `dag.py` is enforced, per DAG run as in Airflow
+  3** ([#2427](https://github.com/dexadata/dexaflow/issues/2427)). The compiler
+  used to drop it, so a DAG that set it ran without a cap, and the scheduler
+  counted the cap across all runs of the DAG, the Airflow 2 meaning. Now each
+  run may have that many task instances queued or running at once, and two
+  runs each get the full cap. A value that is not a positive integer is refused
+  at compile, and so is `concurrency`, the Airflow 2 name Airflow 3 removed,
+  with a message naming `max_active_tasks`. The UI and the DAG details API show
+  the DAG's own value, or nothing when it sets none, instead of a constant 16.
+  A DAG that set either argument needs a compile and a deploy; see
+  [the upgrade note](https://dexaflow.dexadata.ai/operate/upgrades/#upgrading-to-0511-max_active_tasks-is-compiled-per-dag-run).
+time: 2026-11-08T02:30:00.000000000+00:00

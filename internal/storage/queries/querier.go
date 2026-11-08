@@ -356,7 +356,9 @@ type Querier interface {
 	// Unscoped, like GetDagVersionByID: the spec cache's batch fill for a warm
 	// pool reconcile tick, which reads the versions of its own targets (#1707).
 	GetDagVersionsByIDs(ctx context.Context, ids []pgtype.UUID) ([]DagVersion, error)
-	// See ListDagsWithVersion.
+	// See ListDagsWithVersion. max_active_tasks is read from the current version's
+	// spec (zero when it declares none), the cap per DAG run the scheduler applies
+	// (#2427); it has no dags column since only these reads show it.
 	GetDagWithVersion(ctx context.Context, arg GetDagWithVersionParams) (GetDagWithVersionRow, error)
 	GetDefaultTenant(ctx context.Context) (GetDefaultTenantRow, error)
 	GetPool(ctx context.Context, arg GetPoolParams) (GetPoolRow, error)

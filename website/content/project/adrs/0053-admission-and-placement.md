@@ -108,6 +108,8 @@ task ready → [ max_active_runs   ]  RUN-level, per DAG   — EXISTS (hasHeadro
 - **`max_active_tasks` (per-DAG):** caps concurrently-active (`queued` +
   `running`) task instances across all runs of one DAG. This is the axis
   `max_active_runs` cannot express — it bounds the fan-out, not the run count.
+  *Amended 2026-11-08: the cap is per DAG run, as in Airflow 3; see the
+  amendment below.*
 - **Named pools (cross-DAG):** a pool is a named slot budget that tasks from
   *different* DAGs draw against (the Airflow semantic the stub UI already
   advertises). The `pool` column becomes a real, read column on the task spec;
@@ -404,6 +406,36 @@ Ordered by value-over-blast and by the §5.1 security gate:
   ConfigMap GC-anchor with `ownerReferences` cascade GC. **Blocked on ADR 0055
   (secret scoping #59 + token liveness/revocation, remainder of #476/ADR 0045)** —
   must not land until a warm pod cannot widen the B1 exfiltration window.
+
+## Amendment (2026-11-08): `max_active_tasks` is per DAG run, and DAG files can set it
+
+Two findings of the parallelism study of 2026-11-05 (#2427):
+
+1. **No DAG file could set the cap.** The scheduler enforced `max_active_tasks`
+   from the compiled spec, but the parser never captured the argument, so a
+   `dag.py` with `max_active_tasks=4` compiled without it and ran uncapped. The
+   UI showed a constant 16 that nothing enforced.
+2. **The gate had the Airflow 2 meaning.** Stage 1 counted active task
+   instances across every run of the DAG. Airflow 3.0 made `max_active_tasks`
+   a cap per DAG run (apache/airflow#42953); a DAG migrated from Airflow 3
+   with `max_active_runs=3, max_active_tasks=4` expects up to 12 active tasks,
+   and got 4.
+
+Decision:
+
+- The parser captures `max_active_tasks` on `DAG(...)` and `@dag(...)`, emits
+  it when it is a positive integer, and refuses any other value. It refuses
+  the Airflow 2 alias `concurrency`, removed in Airflow 3, naming
+  `max_active_tasks`. Unset stays unlimited, and the compiled `dag.json` of a
+  DAG that sets neither is unchanged.
+- The gate counts the queued and running task instances of the run being
+  planned, and no other run. One run's admissions in a tick no longer reduce
+  a sibling run's headroom, so the within-tick folding across runs is gone;
+  same-tick promotion still charges what it admits within the run.
+- The UI and the details API report the DAG's declared value, or null when it
+  declares none.
+- A cap across all runs of a DAG stays expressible with a pool (Stage 3), or
+  with `max_active_runs` times the per-run cap.
 
 ## References
 

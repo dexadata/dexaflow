@@ -114,6 +114,10 @@ type sample struct {
 	OverRetriedTIs            int64 `json:"over_retried_tis"`
 	SuccessInHistory          int64 `json:"success_rows_in_history"`
 	UpstreamFailedExecuted    int64 `json:"never_runs_executed"`
+	// FanoutMaxActive is the most task instances queued or running at once in
+	// any one soak_fanout run. Its DAG sets max_active_tasks=4, a cap per run
+	// (#2427), so more than 4 means the cap did not hold.
+	FanoutMaxActive int64 `json:"fanout_max_active_tis"`
 
 	// Product counters scraped from the metrics listener. `metric` and not
 	// float64: an unscraped counter is NaN, encoding/json refuses NaN, and a
@@ -356,11 +360,18 @@ SELECT
       AND ti.state IN ('none','scheduled','queued','running','up_for_retry','up_for_reschedule')),
   (SELECT count(*) FROM task_instances WHERE try_number > max_tries),
   (SELECT count(*) FROM task_instance_history WHERE state = 'success'),
-  (SELECT count(*) FROM task_instances WHERE task_id = 'never_runs' AND started_at IS NOT NULL)`
+  (SELECT count(*) FROM task_instances WHERE task_id = 'never_runs' AND started_at IS NOT NULL),
+  (SELECT COALESCE(max(n), 0) FROM (
+     SELECT count(*) AS n FROM task_instances ti
+       JOIN dag_runs r ON r.id = ti.dag_run_id
+       JOIN dags d ON d.id = r.dag_id
+      WHERE d.dag_id = 'soak_fanout' AND ti.state IN ('queued','running')
+      GROUP BY ti.dag_run_id) per_run)`
 
 func (c *collector) correctness(ctx context.Context, s *sample) error {
 	if err := c.pool.QueryRow(ctx, correctnessQuery).Scan(
 		&s.TerminalRunsWithActiveTIs, &s.OverRetriedTIs, &s.SuccessInHistory, &s.UpstreamFailedExecuted,
+		&s.FanoutMaxActive,
 	); err != nil {
 		return fmt.Errorf("correctness invariants: %w", err)
 	}

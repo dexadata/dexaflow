@@ -51,7 +51,8 @@ LIMIT $2 OFFSET $3;
 -- this against the RUN's bundle_version and offers "Run with latest bundle
 -- version" only when they differ, so leaving it null either hides the control or
 -- shows it unconditionally — neither of which tells the operator the truth.
-SELECT d.*, v.version AS current_version_label
+SELECT d.*, v.version AS current_version_label,
+       COALESCE((v.spec->>'max_active_tasks')::integer, 0)::integer AS max_active_tasks
 FROM dags d
 LEFT JOIN dag_versions v ON v.id = d.current_version_id
 WHERE d.tenant_id = $1 AND d.is_active = true
@@ -59,8 +60,11 @@ ORDER BY d.dag_id
 LIMIT $2 OFFSET $3;
 
 -- name: GetDagWithVersion :one
--- See ListDagsWithVersion.
-SELECT d.*, v.version AS current_version_label
+-- See ListDagsWithVersion. max_active_tasks is read from the current version's
+-- spec (zero when it declares none), the cap per DAG run the scheduler applies
+-- (#2427); it has no dags column since only these reads show it.
+SELECT d.*, v.version AS current_version_label,
+       COALESCE((v.spec->>'max_active_tasks')::integer, 0)::integer AS max_active_tasks
 FROM dags d
 LEFT JOIN dag_versions v ON v.id = d.current_version_id
 WHERE d.tenant_id = $1 AND d.dag_id = $2;
@@ -198,7 +202,8 @@ WHERE ((@prewarm::boolean AND d.is_active AND NOT d.is_paused) OR d.id = ANY(@da
 -- (#1928). Patterns are SQL LIKE expressions matched case-insensitively; a
 -- display name is the dag_id. Sorting by next_dagrun is not done here: the next
 -- run is computed per DAG after the page is read, so it falls back to dag_id.
-SELECT d.*, v.version AS current_version_label
+SELECT d.*, v.version AS current_version_label,
+       COALESCE((v.spec->>'max_active_tasks')::integer, 0)::integer AS max_active_tasks
 FROM dags d
 LEFT JOIN dag_versions v ON v.id = d.current_version_id
 LEFT JOIN LATERAL (

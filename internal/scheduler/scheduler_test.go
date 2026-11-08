@@ -514,13 +514,11 @@ func TestStepSchedulesRootTask(t *testing.T) {
 	}
 }
 
-// TestStepMaxActiveTasksCapsAcrossSiblingRuns: two runs of the SAME DAG, each
-// with ready tasks, draw on ONE per-DAG max_active_tasks budget. A single tick
-// must not promote more than the cap across both runs — the per-DAG (not
-// per-run) semantics of Airflow's max_active_tasks (ADR 0053 Stage 1). Without
-// the within-tick admission threading, each run would independently promote up
-// to the cap and the DAG would overshoot.
-func TestStepMaxActiveTasksCapsAcrossSiblingRuns(t *testing.T) {
+// TestStepMaxActiveTasksCapsEachRun: two runs of the SAME DAG, each with three
+// ready tasks under max_active_tasks=2, each admit two in one tick, four in all.
+// The cap is per DAG run, as in Airflow 3 (apache/airflow#42953, #2427), so one
+// run's admissions never take another run's headroom.
+func TestStepMaxActiveTasksCapsEachRun(t *testing.T) {
 	mk := func(runID string) RunState {
 		tasks := independent(3)
 		return RunState{
@@ -535,8 +533,44 @@ func TestStepMaxActiveTasksCapsAcrossSiblingRuns(t *testing.T) {
 	if err := s.Step(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if len(d.dispatched) != 2 {
-		t.Errorf("dispatched %d tasks across sibling runs, want 2 (per-DAG max_active_tasks)", len(d.dispatched))
+	perRun := map[string]int{}
+	for _, tr := range store.transitions {
+		if tr.to == domain.TaskStateQueued {
+			perRun[tr.runID]++
+		}
+	}
+	if perRun["r1"] != 2 || perRun["r2"] != 2 || len(d.dispatched) != 4 {
+		t.Errorf("admitted per run %v, dispatched %d; want 2 in each run and 4 in all (max_active_tasks per run)", perRun, len(d.dispatched))
+	}
+}
+
+// TestStepActiveTasksOfOneRunDoNotReduceAnother: run r1 already has two
+// running tasks at max_active_tasks=2 and admits none of its ready one; run r2
+// of the same DAG still admits two of its three. Active task instances count
+// against their own run only (#2427).
+func TestStepActiveTasksOfOneRunDoNotReduceAnother(t *testing.T) {
+	tasks := independent(3)
+	full := scheduledStates(tasks)
+	full[tasks[0].TaskID] = domain.TaskStateRunning
+	full[tasks[1].TaskID] = domain.TaskStateRunning
+	store := newFakeStore(
+		RunState{RunID: "r1", DagID: "etl", State: domain.DagRunStateRunning, Tasks: tasks, States: full, MaxActiveTasks: 2},
+		RunState{RunID: "r2", DagID: "etl", State: domain.DagRunStateRunning, Tasks: tasks, States: scheduledStates(tasks), MaxActiveTasks: 2},
+	)
+	d := &fakeDispatcher{}
+	s := newScheduler(store)
+	s.SetDispatcher(d)
+	if err := s.Step(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	perRun := map[string]int{}
+	for _, tr := range store.transitions {
+		if tr.to == domain.TaskStateQueued {
+			perRun[tr.runID]++
+		}
+	}
+	if perRun["r1"] != 0 || perRun["r2"] != 2 {
+		t.Errorf("admitted per run %v, want none in the full r1 and 2 in r2", perRun)
 	}
 }
 

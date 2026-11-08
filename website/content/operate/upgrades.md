@@ -1366,6 +1366,25 @@ policy:
 migrate -path migrations -database "$DATABASE_URL" goto 58
 ```
 
+### Upgrading to 0.5.11: max_active_tasks is compiled, per DAG run
+
+`max_active_tasks` on `DAG(...)` or `@dag(...)` now reaches the scheduler
+([#2427](https://github.com/dexadata/dexaflow/issues/2427)). Until 0.5.11 the
+compiler dropped it, so a DAG that set it ran without a cap. It is a cap per
+DAG run, as in Airflow 3: each run may have that many task instances queued or
+running at once.
+
+| Your DAG | What the upgrade does |
+|---|---|
+| Sets `max_active_tasks` in `dag.py` | After its next compile and deploy, each run is capped. A wide fan-out runs in waves where it ran all at once before. |
+| Sets `concurrency` (the Airflow 2 name) | `dexaflow compile` refuses it. Rename it to `max_active_tasks`. The version already deployed keeps running, uncapped. |
+| Sets `max_active_tasks` with a value that is not a positive integer | `dexaflow compile` refuses it. Remove it for no cap. |
+| A hand-written `dag.json` with `max_active_tasks` | The cap now applies to each run instead of to all runs of the DAG together, so the DAG can have up to `max_active_runs` times as many tasks active. Use a [pool](/operate/pools/) to keep a cap across runs. |
+| Sets neither | Nothing changes. |
+
+The UI and `GET /api/v2/dags/{dag_id}/details` show the DAG's own value, or
+nothing when it sets none, instead of a constant 16.
+
 ### Upgrading to 0.5.12: the live log tail is published on demand
 
 Under the `cluster` profile, `logs.tail.publish` now renders `on_demand` when

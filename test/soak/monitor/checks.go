@@ -227,6 +227,11 @@ func (c *checker) checkCorrectness(s sample, add addFunc) {
 			fmt.Sprintf("%d instances of soak_flaky.never_runs were started; its upstream always fails, so it must never execute (it raises on entry, so it can never end in success: started_at is the evidence)",
 				s.UpstreamFailedExecuted), float64(s.UpstreamFailedExecuted), 0)
 	}
+	if s.FanoutMaxActive > fanoutMaxActiveTasks {
+		add("max_active_tasks_exceeded",
+			fmt.Sprintf("a soak_fanout run has %d task instances queued or running at once; the DAG sets max_active_tasks=%d, a cap per run, so the admission gate let more through",
+				s.FanoutMaxActive, fanoutMaxActiveTasks), float64(s.FanoutMaxActive), fanoutMaxActiveTasks)
+	}
 	if s.ImportErrors > 0 {
 		add("import_error",
 			fmt.Sprintf("%d DAGs are failing to import; a DAG that stopped compiling stops producing runs and the cadence check would only notice later",
@@ -376,6 +381,12 @@ func (c *checker) checkPunctuality(s sample, add addFunc) {
 // closer to the next slot than to its own, and two consecutive such runs would
 // start colliding with each other.
 const latenessBudgetOfPeriod = 0.5
+
+// fanoutMaxActiveTasks is the max_active_tasks soak_fanout declares
+// (test/soak/dags/soak_fanout/dag.py). A literal for the same reason as
+// cadenceExpectations: the check must not read its limit from the system it
+// checks.
+const fanoutMaxActiveTasks = 4
 
 // backfillLatenessCeilingS is where "late" stops meaning late. A day is far
 // beyond any schedule this battery runs (the longest is hourly) and far below

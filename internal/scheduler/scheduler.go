@@ -136,18 +136,16 @@ type RunState struct {
 	// from the dag.json alongside Tasks. nil means no alerting; the scheduler
 	// dispatches these rules once the run finalizes as failed.
 	Alerts *domain.AlertsConfig
-	// MaxActiveTasks is the DAG's per-DAG task-concurrency cap (Airflow's
-	// max_active_tasks, ADR 0053 Stage 1), loaded from the spec. Zero or negative
-	// means unlimited, the admission gate is a no-op, so a DAG that never sets it
-	// (and all of Lite) plans exactly as before.
+	// MaxActiveTasks is the DAG's task-concurrency cap per DAG run (Airflow 3's
+	// max_active_tasks, ADR 0053 Stage 1 as amended by #2427), loaded from the
+	// spec. Zero or negative means unlimited, the admission gate is a no-op, so a
+	// DAG that never sets it (and all of Lite) plans exactly as before.
 	MaxActiveTasks int
-	// ActiveTaskCount is the DAG-wide number of currently non-terminal (queued or
-	// running) task instances across every active run of this DAG, plus any this
-	// tick already admitted for the same DAG in earlier sibling runs. PlanRun
-	// subtracts it from MaxActiveTasks to derive this run's admission headroom, so
-	// the cap holds per-DAG across runs and one tick cannot breach it. The Step
-	// loop populates it; it defaults to zero, leaving the gate unlimited when
-	// MaxActiveTasks is unset.
+	// ActiveTaskCount is the number of this run's task instances that are
+	// queued or running. PlanRun subtracts it from MaxActiveTasks to derive the
+	// run's admission headroom; other runs of the DAG do not count, as in
+	// Airflow 3. The Step loop populates it (runActiveTasks); it defaults to
+	// zero, leaving the gate unlimited when MaxActiveTasks is unset.
 	ActiveTaskCount int
 	// PoolsEnabled turns on the named-pool slot gate (ADR 0053 Stage 3). The
 	// Step loop sets it from the scheduler's pools flag (scheduler.pools.enabled).
@@ -765,13 +763,6 @@ func (s *Scheduler) Step(ctx context.Context) error {
 	}
 	s.stopSuspended(ctx, runs)
 	activeByDAG := make(map[dagRef]int, len(runs))
-	// Per-DAG task-admission budget (max_active_tasks, ADR 0053 Stage 1).
-	// activeTasksByDAG is the snapshot of currently non-terminal (queued+running)
-	// TIs per DAG; admittedTasksByDAG folds in what earlier sibling runs already
-	// promoted this tick so a single tick cannot breach the cap across runs,
-	// mirroring how createDueRuns folds justCreated into the max_active_runs cap.
-	activeTasksByDAG := activeTaskCounts(runs)
-	admittedTasksByDAG := make(map[dagRef]int, len(runs))
 	// Cross-DAG named-pool budget (ADR 0053 Stage 3, Pro only). Loaded once per
 	// tick; poolOccupied starts at the current cross-DAG occupancy and each run's
 	// admissions fold back in, the same within-tick threading as the per-DAG cap,
@@ -806,15 +797,16 @@ func (s *Scheduler) Step(ctx context.Context) error {
 		if run.State == domain.DagRunStateQueued && !startable[run.RunID] {
 			continue
 		}
-		key := dagRef{run.TenantID, run.DagID}
-		run.ActiveTaskCount = activeTasksByDAG[key] + admittedTasksByDAG[key]
+		// max_active_tasks is per run (Airflow 3, #2427): a run's headroom is
+		// its own cap minus its own active task instances, so what a sibling
+		// run admits this tick never reaches it.
+		run.ActiveTaskCount = runActiveTasks(run)
 		run.PoolsEnabled = s.poolsEnabled
 		run.ConfineUndefinedPools = s.confineUndefinedPools
 		run.PoolBudgets = poolBudgets
 		run.PoolActive = poolOccupied
 		run.PoolReservations = reservations
 		res := s.advanceSafely(ctx, run)
-		admittedTasksByDAG[key] += res.admitted
 		for k, n := range res.byPool {
 			poolOccupied[k] += n
 		}
@@ -944,29 +936,22 @@ func rotateAfter(runs []RunState, deferredRun string) int {
 	return 0
 }
 
-// activeTaskCounts tallies, per DAG, the task instances that already occupy a
-// max_active_tasks slot, those in a non-terminal active state (queued or
-// running) across every active run of the DAG. It is the snapshot the admission
-// gate subtracts from max_active_tasks to size per-run headroom (ADR 0053 Stage
-// 1). Reuses the runs Step already loaded, so it adds no per-tick query.
-func activeTaskCounts(runs []RunState) map[dagRef]int {
-	counts := make(map[dagRef]int, len(runs))
-	for i := range runs {
-		active := 0
-		for _, st := range runs[i].States {
-			if st == domain.TaskStateQueued || st == domain.TaskStateRunning {
-				active++
-			}
-		}
-		if active > 0 {
-			counts[dagRef{runs[i].TenantID, runs[i].DagID}] += active
+// runActiveTasks counts the run's task instances that occupy a
+// max_active_tasks slot, those queued or running. It is what the admission
+// gate subtracts from the run's cap (ADR 0053 Stage 1, per run since #2427).
+// It reads the states Step already loaded, so it adds no per-tick query.
+func runActiveTasks(run RunState) int {
+	active := 0
+	for _, st := range run.States {
+		if st == domain.TaskStateQueued || st == domain.TaskStateRunning {
+			active++
 		}
 	}
-	return counts
+	return active
 }
 
 // dagRef identifies a DAG across tenants. A dag_id is unique only within its
-// tenant, so the per-DAG caps (max_active_runs, max_active_tasks) and the
+// tenant, so the per-DAG caps (max_active_runs) and the
 // once-per-schedule warnings key on the (tenant, dag_id) pair: two tenants that
 // both own an "etl" DAG never share a budget (#209). A struct key costs no
 // allocation per lookup and cannot collide the way a joined string could.
@@ -1009,10 +994,11 @@ func activePoolCounts(runs []RunState, budgets map[string]int, confine bool) map
 }
 
 // advance plans and applies one run's transitions, returning how many tasks it
-// promoted to queued this tick (the per-DAG max_active_tasks charge, ADR 0053
-// Stage 1) and the per-pool slots those promotions take (the cross-DAG pool
-// charge, Stage 3, weighted by ADR 0066; nil when the pool gate is off). The caller folds both into
-// the sibling runs' budgets so a single tick cannot breach either cap.
+// promoted to queued this tick (the run's own max_active_tasks charge, ADR 0053
+// Stage 1, which same-tick promotion folds back in) and the per-pool slots those
+// promotions take (the cross-DAG pool charge, Stage 3, weighted by ADR 0066; nil
+// when the pool gate is off). The caller folds the pool charge into the other
+// runs' budgets so a single tick cannot breach a pool.
 // advanced is what advancing one run produced: the tasks it admitted to
 // queued, the slots they take per pool, and the tasks held only by their pool.
 type advanced struct {

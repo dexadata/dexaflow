@@ -77,9 +77,9 @@ type DAGSpec struct {
 	StartDate     string   `json:"start_date,omitempty"`
 	EndDate       *string  `json:"end_date,omitempty"`
 	MaxActiveRuns int      `json:"max_active_runs,omitempty"`
-	// MaxActiveTasks caps how many of this DAG's task instances may be
-	// concurrently non-terminal (queued or running) across all of its active
-	// runs — Airflow's per-DAG max_active_tasks (ADR 0053 Stage 1). Zero (the
+	// MaxActiveTasks caps how many task instances of each run of this DAG may
+	// be queued or running at once, Airflow 3's max_active_tasks, which is per
+	// DAG run (ADR 0053 Stage 1, #2427). Zero (the
 	// default) means unlimited: a DAG that never sets it, and all of Lite, plans
 	// exactly as before. The scheduler enforces it in PlanRun's scheduled→queued
 	// admission gate.
