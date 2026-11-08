@@ -62,7 +62,9 @@ downstream or retried starts until the unpause.
 This is a deliberate, conservative difference from Airflow 3, whose scheduler
 also stops scheduling new tasks of a running run while its DAG is paused
 (the tasks already running finish, and the rest wait for the unpause). To stop
-a running run, mark it failed or delete it.
+a running run, mark it failed or delete it: marking it failed fails its running
+tasks and skips the ones not started, as in Airflow (see
+[Setting a run's state](/reference/api/#setting-a-runs-state)).
 
 If you want a real "no runs at all" switch, the supported pattern is the same as
 in Airflow: pause the DAG. Runs triggered while it is paused queue up instead of

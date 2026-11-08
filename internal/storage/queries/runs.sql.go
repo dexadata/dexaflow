@@ -4383,6 +4383,52 @@ func (q *Queries) SetTaskInstanceStateByUser(ctx context.Context, arg SetTaskIns
 	return err
 }
 
+const settleTaskInstancesForRunVerdict = `-- name: SettleTaskInstancesForRunVerdict :execrows
+UPDATE task_instances
+SET state = CASE
+        WHEN $1::text = 'success' THEN 'success'::task_state
+        WHEN state IN ('running', 'up_for_reschedule') THEN 'failed'::task_state
+        ELSE 'skipped'::task_state
+    END,
+    ended_at = now(),
+    error_message = CASE
+        WHEN $1::text = 'failed' AND state IN ('running', 'up_for_reschedule')
+            THEN 'stopped: the run was marked failed'
+        ELSE error_message
+    END,
+    last_failure_kind = NULL,
+    infra_confirmed_at = now()
+WHERE tenant_id = $2
+  AND dag_run_id = $3
+  AND state IN ('none', 'scheduled', 'queued', 'running', 'up_for_retry', 'up_for_reschedule')
+`
+
+type SettleTaskInstancesForRunVerdictParams struct {
+	Verdict  string      `json:"verdict"`
+	TenantID pgtype.UUID `json:"tenant_id"`
+	DagRunID pgtype.UUID `json:"dag_run_id"`
+}
+
+// A user's run verdict settles the run's unfinished task instances in the
+// transaction that sets the run's state, as Airflow 3's
+// set_dag_run_state_to_failed and set_dag_run_state_to_success do (#2425).
+// On failed, a running or up_for_reschedule attempt fails and every other
+// unfinished task instance (none, scheduled, queued, up_for_retry) is skipped;
+// on success, every unfinished task instance succeeds. Like a user's mark of a
+// task instance, the row is the verdict: it clears last_failure_kind and
+// confirms the row, so a late report of the old attempt cannot override it.
+// The attempt's next heartbeat or state report matches no live row, so the
+// agent is told to terminate and kills its task process group, the stop path
+// of the tenant stop suspension (#2181). Finished task instances keep their
+// state.
+func (q *Queries) SettleTaskInstancesForRunVerdict(ctx context.Context, arg SettleTaskInstancesForRunVerdictParams) (int64, error) {
+	result, err := q.db.Exec(ctx, settleTaskInstancesForRunVerdict, arg.Verdict, arg.TenantID, arg.DagRunID)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
+}
+
 const stampDagRunState = `-- name: StampDagRunState :execrows
 UPDATE dag_runs
 SET state = $1::dag_run_state,

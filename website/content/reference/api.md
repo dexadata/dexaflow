@@ -61,6 +61,26 @@ already `running`, a PATCH to `running` changes nothing and answers with the
 run as it is. Setting `queued` also clears the run's start date, so the
 scheduler stamps a new one when it starts the run.
 
+Setting `failed` or `success` settles the run's unfinished task instances in
+the same transaction, as Airflow 3's `set_dag_run_state_to_failed` and
+`set_dag_run_state_to_success` do (since 0.5.10,
+[#2425](https://github.com/dexadata/dexaflow/issues/2425)):
+
+| Task instance state | `failed` | `success` |
+|---|---|---|
+| `running`, `up_for_reschedule` | `failed` | `success` |
+| `none`, `scheduled`, `queued`, `up_for_retry` | `skipped` | `success` |
+| `success`, `failed`, `skipped`, `upstream_failed`, `removed` | unchanged | unchanged |
+
+A running attempt is stopped the way a task instance marked failed is: its next
+heartbeat, at most 15 seconds later, matches no live row, and the agent kills
+its task process group. The slots it held under `max_active_tasks` and its pool
+are free from the verdict on, as in Airflow, so for up to one heartbeat the old
+attempt and the next one can run side by side. An agent that cannot reach the
+control plane does not learn of the stop and its task runs to its end or its
+`execution_timeout`. Before 0.5.10 only the run changed: its tasks kept running
+outside every cap, and the tasks it had not started stayed `none`.
+
 ## Clearing on the latest version
 
 `POST /api/v2/dags/{dag_id}/clearTaskInstances` and
