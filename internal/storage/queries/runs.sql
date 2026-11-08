@@ -247,6 +247,37 @@ SET state = $2, started_at = $3, ended_at = $4
 WHERE id = $1 AND tenant_id = sqlc.arg(tenant_id)
 RETURNING *;
 
+-- name: SettleTaskInstancesForRunVerdict :execrows
+-- A user's run verdict settles the run's unfinished task instances in the
+-- transaction that sets the run's state, as Airflow 3's
+-- set_dag_run_state_to_failed and set_dag_run_state_to_success do (#2425).
+-- On failed, a running or up_for_reschedule attempt fails and every other
+-- unfinished task instance (none, scheduled, queued, up_for_retry) is skipped;
+-- on success, every unfinished task instance succeeds. Like a user's mark of a
+-- task instance, the row is the verdict: it clears last_failure_kind and
+-- confirms the row, so a late report of the old attempt cannot override it.
+-- The attempt's next heartbeat or state report matches no live row, so the
+-- agent is told to terminate and kills its task process group, the stop path
+-- of the tenant stop suspension (#2181). Finished task instances keep their
+-- state.
+UPDATE task_instances
+SET state = CASE
+        WHEN sqlc.arg(verdict)::text = 'success' THEN 'success'::task_state
+        WHEN state IN ('running', 'up_for_reschedule') THEN 'failed'::task_state
+        ELSE 'skipped'::task_state
+    END,
+    ended_at = now(),
+    error_message = CASE
+        WHEN sqlc.arg(verdict)::text = 'failed' AND state IN ('running', 'up_for_reschedule')
+            THEN 'stopped: the run was marked failed'
+        ELSE error_message
+    END,
+    last_failure_kind = NULL,
+    infra_confirmed_at = now()
+WHERE tenant_id = sqlc.arg(tenant_id)
+  AND dag_run_id = sqlc.arg(dag_run_id)
+  AND state IN ('none', 'scheduled', 'queued', 'running', 'up_for_retry', 'up_for_reschedule');
+
 -- name: ReopenDagRunKeepingVersion :exec
 -- The same re-open as ResetDagRunToVersion, WITHOUT touching dag_version_id: the
 -- run stays pinned to the version it was created with, so the re-run executes the

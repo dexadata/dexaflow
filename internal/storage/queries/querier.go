@@ -1253,6 +1253,19 @@ type Querier interface {
 	// stamps sessions_valid_after, so the sessions the user had stay refused after
 	// a reactivation; reactivating leaves the stamp as it is.
 	SetUserActive(ctx context.Context, arg SetUserActiveParams) (SetUserActiveRow, error)
+	// A user's run verdict settles the run's unfinished task instances in the
+	// transaction that sets the run's state, as Airflow 3's
+	// set_dag_run_state_to_failed and set_dag_run_state_to_success do (#2425).
+	// On failed, a running or up_for_reschedule attempt fails and every other
+	// unfinished task instance (none, scheduled, queued, up_for_retry) is skipped;
+	// on success, every unfinished task instance succeeds. Like a user's mark of a
+	// task instance, the row is the verdict: it clears last_failure_kind and
+	// confirms the row, so a late report of the old attempt cannot override it.
+	// The attempt's next heartbeat or state report matches no live row, so the
+	// agent is told to terminate and kills its task process group, the stop path
+	// of the tenant stop suspension (#2181). Finished task instances keep their
+	// state.
+	SettleTaskInstancesForRunVerdict(ctx context.Context, arg SettleTaskInstancesForRunVerdictParams) (int64, error)
 	// Transitions a run's state and stamps the run's own timestamps so the UI can
 	// show its duration: started_at on first entry into 'running', ended_at on a
 	// terminal state. Other timestamps are preserved (the scheduler may re-run).
