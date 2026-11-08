@@ -39,6 +39,16 @@ and retry the same call; do not sign in again. The spec models it as the shared
 `AuthUnavailable` response on every protected operation, so a generated client
 has a typed case for it rather than an unknown status.
 
+## Triggering a run at the max_active_runs cap
+
+`POST /api/v2/dags/{dag_id}/dagRuns` creates the run whatever the number of
+active runs of the DAG, as Airflow does: it answers 201 with the run in
+`queued`, and the scheduler starts it when fewer than `max_active_runs` runs of
+the DAG are running, oldest logical date first. Before 0.5.11 a trigger at the
+cap answered 409 (`dag "x" is at max_active_runs cap of N`). The tenant's own
+limits are still refusals: `max_runs_per_day` answers 403 and a suspended
+tenant answers 409.
+
 ## Setting a run's state
 
 `PATCH /api/v2/dags/{dag_id}/dagRuns/{dag_run_id}` with a `state` sets a run

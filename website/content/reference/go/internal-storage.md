@@ -1266,7 +1266,7 @@ func (r *Repository) ClearImportError(ctx context.Context, tenant, filename stri
 ClearImportError removes any recorded error for a file \(a good re\-import\).
 
 <a name="Repository.ClearTaskInstances"></a>
-### func \(\*Repository\) [ClearTaskInstances](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/repo_runs.go#L406>)
+### func \(\*Repository\) [ClearTaskInstances](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/repo_runs.go#L395>)
 
 ```go
 func (r *Repository) ClearTaskInstances(ctx context.Context, tenant, dagID, runID string, taskIDs []string, onlyFailed bool, opts domain.ClearOptions) (int, error)
@@ -1308,13 +1308,13 @@ func (r *Repository) CreateCLIDeviceAuthorization(ctx context.Context, req auth.
 CreateCLIDeviceAuthorization starts a device sign\-in of the CLI \(ADR 0081\) that expires req.TTL from now on the database's clock and may be polled every req.Interval. It stores only the hashes and the requester's address. In one transaction serialized with every other start, it forgets sign\-ins that expired a while ago and refuses with auth.ErrDeviceSignInsFull when req.MaxLive are live, or auth.ErrDeviceSignInsFromRequester when the requester holds req.MaxLivePerRequester, so the caps hold exactly. A start that cannot take its turn within cliDeviceStartLockTimeout is auth.ErrDeviceStartsBusy. A user code hash already in use is domain.ErrConflict: the caller draws another.
 
 <a name="Repository.CreateDagRun"></a>
-### func \(\*Repository\) [CreateDagRun](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/repo_runs.go#L212>)
+### func \(\*Repository\) [CreateDagRun](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/repo_runs.go#L210>)
 
 ```go
 func (r *Repository) CreateDagRun(ctx context.Context, tenant, dagID string, run domain.DagRun) (domain.DagRun, error)
 ```
 
-CreateDagRun inserts a new run for a DAG at its current version. The per\-DAG max\_active\_runs cap \(\#200\) is enforced here for any caller that goes through the repository, manual triggers via the API, scripted backfills, and any future programmatic trigger path, so the contract is honored in one place. A cap of zero is treated as "unlimited" to match the scheduler path \(see \`Scheduler.hasHeadroom\`\). The check races with concurrent inserts, but the small overshoot window is bounded by the number of concurrent writers and lets us avoid an advisory lock on the hot path. The tenant's max\_runs\_per\_day, when set, is charged exactly \(createRunWithinDailyLimit\).
+CreateDagRun inserts a new run for a DAG at its current version. It does not count the DAG's max\_active\_runs \(\#2426\): as in Airflow, a manual trigger, a scripted backfill or any other caller of the repository is accepted whatever the number of active runs, and a queued run waits until the scheduler's start stage has a free slot under the cap \(\#1766\). Only scheduled creation stops at the cap \(\`Scheduler.hasHeadroom\`\). The tenant's own limits stay refusals: max\_runs\_per\_day, when set, is charged exactly \(createRunWithinDailyLimit\), and a suspended tenant is refused.
 
 <a name="Repository.CreateOIDCUser"></a>
 ### func \(\*Repository\) [CreateOIDCUser](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/repo_users.go#L122>)
@@ -1753,7 +1753,7 @@ func (r *Repository) ListPools(ctx context.Context, tenant string, limit, offset
 ListPools returns a page of the tenant's named pools and the total count.
 
 <a name="Repository.ListTaskInstanceAttempts"></a>
-### func \(\*Repository\) [ListTaskInstanceAttempts](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/repo_runs.go#L272>)
+### func \(\*Repository\) [ListTaskInstanceAttempts](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/repo_runs.go#L261>)
 
 ```go
 func (r *Repository) ListTaskInstanceAttempts(ctx context.Context, tenant, dagID, runID, taskID string) ([]domain.TaskInstance, error)
@@ -1762,7 +1762,7 @@ func (r *Repository) ListTaskInstanceAttempts(ctx context.Context, tenant, dagID
 ListTaskInstanceAttempts returns every attempt for \(run, task\), oldest first, the current task\_instances row UNIONed with all archived task\_instance\_history rows. The UI's /tries endpoint needs this to render one navigable tab per attempt; without history, a cleared task shows only the latest attempt and the user cannot inspect prior failures \(Lima bug \#241\).
 
 <a name="Repository.ListTaskInstances"></a>
-### func \(\*Repository\) [ListTaskInstances](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/repo_runs.go#L317>)
+### func \(\*Repository\) [ListTaskInstances](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/repo_runs.go#L306>)
 
 ```go
 func (r *Repository) ListTaskInstances(ctx context.Context, tenant, dagID, runID string, _, _ int) ([]domain.TaskInstance, int, error)
@@ -1771,7 +1771,7 @@ func (r *Repository) ListTaskInstances(ctx context.Context, tenant, dagID, runID
 ListTaskInstances returns the task instances of a run.
 
 <a name="Repository.ListTaskInstancesWithFilter"></a>
-### func \(\*Repository\) [ListTaskInstancesWithFilter](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/repo_runs.go#L338>)
+### func \(\*Repository\) [ListTaskInstancesWithFilter](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/repo_runs.go#L327>)
 
 ```go
 func (r *Repository) ListTaskInstancesWithFilter(ctx context.Context, tenant, dagID, runID string, filter domain.TaskInstanceFilter) (tis []domain.TaskInstance, total int, err error)
@@ -2098,7 +2098,7 @@ func (r *Repository) SetCurrentDagVersionAs(ctx context.Context, tenant string, 
 SetCurrentDagVersionAs is SetCurrentDagVersion for req, whose RequireDigest, while warn or enforce, the audit entry records with whether the target's image is pinned by digest \(\#1703\).
 
 <a name="Repository.SetDagRunState"></a>
-### func \(\*Repository\) [SetDagRunState](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/repo_runs.go#L578>)
+### func \(\*Repository\) [SetDagRunState](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/repo_runs.go#L567>)
 
 ```go
 func (r *Repository) SetDagRunState(ctx context.Context, tenant, dagID, runID, state string) error
@@ -2143,7 +2143,7 @@ func (r *Repository) SetPool(ctx context.Context, tenant string, p domain.Pool) 
 SetPool creates or updates a pool \(its slot cap and description\). The is\_default flag is not writable through this path: only the seed migration marks the implicit default pool.
 
 <a name="Repository.SetTaskInstanceState"></a>
-### func \(\*Repository\) [SetTaskInstanceState](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/repo_runs.go#L626>)
+### func \(\*Repository\) [SetTaskInstanceState](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/repo_runs.go#L615>)
 
 ```go
 func (r *Repository) SetTaskInstanceState(ctx context.Context, tenant, dagID, runID, taskID, state string) error
@@ -2197,7 +2197,7 @@ func (r *Repository) SuspendTenant(ctx context.Context, tenant string, s domain.
 SuspendTenant suspends the tenant, or changes the mode or reason of its suspension \(\#2181\). From then on no new run is created for it, manual or scheduled; its DAGs keep their own paused flag. Under stop it also fails the tenant's queued and running task instances; the scheduler repeats that on every tick, so an attempt dispatched while this call ran is stopped too. An unknown tenant is ErrNotFound and a suspension the engine cannot apply is ErrValidation.
 
 <a name="Repository.TaskInstancesForRuns"></a>
-### func \(\*Repository\) [TaskInstancesForRuns](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/repo_runs.go#L645>)
+### func \(\*Repository\) [TaskInstancesForRuns](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/repo_runs.go#L634>)
 
 ```go
 func (r *Repository) TaskInstancesForRuns(ctx context.Context, tenant, dagID string, runIDs []string) ([]domain.TaskInstance, error)

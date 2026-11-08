@@ -181,25 +181,6 @@ func (q *Queries) ConfirmInfraFailure(ctx context.Context, arg ConfirmInfraFailu
 	return result.RowsAffected(), nil
 }
 
-const countActiveDagRunsByDagID = `-- name: CountActiveDagRunsByDagID :one
-SELECT count(*) FROM dag_runs
-WHERE tenant_id = $1 AND dag_id = $2 AND state IN ('queued', 'running')
-`
-
-type CountActiveDagRunsByDagIDParams struct {
-	TenantID pgtype.UUID `json:"tenant_id"`
-	DagID    pgtype.UUID `json:"dag_id"`
-}
-
-// Counts queued+running runs for a single DAG; used by the manual-trigger
-// path to enforce max_active_runs (#200) before insert.
-func (q *Queries) CountActiveDagRunsByDagID(ctx context.Context, arg CountActiveDagRunsByDagIDParams) (int64, error) {
-	row := q.db.QueryRow(ctx, countActiveDagRunsByDagID, arg.TenantID, arg.DagID)
-	var count int64
-	err := row.Scan(&count)
-	return count, err
-}
-
 const countDagRunStatesInWindow = `-- name: CountDagRunStatesInWindow :many
 SELECT r.state AS state, count(*) AS n
 FROM dag_runs r

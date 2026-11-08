@@ -166,9 +166,6 @@ func TestLeafQueriesCarryTheTenantPredicateIntegration(t *testing.T) {
 				"CountDagRunsByDagStates": func() (int64, error) {
 					return q.CountDagRunsByDagStates(ctx, queries.CountDagRunsByDagStatesParams{TenantID: tc.as, DagID: f.dagUUID, States: []string{"queued"}})
 				},
-				"CountActiveDagRunsByDagID": func() (int64, error) {
-					return q.CountActiveDagRunsByDagID(ctx, queries.CountActiveDagRunsByDagIDParams{TenantID: tc.as, DagID: f.dagUUID})
-				},
 			}
 			for name, count := range counts {
 				n, cerr := count()
