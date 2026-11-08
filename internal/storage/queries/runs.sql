@@ -118,12 +118,6 @@ SELECT count(*) FROM dag_runs
 WHERE dag_runs.dag_id = $1
   AND EXISTS (SELECT 1 FROM dags d WHERE d.id = $1 AND d.tenant_id = $2);
 
--- name: CountActiveDagRunsByDagID :one
--- Counts queued+running runs for a single DAG; used by the manual-trigger
--- path to enforce max_active_runs (#200) before insert.
-SELECT count(*) FROM dag_runs
-WHERE tenant_id = $1 AND dag_id = $2 AND state IN ('queued', 'running');
-
 -- name: ListStaleQueuedTaskInstances :many
 -- Lists one page of the TIs in `queued` for at least the dispatch-lost
 -- threshold, with their queued_at, for the dispatch-lost reaper (#202). The
