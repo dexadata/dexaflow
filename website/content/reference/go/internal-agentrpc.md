@@ -27,6 +27,7 @@ Package agentrpc implements the control\-plane side of the agent gRPC protocol: 
   - [func \(c \*InflightHandlers\) StreamInterceptor\(\) grpc.StreamServerInterceptor](<#InflightHandlers.StreamInterceptor>)
   - [func \(c \*InflightHandlers\) UnaryInterceptor\(\) grpc.UnaryServerInterceptor](<#InflightHandlers.UnaryInterceptor>)
 - [type LegacyTokenRecorder](<#LegacyTokenRecorder>)
+- [type LogBatchPublisher](<#LogBatchPublisher>)
 - [type LogPublisher](<#LogPublisher>)
 - [type LogResumer](<#LogResumer>)
 - [type LogSink](<#LogSink>)
@@ -295,6 +296,17 @@ LegacyTokenRecorder counts agent RPCs authenticated by a task token that carries
 ```go
 type LegacyTokenRecorder interface {
     RecordLegacyAttemptToken()
+}
+```
+
+<a name="LogBatchPublisher"></a>
+## type [LogBatchPublisher](<https://github.com/dexadata/dexaflow/blob/main/internal/agentrpc/publish_queue.go#L14-L16>)
+
+LogBatchPublisher is implemented by a LogPublisher that can publish several lines of one attempt in one round trip \(logs.RedisTailer pipelines them\). Without it the queue publishes one line at a time.
+
+```go
+type LogBatchPublisher interface {
+    PublishBatch(ctx context.Context, ref logs.Ref, lines []string) error
 }
 ```
 
