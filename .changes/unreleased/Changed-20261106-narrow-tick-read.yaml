@@ -1,9 +1,0 @@
-kind: Changed
-body: |-
-  **A lighter scheduler tick read.** The tick now reads only the twelve task
-  instance columns planning uses, without the server-side sort that spilled to
-  disk on large installs, into a result sized from the previous tick. At 200
-  active runs of 500 tasks (100,000 task instances) the read takes 140 ms
-  instead of 555 ms and allocates 90 MiB instead of 555 MiB per tick. Planning
-  decisions do not change (#2325).
-time: 2026-11-06T20:00:00.000000000+00:00

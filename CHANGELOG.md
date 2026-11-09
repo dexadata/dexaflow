@@ -6,6 +6,233 @@ adhere to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **Build and queue wait metrics.** `dexaflow_build_info` carries the version,
+  commit, Go version and role of every process, so a rollout that left a
+  replica on another version shows (#2299). `dexaflow_task_queue_wait_seconds`
+  is the wait of each attempt from queued to its first running report, by
+  tenant, and `dexaflow_task_oldest_waiting_seconds` the age of the oldest
+  attempt still scheduled or queued, by tenant, set by the scheduler leader
+  every 15 seconds (#2300). Both feed the start latency alerts.
+- **Alert rules and runbooks.** With `metrics.prometheusRule.enabled`, the chart
+  now renders a `dexaflow-page` group (schema not ready, no scheduler leader,
+  reaper valves open, task queue wait, API 5xx ratio, database pool canceled
+  acquires, Redis failures, a disabled resilience backstop) and a
+  `dexaflow-ticket` group (leader step-downs, lost attempts, TLS reload
+  failures, failed alert dispatches, usage events lag, oldest queued task,
+  mixed versions). Every alert links a runbook under Operate, Runbooks, and
+  its thresholds are values under `metrics.prometheusRule.thresholds`. The
+  schema alert moved from the `dexaflow-schema` group to `dexaflow-page`,
+  unchanged otherwise (#2298).
+- **Chart value for the attempt credential ceiling.** The chart now has
+  `auth.maxAttemptCredentialLifetime` (default `24h`, `0` disables the
+  ceiling) and always stamps `LEOFLOW_AUTH_MAX_ATTEMPT_CREDENTIAL_LIFETIME`,
+  so the setting no longer needs `extraEnv`. An `extraEnv` entry for the same
+  variable still wins, and a value that is not a duration fails the render
+  (#955).
+- **The audit log records admin writes.** Creating, changing and deleting a
+  connection, a variable or a pool, deleting a DAG, clearing its history,
+  deleting a run, and a password sign-in while OIDC is off now each write an
+  entry (`connection.*`, `variable.*`, `pool.*`, `dag.delete`,
+  `dag.history.clear`, `dagrun.delete`, `auth.login`). An entry names the
+  resource and the fields the request set, never a secret value (#2228).
+- **Redis eviction policy check.** The control plane reads `maxmemory_policy`
+  from `INFO memory` at boot and every 30 seconds. A policy other than
+  `noeviction`, which lets Redis delete the XCom values of running DAGs under
+  memory pressure, logs a warning that names the risk;
+  `redis.require_noeviction` (Helm `redis.requireNoEviction`) refuses to boot
+  instead. New gauges `dexaflow_redis_eviction_policy_safe`,
+  `dexaflow_redis_used_memory_bytes` and `dexaflow_redis_evicted_keys`, and
+  two chart alerts with runbooks: `DexaflowRedisEvictingKeys` (page) and
+  `DexaflowRedisEvictionPolicyUnsafe` (ticket) (#2354).
+- **Grafana dashboard in the chart.** `metrics.grafanaDashboard.enabled`
+  installs an overview dashboard as a ConfigMap the Grafana sidecar of
+  kube-prometheus-stack loads: scheduler loop and schedule delay, leader
+  step-downs, task queue wait and failure ratio, dispatch, API traffic and
+  errors, database pool and Redis. The JSON is also in the chart's
+  `dashboards/` directory for a manual import, and a test holds every metric
+  and label it and the alert rules query to what the server registers (#1577).
+- **Executor policy.** `executor.policy.force` in the server's YAML or JSON
+  config file sets the runtime class, service account, node selector and
+  tolerations of every task pod, whatever the DAG or an admission hook set
+  (ADR 0063). It runs after the admission hooks, so neither can undo it, and
+  a field it sets does not count against the execution allowlist. Boot fails
+  on an invalid policy, on a policy together with warm pools, and on a forced
+  service account the allowlist does not list. Without a policy nothing
+  changes (#1372).
+- **A scheduler standby in split mode.** `split.scheduler.replicaCount: 2` runs
+  a leader and a standby that waits on the same leader lock, with a
+  PodDisruptionBudget of its own, so the restricted API identity of the split no
+  longer costs dispatch failover (ADR 0105). The default stays `1`. Charts
+  before 0.5.10 ignored the value; any value other than `1` or `2` now fails the
+  render instead of being ignored, so check it before upgrading (#2316).
+- **Row level security as a second tenant barrier.** Migration 059 creates a
+  tenant policy on every table with a `tenant_id` column, enforced by none
+  until `dexaflow-migrate rls on`. With `database.row_level_security: true`
+  the server then binds each connection an API request uses to the request's
+  tenant, and Postgres hides every other tenant's rows from it even from a
+  query that forgets its tenant predicate. The scheduler and other paths
+  that serve no single tenant are not bound and read as before. Boot fails
+  with the setting on when a table does not enforce its policy or the
+  server's role bypasses row level security. `rls status` and `rls off`
+  report and undo it (ADR 0104, #2180).
+- **Skip-version upgrades are tested and supported.** A new workflow upgrades a
+  database seeded at 0.5.0 with 1 million runs and 5 million task instances
+  straight to the candidate, weekly and on every release candidate, and checks
+  each migration's time, that no index is left invalid, that the schema equals
+  a fresh install's and that a DAG runs afterwards. The upgrade guide now
+  states the supported range: one `helm upgrade` may go from 0.5.0 or later to
+  any 0.5.x or 0.6.x (#2311).
+
+### Changed
+
+- **A followed task's log stream no longer waits for Redis on every line.**
+  Each log stream now publishes its live-tail lines from a queue of its own,
+  up to 256 lines per pipelined Redis round trip, instead of one `PUBLISH`
+  inside the receive loop per line. On a local Redis the cost of a line with
+  a follower drops from about 48 us to 1.3 us, the same as with nobody
+  following; against a managed Redis the gain is larger. The queue is bounded
+  (1,024 lines and 1 MiB per stream) and never drops a line. The chart's
+  `cluster` profile now also renders `logs.tail.publish: on_demand` when the
+  value is unset, so lines are published only while someone follows the
+  attempt; `legacy` keeps `always`. See the upgrade notes for 0.5.10. (#2356)
+- **Release notes open with what to do before upgrading.** The release body now
+  starts with Highlights (when the release has them), Breaking changes and
+  Action required, the last two saying "None." when there is nothing, followed
+  by a link to the upgrades guide; the per kind lists follow. Three changelog
+  kinds feed them: `Highlights`, written for the release, and `Breaking` and
+  `Upgrade`, written by the pull request that needs them. A `Breaking` fragment
+  also announces an intended API break to the API compatibility check. (#1557)
+- **`dexaflow compile` refuses what used to fail at run time or run with other
+  semantics.** `ExternalTaskSensor`, `ExternalTaskMarker`,
+  `TriggerDagRunOperator` and `LatestOnlyOperator`, subclasses included, need
+  the Airflow metadata database a task pod does not have; they compiled and
+  failed on their first attempt, and are now refused with what to do instead.
+  Any `BaseBranchOperator` subclass is refused as branching whatever its name.
+  `depends_on_past=True`, `wait_for_downstream=True` and a `priority_weight`
+  other than 1, on a task or in `default_args`, were silently ignored and are
+  now refused; their default values still compile. Setup and teardown tasks
+  and task groups fail with a message that says what to do instead of an
+  opaque `AttributeError` or `cannot import name 'TaskGroup'`. A DAG that
+  compiled before and uses one of these needs the change the message names.
+- **Cluster install profile for new Helm installs.** A new chart value,
+  `profile`, makes a fresh install render buffered dispatch (512 slots, 16
+  workers), Kubernetes client QPS 50 / burst 100 with a separate maintenance
+  client at 20 / 40, and `GOMEMLIMIT` at 80 percent of the memory limit, the
+  defaults the scheduler design assumes (ADR 0031). `helm upgrade` keeps the
+  profile of the live release, so releases installed before 0.5.10 keep their
+  values; `helm template`, ArgoCD and Flux cannot see the live release and
+  render the new profile, so set `profile: legacy` there to keep the earlier
+  defaults. Every governed value that is set wins over the profile (#2323).
+- **Smaller pod informer caches.** The task pod and warm pod informers now
+  store pods without `metadata.managedFields`, which nothing in the control
+  plane reads and which is often the largest part of a cached pod, so the
+  control plane's memory per task pod drops (#2326).
+- **A lighter scheduler tick read.** The tick now reads only the twelve task
+  instance columns planning uses, without the server-side sort that spilled to
+  disk on large installs, into a result sized from the previous tick. At 200
+  active runs of 500 tasks (100,000 task instances) the read takes 140 ms
+  instead of 555 ms and allocates 90 MiB instead of 555 MiB per tick. Planning
+  decisions do not change (#2325).
+- **Weekly chaos run.** The runtime chaos scenarios (a scheduler killed mid-run,
+  a task pod deleted, an agent or the control plane killed between the outcome
+  record and the report) now run every week against main on a k3d cluster, in
+  the Chaos weekly workflow; a failure on main opens the "CI is red on main"
+  issue like any other red workflow. Patch reviews cite its last green run
+  instead of recording the rows as not run (#2306).
+- **Rolling upgrade gate.** Every release candidate now upgrades the previous
+  GA chart and images to the candidate on kind with two replicas, a
+  PodDisruptionBudget and tasks in flight, and fails when the Service loses
+  every ready endpoint, a task fails, a cron run is created twice or the schema
+  is not ready on the new version. Pull requests that change the chart, the
+  migrations or the server boot path run it too (#2305).
+- **A manual trigger at the `max_active_runs` cap is queued instead of refused
+  with 409**, as in Airflow
+  ([#2426](https://github.com/dexadata/dexaflow/issues/2426)). The run waits in
+  `queued` and the scheduler starts it when a slot frees, oldest logical date
+  first, so `max_active_runs: 1` works as a serial queue for event driven
+  triggers, and `dexaflow deploy --trigger` or a scripted backfill no longer
+  fails on a busy DAG. Scheduled creation still stops at the cap, and the
+  tenant's `max_runs_per_day` still refuses with 403. A caller that relied on
+  the 409 to drop triggers while the DAG was busy now queues them; see
+  [the upgrade note](https://dexaflow.dexadata.ai/operate/upgrades/#upgrading-to-0511-a-trigger-at-max_active_runs-is-queued).
+- **More unhonored arguments are refused at compile.** `max_active_tis_per_dag`
+  and `max_active_tis_per_dagrun` on a task or in `default_args`, and
+  `dagrun_timeout` and `max_consecutive_failed_dag_runs` on a DAG, were
+  dropped from `dag.json` without a word, so the DAG ran without the cap, the
+  timeout or the auto-pause it asked for. `dexaflow compile` now refuses a
+  value other than the default, as it does for `depends_on_past` since #2336.
+  A DAG that sets one of them stops compiling until it removes it (#2336,
+  #2428).
+- **`max_active_tasks` set in a `dag.py` is enforced, per DAG run as in Airflow
+  3** ([#2427](https://github.com/dexadata/dexaflow/issues/2427)). The compiler
+  used to drop it, so a DAG that set it ran without a cap, and the scheduler
+  counted the cap across all runs of the DAG, the Airflow 2 meaning. Now each
+  run may have that many task instances queued or running at once, and two
+  runs each get the full cap. A value that is not a positive integer is refused
+  at compile, and so is `concurrency`, the Airflow 2 name Airflow 3 removed,
+  with a message naming `max_active_tasks`. The UI and the DAG details API show
+  the DAG's own value, or nothing when it sets none, instead of a constant 16.
+  A DAG that set either argument needs a compile and a deploy; see
+  [the upgrade note](https://dexaflow.dexadata.ai/operate/upgrades/#upgrading-to-0511-max_active_tasks-is-compiled-per-dag-run).
+- **A callback in the DAG's `default_args` is honored or refused, no longer
+  dropped (#2441).** `on_failure_callback` in `default_args` now arms every task
+  that does not set its own, as in Airflow, and runs on the task's final failed
+  attempt; `on_failure_callback=None` on a task opts it out. Before, it was
+  dropped at compile and never ran. A bash task that inherits it fails the
+  compile, since bash leaves no Python to call it: pass
+  `on_failure_callback=None` on that task or use an `alerts:` block.
+  `on_success_callback` and `on_retry_callback` in `default_args` are refused,
+  as they already were on a task. A DAG that compiled before with one of these
+  needs the change the message names.
+
+### Fixed
+
+- **Grid duration axis label.** The DAG grid labelled its duration axis with a
+  floating point remainder, such as `00:00:08.2.0000000000009095`, whenever the
+  longest run had a fractional duration: the Airflow UI hands dayjs a
+  fractional number of seconds and prints the remainder of the conversion to
+  milliseconds, against Airflow as well. The grid runs view now sends whole
+  seconds (at least 1 for a run that started), which the axis prints exactly;
+  the run page and the runs list keep the exact duration (#2366).
+- **Healthy tasks reaped as `agent_lost` when the API saturates the main
+  pool.** Heartbeats are written through the main database pool, which the API
+  shares, while with `database.scheduler_max_conns` set the agent-lost reaper
+  runs on its own pool: API traffic that held every main connection silenced
+  every heartbeat, and the reaper failed healthy attempts as lost. Two fixes
+  (#1624). The heartbeat reaper now holds when at least 10 running attempts,
+  and at least half of those that heartbeat, go silent in the same window,
+  which is the signature of failed heartbeat writes rather than lost agents,
+  and keeps holding until fewer than 5 or under a quarter are silent; it
+  meters `agent_lost_mass_silence_hold`, reaps anyway after 10 minutes
+  (`agent_lost_mass_silence_valve_open`), and the chart's new
+  `DexaflowAgentLostReapingHeld` alert pages on both. And the new
+  `database.agent_max_conns` (Helm `database.agentMaxConns`, default `0`,
+  off) gives the writes that prove a task alive (heartbeats, state reports,
+  reschedules) a pool of their own; set it together with
+  `database.scheduler_max_conns`.
+- **Sign-in rate limits hold across API replicas.** With Redis configured, the
+  failed login limit (`auth.login_rate_limit_per_minute`) and the limits of
+  token renewal, SSO, CLI device sign-in and the CI token exchange now count
+  in Redis, so N API replicas, or the HPA, allow the configured limit and not
+  N times it. If Redis fails, each replica falls back to its own count; Lite
+  keeps counting in process (#2357).
+- **Marking a run failed or success settles its tasks.** `PATCH
+  .../dagRuns/{run_id}` with `state=failed` used to change only the run: its
+  running task kept running outside `max_active_runs`, `max_active_tasks` and
+  every pool, so the next run started beside it, and the tasks not started
+  stayed `none`. As in Airflow 3, `failed` now fails the running tasks and
+  skips the rest, and `success` sets every unfinished task to success, in the
+  same transaction as the run. The running attempt is stopped on its next
+  heartbeat, at most 15 seconds later (#2425).
+- **A dag.json cannot register a count the database cannot read back.**
+  Registration now refuses `max_active_tasks` above 2147483647 and
+  `min_idle_workers` above 100, the bound `dexaflow.yaml` already had. A
+  larger value, sent as a dag.json instead of through the compiler, made the
+  tenant's DAG list fail, and for `min_idle_workers` the warm pool reconcile
+  of every tenant, with "out of range for type integer".
+
 ## [0.5.9] - 2026-11-06
 
 ### Added

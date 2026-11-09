@@ -1,9 +1,0 @@
-kind: Changed
-body: |-
-  **Release notes open with what to do before upgrading.** The release body now
-  starts with Highlights (when the release has them), Breaking changes and
-  Action required, the last two saying "None." when there is nothing, followed
-  by a link to the upgrades guide; the per kind lists follow. Three changelog
-  kinds feed them: `Highlights`, written for the release, and `Breaking` and
-  `Upgrade`, written by the pull request that needs them. A `Breaking` fragment
-  also announces an intended API break to the API compatibility check. (#1557)
