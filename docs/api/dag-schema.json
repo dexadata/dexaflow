@@ -73,11 +73,13 @@
     },
     "max_active_tasks": {
       "type": "integer",
-      "minimum": 1
+      "minimum": 1,
+      "maximum": 2147483647
     },
     "min_idle_workers": {
       "type": "integer",
       "minimum": 0,
+      "maximum": 100,
       "description": "Idle warm workers kept for this DAG version so its tasks skip the cold pod start (ADR 0058, ADR 0082). Declared as min_idle_workers in dexaflow.yaml, which the compiler copies here. With warm pools on, an unpaused DAG whose current version carries it is prewarmed before its first run; the server clamps it to execution.max_pool_size, and with warm pools off it does nothing. 0 (default) declares none."
     },
     "catchup": {
