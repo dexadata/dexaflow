@@ -815,3 +815,40 @@ def test_run_operator_callback_source_that_fails_to_import_keeps_the_error(
         runner.run_operator("boom_only.Boom", {})
 
     assert "importing no_such_dag_module for on_failure_callback raised" in capsys.readouterr().out
+
+
+# ti.xcom_pull raises for what Dexaflow does not deliver (#2452), once the agent
+# names the declared upstreams; before, it returned None and the task ran on.
+
+
+def _ti_with_upstreams(monkeypatch, upstreams, values, omitted=None):
+    monkeypatch.setenv("LEOFLOW_TASK_ID", "load")
+    monkeypatch.setenv("LEOFLOW_DAG_ID", "etl")
+    monkeypatch.setenv(runner.UPSTREAM_TASK_IDS_ENV, json.dumps(upstreams))
+    monkeypatch.setenv(runner.UPSTREAM_XCOM_ENV, json.dumps(values))
+    if omitted is not None:
+        monkeypatch.setenv(runner.UPSTREAM_XCOM_OMITTED_ENV, json.dumps(omitted))
+    return runner._operator_context()["ti"]
+
+
+def test_ti_xcom_pull_serves_declared_upstreams(monkeypatch):
+    ti = _ti_with_upstreams(monkeypatch, ["extract", "empty"], {"extract": [1, 2]})
+    assert ti.xcom_pull("extract") == [1, 2]
+    assert ti.xcom_pull(task_ids=["extract", "empty"]) == [[1, 2], None]
+    assert ti.xcom_pull("empty", default=0) == 0  # declared, no value: default
+    assert ti.xcom_pull("extract", dag_id="etl") == [1, 2]
+    assert ti.xcom_pull("load", key="job_id") is None  # its own pushes: default
+    assert ti.xcom_pull(key="k") is None
+
+
+@pytest.mark.parametrize("call, match", [
+    (lambda ti: ti.xcom_pull("other"), "not an upstream"),
+    (lambda ti: ti.xcom_pull(task_ids=["extract", "other"]), "not an upstream"),
+    (lambda ti: ti.xcom_pull("extract", key="row_count"), "return value only"),
+    (lambda ti: ti.xcom_pull("extract", dag_id="another_dag"), "another DAG"),
+    (lambda ti: ti.xcom_pull("huge"), "too large"),
+])
+def test_ti_xcom_pull_raises_for_what_is_not_delivered(monkeypatch, call, match):
+    ti = _ti_with_upstreams(monkeypatch, ["extract", "huge"], {"extract": 1}, omitted=["huge"])
+    with pytest.raises(runner.XComNotDeliveredError, match=match):
+        call(ti)

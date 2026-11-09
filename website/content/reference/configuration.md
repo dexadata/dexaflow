@@ -1702,7 +1702,9 @@ when debugging a task; do not set them yourself.
 | `DEXAFLOW_WORKER_IDLE_TTL_SECONDS` | _(empty)_ | Idle time after which a warm worker exits, from `execution.worker_idle_ttl`, in seconds. `0` disables the bound. |
 | `DEXAFLOW_ATTEMPT_WATCHDOG_SECONDS` | _(empty)_ | Longest one attempt may run on a warm worker before the worker exits, from `auth.max_attempt_credential_lifetime`, in seconds. |
 | `DEXAFLOW_WARM_ATTEMPT_HOME` | _(empty)_ | `1` gives every attempt on a warm worker its own `HOME` under the scratch directory, set when `execution.warm_read_only_root_filesystem` is on. |
-| `DEXAFLOW_UPSTREAM_XCOM` | _(empty)_ | JSON map of upstream task id to return value, read by the runtime's `ti.xcom_pull`. |
+| `DEXAFLOW_UPSTREAM_XCOM` | _(empty)_ | JSON map of upstream task id to return value, read by the runtime's `ti.xcom_pull`. Set for provider operators and Python tasks. |
+| `DEXAFLOW_UPSTREAM_TASK_IDS` | _(empty)_ | JSON array of the task's declared upstreams; with it, `ti.xcom_pull` raises for a task that is not one of them. |
+| `DEXAFLOW_UPSTREAM_XCOM_OMITTED` | _(empty)_ | JSON array of upstreams whose value was too large for `DEXAFLOW_UPSTREAM_XCOM`; `ti.xcom_pull` raises for them. |
 | `DEXAFLOW_XCOM_<NAME>` | _(empty)_ | One XCom input bound to the operator parameter `<name>`, as JSON. |
 | `DEXAFLOW_PROJECT_CONFIG_JSON` | _(empty)_ | The project's `dexaflow.yaml`, as JSON, passed by `dexaflow compile` to the DAG parser. |
 

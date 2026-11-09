@@ -113,7 +113,7 @@ func neededUpstreams(spec *agentv1.TaskSpec) []string {
 			add(id)
 		}
 	}
-	if spec.GetOperator() == "airflow_operator" {
+	if pullsUpstreamXCom(spec) {
 		for _, id := range spec.GetDependsOn() {
 			add(id)
 		}

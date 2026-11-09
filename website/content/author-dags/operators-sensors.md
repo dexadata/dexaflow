@@ -99,6 +99,7 @@ variables and small files** — there is no shared Airflow object. The agent's
 | `DEXAFLOW_CALL_ARGS_JSON` | agent | `_resolve_kwargs` | literal args written at a `@task(...)` call (#115) |
 | `DEXAFLOW_XCOM_<PARAM>` | agent | `_resolve_kwargs` / `_merge_operator_xcom` | one upstream task's `return_value`, keyed by param |
 | `DEXAFLOW_UPSTREAM_XCOM` | agent | `_load_xcom_by_task` | map of `{task_id: value}` for `ti.xcom_pull` |
+| `DEXAFLOW_UPSTREAM_TASK_IDS` / `_XCOM_OMITTED` | agent | `_StandaloneTaskInstance` | the declared upstreams, and those too large to deliver (#2452) |
 | `DEXAFLOW_TASK_ID` / `_DAG_ID` / `_RUN_ID` / `_TRY_NUMBER` | agent | context + ti shim | run identity |
 | `DEXAFLOW_TS` / `DEXAFLOW_DS` | agent | `_operator_context` | logical date as ISO timestamp / `YYYY-MM-DD` |
 | `DEXAFLOW_DATA_INTERVAL_START` / `_END` | agent | `_operator_context` | the run's data interval |
@@ -214,11 +215,26 @@ ride through the gRPC `TaskSpec` (proto fields `logical_date`,
 
 ### XCom chaining between tasks — like Airflow
 
-Tasks pass data the Airflow way: `value = ti.xcom_pull(task_ids="upstream")`.
+Tasks pass data the Airflow way: `value = ti.xcom_pull(task_ids="upstream")`,
+in a provider operator and in a `PythonOperator` or `@task` callable alike.
 There is no live TaskInstance in a standalone pod, so the runtime supplies
-`_StandaloneTaskInstance` — a tolerant shim whose `xcom_pull` resolves from the
+`_StandaloneTaskInstance`, whose `xcom_pull` resolves from the
 `{task_id: value}` map the agent delivered in `DEXAFLOW_UPSTREAM_XCOM`, and whose
 `xcom_push(key, value)` captures custom keys for shipping back.
+
+`ti.xcom_pull` serves the return value of the task's own upstream tasks. A
+declared upstream that returned nothing pulls as `None` (or the `default=` you
+pass), as on Airflow, and so does a pull from the task itself. Anything else
+raises `XComNotDeliveredError` naming the task and the fix, where it used to
+return `None` and let the task run on with the wrong data
+([#2452](https://github.com/dexadata/dexaflow/issues/2452)):
+
+- a task that is not an upstream of this one: add the edge (`a >> b`);
+- a custom `key=` of an upstream: return the value from the upstream instead;
+- `dag_id=` of another DAG: share the value through storage both DAGs read;
+- an upstream value too large for the environment (about 96 KiB): store the
+  data outside XCom and return its location
+  ([#2455](https://github.com/dexadata/dexaflow/issues/2455)).
 
 On the control-plane side, the agent only delivers an upstream's value when the
 task actually declares the dependency: `FetchXCom` is guarded by the task's
@@ -229,6 +245,16 @@ For TaskFlow `@task` callables, `_resolve_kwargs` injects this same context into
 named parameters and a `**context` catch-all, with precedence
 **call-args / XCom > context**, so `def f(x, ds=None, **context)` gets the upstream
 value for `x`, the macro for `ds`, and everything else via `context`.
+
+The literal arguments of a `@task` call and a `PythonOperator`'s `op_args` and
+`op_kwargs` are Jinja templates, as on Airflow:
+`PythonOperator(op_kwargs={"day": "{{ ds }}"})` calls the function with the
+date, and so does `load(day="{{ ds }}")`. Strings are rendered inside lists and
+dicts too, and a rendered value is a string. A value that cannot render fails
+the attempt before the call, with the argument and the Jinja error in the task
+log ([ADR 0084](/project/adrs/0084-template-render-errors-fail-the-task/)).
+Before 0.5.11 the function received the raw `{{ ds }}` text
+([#2447](https://github.com/dexadata/dexaflow/issues/2447)).
 
 ### Multi-key XCom
 

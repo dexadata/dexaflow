@@ -60,7 +60,7 @@ def _load_call_args() -> dict:
     return decoded if isinstance(decoded, dict) else {}
 
 
-def _resolve_kwargs(fn, context: dict) -> dict:
+def _resolve_kwargs(fn, context: dict, call_args: dict | None = None) -> dict:
     """Resolve each of fn's parameters from compile-time literals, upstream XCom, and
     the run context — so a TaskFlow @task gets the same context a captured operator does.
 
@@ -78,7 +78,8 @@ def _resolve_kwargs(fn, context: dict) -> dict:
     Parameters with no binding are left unset so the function's defaults apply (or it
     raises TypeError if it has none — exactly Airflow's semantics).
     """
-    call_args = _load_call_args()
+    if call_args is None:
+        call_args = _load_call_args()
     kwargs: dict = {}
     has_var_kw = False
     for name, param in inspect.signature(fn).parameters.items():
@@ -146,7 +147,19 @@ def run(entrypoint: str) -> None:
     if hasattr(fn, "function"):
         fn = fn.function
     context = _operator_context()
-    kwargs = _resolve_kwargs(fn, context)
+    try:
+        call_args = _render_call_args(_load_call_args(), context, fn_name)
+    except TemplateRenderError as exc:
+        # A template that cannot render fails the attempt before the call, as on
+        # Airflow (ADR 0084), and the task's on_failure_callback still runs.
+        _lifecycle(str(exc))
+        context["exception"] = exc
+        _maybe_fire_on_failure_callback(context, on_failure_callback, module_name)
+        raise
+    # templates_dict reaches the function as on Airflow: as its own parameter
+    # when it declares one, and as context["templates_dict"] (#2447).
+    context["templates_dict"] = call_args.get(_TEMPLATES_DICT)
+    kwargs = _resolve_kwargs(fn, context, call_args)
     if kwargs:
         # Log keys only — the values can carry XCom-pulled secrets or any
         # user payload; per ADR 0032 they belong in the XCom tab, not in the
@@ -207,6 +220,60 @@ class TemplateRenderError(RuntimeError):
         self.field = field
         where = f"template field {field!r} of {owner}" if field else f"template fields of {owner}"
         super().__init__(f"{where} failed to render: {type(error).__name__}: {error}")
+
+
+# _TEMPLATES_DICT is the call_args key the compiler stores a PythonOperator's or
+# a @task's templates_dict under (#2447).
+_TEMPLATES_DICT = "templates_dict"
+
+
+def _render_call_args(call_args: dict, context: dict, fn_name: str) -> dict:
+    """Jinja-render the string values of a Python task's literal call args.
+
+    Airflow renders ``op_args``, ``op_kwargs`` and ``templates_dict`` of a
+    ``PythonOperator`` and the arguments of a ``@task`` call before calling the
+    function, so ``op_kwargs={"day": "{{ ds }}"}`` passes the date. Before #2447
+    the runtime passed the raw ``{{ ds }}`` text. Strings are rendered inside
+    lists and dicts too; a value without template markers is unchanged, and the
+    result is a string, as with Airflow's default (non-native) rendering. A value
+    that cannot render raises :class:`TemplateRenderError` naming the argument
+    (ADR 0084)."""
+    if not call_args or not any(_has_template(v) for v in call_args.values()):
+        return call_args
+    try:
+        from jinja2.sandbox import SandboxedEnvironment
+    except ImportError as exc:
+        raise TemplateRenderError(None, f"task function {fn_name!r}", exc) from exc
+    env = SandboxedEnvironment()
+    rendered = {}
+    for name, value in call_args.items():
+        try:
+            rendered[name] = _render_value(env, value, context)
+        except Exception as exc:  # noqa: BLE001 (any render failure fails the attempt)
+            raise TemplateRenderError(name, f"task function {fn_name!r}", exc) from exc
+    return rendered
+
+
+def _has_template(value) -> bool:
+    if isinstance(value, str):
+        return "{{" in value or "{%" in value
+    if isinstance(value, list):
+        return any(_has_template(v) for v in value)
+    if isinstance(value, dict):
+        return any(_has_template(v) for v in value.values())
+    return False
+
+
+def _render_value(env, value, context: dict):
+    if isinstance(value, str):
+        if "{{" not in value and "{%" not in value:
+            return value
+        return env.from_string(value).render(**context)
+    if isinstance(value, list):
+        return [_render_value(env, v, context) for v in value]
+    if isinstance(value, dict):
+        return {k: _render_value(env, v, context) for k, v in value.items()}
+    return value
 
 
 def _render_bash(command: str, context: dict) -> str:
@@ -275,6 +342,32 @@ UPSTREAM_XCOM_ENV = "LEOFLOW_UPSTREAM_XCOM"
 # and distinct from the 0/1 success/failure the agent already maps.
 RESCHEDULE_PATH_ENV = "LEOFLOW_RESCHEDULE_PATH"
 RESCHEDULE_EXIT_CODE = 75
+
+
+UPSTREAM_TASK_IDS_ENV = "LEOFLOW_UPSTREAM_TASK_IDS"
+UPSTREAM_XCOM_OMITTED_ENV = "LEOFLOW_UPSTREAM_XCOM_OMITTED"
+
+
+class XComNotDeliveredError(LookupError):
+    """XComNotDeliveredError is raised by ``ti.xcom_pull`` for a value Dexaflow
+    does not deliver to the task: a custom key, a task that is not a declared
+    upstream, another DAG, or an upstream value too large for the environment.
+    Airflow would return the value; returning None instead let the task run on
+    with the wrong data (#2452)."""
+
+
+def _load_id_list(name: str) -> list[str] | None:
+    """Decode a JSON array of task ids from env var ``name``. None when the agent
+    did not set it (an agent older than #2452), so the caller keeps the old
+    tolerant behavior."""
+    raw = os.environ.get(name)
+    if raw is None:
+        return None
+    try:
+        decoded = json.loads(raw)
+    except (TypeError, ValueError):
+        return None
+    return [str(v) for v in decoded] if isinstance(decoded, list) else None
 
 
 def _load_xcom_by_task() -> dict:
@@ -422,6 +515,8 @@ class _StandaloneTaskInstance(_ContextObject):
         self.max_tries = _env_int("LEOFLOW_MAX_TRIES", self.try_number)
         self.task = task if task is not None else _StandaloneTask(self.task_id, self.dag_id)
         self._xcom_by_task = _load_xcom_by_task()
+        self._upstream_ids = _load_id_list(UPSTREAM_TASK_IDS_ENV)
+        self._omitted = set(_load_id_list(UPSTREAM_XCOM_OMITTED_ENV) or [])
         self.pushed: dict = {}
 
     @property
@@ -442,22 +537,58 @@ class _StandaloneTaskInstance(_ContextObject):
             self.pushed[key] = value
 
     def xcom_pull(self, task_ids=None, dag_id=None, key="return_value", *args, **kwargs):
-        """Resolve an upstream task's ``return_value`` — the Airflow-idiomatic way
-        chained operators pass data (``ti.xcom_pull('compile')['name']``). The agent
-        delivers each declared upstream's return_value in UPSTREAM_XCOM_ENV; only
-        the ``return_value`` key is carried (custom keys → None, matching Dexaflow's
-        single-payload XCom model). ``task_ids`` may be a single id (→ one value) or a
-        list (→ a list, like Airflow); an unknown id resolves to ``default``
-        (Airflow's ``default`` kwarg, itself None unless the caller passes one).
+        """Resolve an upstream task's ``return_value``, the Airflow-idiomatic way
+        chained operators and PythonOperator callables pass data
+        (``ti.xcom_pull('compile')['name']``). The agent delivers each declared
+        upstream's return_value in UPSTREAM_XCOM_ENV and the declared upstreams in
+        UPSTREAM_TASK_IDS_ENV. ``task_ids`` may be a single id (one value) or a list
+        (a list, like Airflow); a declared upstream with no value resolves to
+        ``default`` (Airflow's kwarg, None unless the caller passes one), and so does
+        a pull from the task itself, whose earlier pushes are not delivered.
+
+        What Dexaflow cannot deliver raises :class:`XComNotDeliveredError` instead of
+        returning None (#2452): a custom ``key`` of an upstream, a task that is not a
+        declared upstream, another DAG's task, and an upstream value too large for
+        the environment.
         """
         default = kwargs.get("default")
-        if key not in (None, "return_value"):
-            return default
         if isinstance(task_ids, (list, tuple)):
-            return [self._xcom_by_task.get(t, default) for t in task_ids]
+            return [self._pull_one(t, dag_id, key, default) for t in task_ids]
         if task_ids is None:
             return default
-        return self._xcom_by_task.get(task_ids, default)
+        return self._pull_one(task_ids, dag_id, key, default)
+
+    def _pull_one(self, task_id, dag_id, key, default):
+        if self._upstream_ids is None:
+            # An agent older than #2452: no upstream list, keep the tolerant pull.
+            if key not in (None, "return_value"):
+                return default
+            return self._xcom_by_task.get(task_id, default)
+        if dag_id is not None and dag_id != self.dag_id:
+            raise XComNotDeliveredError(
+                f"ti.xcom_pull(dag_id={dag_id!r}) on task {self.task_id!r}: Dexaflow "
+                "delivers only the return values of this task's own upstream tasks, not "
+                "another DAG's. Pass the value through storage the two DAGs share.")
+        if task_id == self.task_id:
+            return default
+        if task_id not in self._upstream_ids:
+            raise XComNotDeliveredError(
+                f"ti.xcom_pull(task_ids={task_id!r}) on task {self.task_id!r}: "
+                f"{task_id!r} is not an upstream of this task, so its value is not "
+                "delivered. Make it upstream (for example "
+                f"{task_id} >> {self.task_id}) and pull it again.")
+        if key not in (None, "return_value"):
+            raise XComNotDeliveredError(
+                f"ti.xcom_pull(task_ids={task_id!r}, key={key!r}) on task "
+                f"{self.task_id!r}: Dexaflow delivers an upstream's return value only, "
+                "not its other keys. Return the value from the upstream task instead.")
+        if task_id in self._omitted:
+            raise XComNotDeliveredError(
+                f"ti.xcom_pull(task_ids={task_id!r}) on task {self.task_id!r}: the "
+                "upstream's return value is too large to deliver through the environment "
+                "(about 96 KiB at most). Store large data outside XCom and return its "
+                "location (https://github.com/dexadata/dexaflow/issues/2455).")
+        return self._xcom_by_task.get(task_id, default)
 
     def get_first_reschedule_date(self, context=None):
         """Return when this task first entered reschedule, delivered by the agent as
@@ -504,6 +635,9 @@ def _operator_context(task=None) -> dict:
         "data_interval_start": _parse_dt(os.environ.get("LEOFLOW_DATA_INTERVAL_START")),
         "data_interval_end": _parse_dt(os.environ.get("LEOFLOW_DATA_INTERVAL_END")),
         "task_instance_key_str": f"{ti.dag_id}__{ti.task_id}__{run_id}",
+        # A Python task's templates_dict replaces this in run() (#2447); every
+        # other task has none, which Airflow also gives as None.
+        "templates_dict": None,
     }
     if logical_date is not None:
         ctx.update(_logical_date_keys(logical_date))

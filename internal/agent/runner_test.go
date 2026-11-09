@@ -455,11 +455,37 @@ func TestBuildEnvDeliversXComByTaskForOperators(t *testing.T) {
 	}
 }
 
-func TestBuildEnvSkipsXComByTaskForNonOperators(t *testing.T) {
-	// A python @task gets its inputs via xcom_input_mapping, not ti.xcom_pull, so
-	// the agent must not waste fetches building the map for it.
+func TestBuildEnvDeliversXComByTaskForPythonTasks(t *testing.T) {
+	// A classic PythonOperator callable reads its upstreams with ti.xcom_pull, so a
+	// python task gets the map and the declared upstream ids too (#2452).
+	client := &fakeClient{
+		spec: &agentv1.TaskSpec{Operator: "python", Entrypoint: "dag:f", DependsOn: []string{"extract", "empty"}},
+		xcom: map[string]*agentv1.FetchXComResponse{"extract": {Value: []byte(`[1,2]`)}},
+	}
+	r := newRunner(client, &fakeCmd{}, &recordingSink{})
+
+	env, err := r.buildEnv(context.Background(), client.spec)
+	if err != nil {
+		t.Fatalf("buildEnv: %v", err)
+	}
+	je := strings.Join(env, "\n")
+	for _, want := range []string{
+		`LEOFLOW_UPSTREAM_XCOM={"extract":[1,2]}`,
+		`LEOFLOW_UPSTREAM_TASK_IDS=["extract","empty"]`,
+	} {
+		if !strings.Contains(je, want) {
+			t.Errorf("env missing %q; got %v", want, env)
+		}
+	}
+	if strings.Contains(je, "LEOFLOW_UPSTREAM_XCOM_OMITTED") {
+		t.Errorf("nothing was too large to deliver; got %v", env)
+	}
+}
+
+func TestBuildEnvSkipsXComByTaskForBash(t *testing.T) {
+	// A bash task has no ti.xcom_pull, so the agent must not waste fetches on it.
 	client := &fakeClient{spec: &agentv1.TaskSpec{
-		Operator: "python", Entrypoint: "dag:f", DependsOn: []string{"compile"},
+		Operator: "bash", Entrypoint: "echo hi", DependsOn: []string{"compile"},
 	}}
 	r := newRunner(client, &fakeCmd{}, &recordingSink{})
 
@@ -467,8 +493,35 @@ func TestBuildEnvSkipsXComByTaskForNonOperators(t *testing.T) {
 	if err != nil {
 		t.Fatalf("buildEnv: %v", err)
 	}
-	if strings.Contains(strings.Join(env, "\n"), "LEOFLOW_UPSTREAM_XCOM") {
-		t.Errorf("non-operator task should not get the xcom-by-task map; got %v", env)
+	if strings.Contains(strings.Join(env, "\n"), "LEOFLOW_UPSTREAM_") {
+		t.Errorf("bash task should not get the upstream xcom env; got %v", env)
+	}
+}
+
+func TestBuildEnvOmitsUpstreamValuesPastTheEnvLimit(t *testing.T) {
+	// A value that would push the map past one environment string's limit is left
+	// out and named, so the exec cannot fail with E2BIG and the runtime raises for
+	// that upstream instead of returning None (#2452).
+	big := `"` + strings.Repeat("x", maxUpstreamXComMapBytes) + `"`
+	client := &fakeClient{
+		spec: &agentv1.TaskSpec{Operator: "airflow_operator", OperatorClass: "x.Y", DependsOn: []string{"small", "huge"}},
+		xcom: map[string]*agentv1.FetchXComResponse{
+			"small": {Value: []byte(`1`)},
+			"huge":  {Value: []byte(big)},
+		},
+	}
+	r := newRunner(client, &fakeCmd{}, &recordingSink{})
+
+	env, err := r.buildEnv(context.Background(), client.spec)
+	if err != nil {
+		t.Fatalf("buildEnv: %v", err)
+	}
+	je := strings.Join(env, "\n")
+	if !strings.Contains(je, `LEOFLOW_UPSTREAM_XCOM={"small":1}`) {
+		t.Errorf("small upstream must still be delivered; got %v", env)
+	}
+	if !strings.Contains(je, `LEOFLOW_UPSTREAM_XCOM_OMITTED=["huge"]`) {
+		t.Errorf("huge upstream must be named as omitted; got %v", env)
 	}
 }
 
