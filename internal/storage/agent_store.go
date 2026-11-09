@@ -74,12 +74,18 @@ func (s *ExecutionStore) TaskSpec(ctx context.Context, id auth.AgentIdentity) (a
 	}
 	// The DagRun's data interval, RFC3339, for the runtime's data_interval_start/end
 	// context (ADR 0040). Empty when unset so the agent leaves them unset.
+	// A run created before #2446 has no stored interval: it falls back
+	// to the logical date at both ends, which is what such a run now stores.
 	var dataIntervalStart, dataIntervalEnd string
 	if run.DataIntervalStart.Valid {
 		dataIntervalStart = run.DataIntervalStart.Time.UTC().Format(time.RFC3339)
+	} else {
+		dataIntervalStart = logicalDate
 	}
 	if run.DataIntervalEnd.Valid {
 		dataIntervalEnd = run.DataIntervalEnd.Time.UTC().Format(time.RFC3339)
+	} else {
+		dataIntervalEnd = logicalDate
 	}
 	// The task's params for the runtime's context['params'] (#148): the DAG's param
 	// defaults, then the task's own params, then the run conf (#1841). Layered here,

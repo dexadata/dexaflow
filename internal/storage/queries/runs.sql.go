@@ -444,8 +444,8 @@ func (q *Queries) CountTaskInstancesFiltered(ctx context.Context, arg CountTaskI
 }
 
 const createDagRun = `-- name: CreateDagRun :one
-INSERT INTO dag_runs (tenant_id, dag_id, dag_version_id, run_id, logical_date, state, trigger, note, conf)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+INSERT INTO dag_runs (tenant_id, dag_id, dag_version_id, run_id, logical_date, data_interval_start, data_interval_end, state, trigger, note, conf)
+VALUES ($1, $2, $3, $4, $5, $5, $5, $6, $7, $8, $9)
 RETURNING id, tenant_id, dag_id, dag_version_id, run_id, logical_date, data_interval_start, data_interval_end, state, trigger, conf, triggered_by, queued_at, started_at, ended_at, note, alerted_at, alert_attempts, next_alert_attempt_at
 `
 
@@ -461,6 +461,9 @@ type CreateDagRunParams struct {
 	Conf         []byte             `json:"conf"`
 }
 
+// The data interval is the logical date at both ends, Airflow 3's default
+// (CronTriggerTimetable) for every run type; a run without a logical date has
+// none (#2446).
 func (q *Queries) CreateDagRun(ctx context.Context, arg CreateDagRunParams) (DagRun, error) {
 	row := q.db.QueryRow(ctx, createDagRun,
 		arg.TenantID,
@@ -499,8 +502,8 @@ func (q *Queries) CreateDagRun(ctx context.Context, arg CreateDagRunParams) (Dag
 }
 
 const createScheduledRunByDagID = `-- name: CreateScheduledRunByDagID :execrows
-INSERT INTO dag_runs (tenant_id, dag_id, dag_version_id, run_id, logical_date, state, trigger)
-SELECT d.tenant_id, d.id, d.current_version_id, $1, $2, 'queued', 'scheduled'
+INSERT INTO dag_runs (tenant_id, dag_id, dag_version_id, run_id, logical_date, data_interval_start, data_interval_end, state, trigger)
+SELECT d.tenant_id, d.id, d.current_version_id, $1, $2, $2, $2, 'queued', 'scheduled'
 FROM dags d
 WHERE d.tenant_id = $3 AND d.dag_id = $4 AND d.current_version_id IS NOT NULL
 ON CONFLICT (dag_id, run_id) DO NOTHING
@@ -516,6 +519,7 @@ type CreateScheduledRunByDagIDParams struct {
 // Zero rows means the slot's run already exists (or the DAG has no current
 // version): the caller then rolls back the charge it took from the tenant's
 // daily run cap.
+// The data interval is the slot at both ends, as CreateDagRun (#2446).
 func (q *Queries) CreateScheduledRunByDagID(ctx context.Context, arg CreateScheduledRunByDagIDParams) (int64, error) {
 	result, err := q.db.Exec(ctx, createScheduledRunByDagID,
 		arg.RunID,

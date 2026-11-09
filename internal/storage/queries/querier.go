@@ -139,10 +139,14 @@ type Querier interface {
 	CountVariables(ctx context.Context, tenantID pgtype.UUID) (int64, error)
 	CountVariablesFiltered(ctx context.Context, arg CountVariablesFilteredParams) (int64, error)
 	CreateAuditLog(ctx context.Context, arg CreateAuditLogParams) error
+	// The data interval is the logical date at both ends, Airflow 3's default
+	// (CronTriggerTimetable) for every run type; a run without a logical date has
+	// none (#2446).
 	CreateDagRun(ctx context.Context, arg CreateDagRunParams) (DagRun, error)
 	// Zero rows means the slot's run already exists (or the DAG has no current
 	// version): the caller then rolls back the charge it took from the tenant's
 	// daily run cap.
+	// The data interval is the slot at both ends, as CreateDagRun (#2446).
 	CreateScheduledRunByDagID(ctx context.Context, arg CreateScheduledRunByDagIDParams) (int64, error)
 	// try_number starts at 1 to match Airflow (1-based attempts): the first run's
 	// logs live at .../1.log, which is where the UI's log view looks. Retries bump

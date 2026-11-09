@@ -167,7 +167,11 @@ operators and native tasks see the same macros Airflow exposes:
 `macros`, `var`, `conn`, and `exception` in an `on_failure_callback`.
 
 `logical_date` is the run's logical date as a timezone-aware `datetime`, or
-`None` on a run without one. `ds_nodash`, `ts_nodash` and `ts_nodash_with_tz`
+`None` on a run without one. `data_interval_start` and `data_interval_end` are
+both the logical date, Airflow 3's default for a cron schedule
+(`CronTriggerTimetable`), on scheduled, catchup and manual runs alike. Before
+0.5.11 no run stored them and a task saw `None` for both
+([#2446](https://github.com/dexadata/dexaflow/issues/2446)). `ds_nodash`, `ts_nodash` and `ts_nodash_with_tz`
 are derived from it in the Task SDK's formats (`20260614`, `20260614T053000`,
 `20260614T053000+0000`) and, as on Airflow, are absent on a run without a
 logical date. `macros` is the Task SDK's macros module
