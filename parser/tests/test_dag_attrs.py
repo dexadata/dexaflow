@@ -11,6 +11,8 @@ import json
 import textwrap
 from pathlib import Path
 
+import pytest
+
 from leoflow_parser.compiler import compile_dag
 
 
@@ -104,3 +106,70 @@ def test_is_paused_upon_creation_from_dag_decorator(monkeypatch, tmp_path):
         g()
     """)
     assert spec["is_paused_upon_creation"] is False
+
+
+# ───────────── max_active_tasks, per DAG run as in Airflow 3 (#2427) ─────────────
+
+def test_max_active_tasks_is_emitted(monkeypatch, tmp_path):
+    spec = _compile(monkeypatch, tmp_path, """
+        from airflow.sdk import DAG, task
+        @task
+        def a() -> None: ...
+        with DAG("g", max_active_tasks=3):
+            a()
+    """)
+    assert spec["max_active_tasks"] == 3
+
+
+def test_max_active_tasks_from_the_dag_decorator(monkeypatch, tmp_path):
+    spec = _compile(monkeypatch, tmp_path, """
+        from airflow.sdk import dag, task
+        @task
+        def a() -> None: ...
+        @dag(max_active_tasks=2)
+        def g():
+            a()
+        g()
+    """)
+    assert spec["max_active_tasks"] == 2
+
+
+def test_max_active_tasks_absent_when_unset(monkeypatch, tmp_path):
+    spec = _compile(monkeypatch, tmp_path, """
+        from airflow.sdk import DAG, task
+        @task
+        def a() -> None: ...
+        with DAG("g"):
+            a()
+    """)
+    assert "max_active_tasks" not in spec
+
+
+@pytest.mark.parametrize("value", ["0", "-1", "True", "'4'", "2.5"])
+def test_max_active_tasks_must_be_a_positive_integer(monkeypatch, tmp_path, value):
+    with pytest.raises(ValueError) as excinfo:
+        _compile(monkeypatch, tmp_path, f"""
+            from airflow.sdk import DAG, task
+            @task
+            def a() -> None: ...
+            with DAG("g", max_active_tasks={value}):
+                a()
+        """)
+    message = str(excinfo.value)
+    assert "max_active_tasks" in message
+    assert "positive integer" in message
+
+
+def test_concurrency_is_refused_naming_max_active_tasks(monkeypatch, tmp_path):
+    with pytest.raises(ValueError) as excinfo:
+        _compile(monkeypatch, tmp_path, """
+            from airflow.sdk import DAG, task
+            @task
+            def a() -> None: ...
+            with DAG("g", concurrency=5):
+                a()
+        """)
+    message = str(excinfo.value)
+    assert "concurrency" in message
+    assert "max_active_tasks" in message
+    assert "Airflow 3" in message

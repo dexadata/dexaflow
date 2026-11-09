@@ -65,19 +65,19 @@ func TestStepMaxActiveRunsIsPerTenant(t *testing.T) {
 	}
 }
 
-// TestActiveTaskCountsArePerTenant: the max_active_tasks occupancy snapshot
-// counts each tenant's DAG separately.
-func TestActiveTaskCountsArePerTenant(t *testing.T) {
-	runs := []RunState{
-		{DagID: "etl", TenantID: tenantA, States: map[string]domain.TaskState{"a": domain.TaskStateRunning, "b": domain.TaskStateQueued}},
-		{DagID: "etl", TenantID: tenantB, States: map[string]domain.TaskState{"a": domain.TaskStateRunning}},
+// TestRunActiveTasksCountsOnlyItsRun: the max_active_tasks occupancy of a run
+// is its own queued and running task instances, never those of another run of
+// the same dag_id, in its tenant or another one (#2427).
+func TestRunActiveTasksCountsOnlyItsRun(t *testing.T) {
+	a := RunState{DagID: "etl", TenantID: tenantA, States: map[string]domain.TaskState{
+		"a": domain.TaskStateRunning, "b": domain.TaskStateQueued, "c": domain.TaskStateSuccess, "d": domain.TaskStateScheduled,
+	}}
+	b := RunState{DagID: "etl", TenantID: tenantB, States: map[string]domain.TaskState{"a": domain.TaskStateRunning}}
+	if got := runActiveTasks(a); got != 2 {
+		t.Errorf("tenant A etl run active tasks = %d, want 2", got)
 	}
-	counts := activeTaskCounts(runs)
-	if got := counts[dagRef{tenantA, "etl"}]; got != 2 {
-		t.Errorf("tenant A etl active tasks = %d, want 2", got)
-	}
-	if got := counts[dagRef{tenantB, "etl"}]; got != 1 {
-		t.Errorf("tenant B etl active tasks = %d, want 1", got)
+	if got := runActiveTasks(b); got != 1 {
+		t.Errorf("tenant B etl run active tasks = %d, want 1", got)
 	}
 }
 

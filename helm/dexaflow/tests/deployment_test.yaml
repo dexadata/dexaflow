@@ -639,12 +639,40 @@ tests:
             name: LEOFLOW_LOGS_DIR
             value: /var/log/leoflow
 
-  - it: publishes every live-tail line by default (logs.tail.publish always)
+  - it: publishes every live-tail line under the legacy profile (logs.tail.publish always)
+    template: deployment.yaml
+    set:
+      profile: legacy
+      database.url: postgres://h/d
+      redis.url: redis://h/0
+      auth.jwtSecret: jwt
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LEOFLOW_LOGS_TAIL_PUBLISH
+            value: always
+
+  - it: publishes the live tail on demand under the cluster profile (#2356)
     template: deployment.yaml
     set:
       database.url: postgres://h/d
       redis.url: redis://h/0
       auth.jwtSecret: jwt
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LEOFLOW_LOGS_TAIL_PUBLISH
+            value: on_demand
+
+  - it: a set logs.tail.publish wins over the cluster profile
+    template: deployment.yaml
+    set:
+      database.url: postgres://h/d
+      redis.url: redis://h/0
+      auth.jwtSecret: jwt
+      logs.tail.publish: always
     asserts:
       - contains:
           path: spec.template.spec.containers[0].env

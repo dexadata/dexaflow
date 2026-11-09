@@ -337,7 +337,7 @@ func (e *KubernetesExecutor) TaskPodPending(ctx context.Context, a Attempt) (boo
 // with nothing left to recover. Any live pod for the attempt wins over a
 // lingering finished sibling, since work may still be running.
 //
-// Try-number is pinned — the same invariant guard as DeleteTaskPod above. The
+// Try-number is pinned, the same invariant guard as DeleteTaskPod above. The
 // retry rail resets up_for_retry -> none with try_number+1 and the planner
 // re-queues the TI (storage/queries/runs.sql), so a `queued`/`running` TI can be
 // on try 2 while try 1's pod still lingers Pending after a failed best-effort

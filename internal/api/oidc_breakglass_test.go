@@ -103,8 +103,9 @@ func TestBreakGlassAllowsOnlyAllowlistedEmail(t *testing.T) {
 }
 
 // TestJWTModeCredentialPathUngated locks that with no OIDC configured (the
-// default), /auth/token is exactly as before: any credential the authenticator
-// accepts works, with no break-glass gating and no auth-event audit.
+// default), /auth/token is ungated: any credential the authenticator accepts
+// works, with no break-glass gating. The sign-in is audited as auth.login
+// (#2228), never as a break-glass event.
 func TestJWTModeCredentialPathUngated(t *testing.T) {
 	audit := &fakeAuthAudit{}
 	// No BreakGlassEmails, no OIDCFlow → bg is nil, path ungated.
@@ -128,8 +129,8 @@ func TestJWTModeCredentialPathUngated(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("jwt-mode login = %d, want 200 (ungated)", rec.Code)
 	}
-	if len(audit.events) != 0 {
-		t.Errorf("jwt mode must not emit auth-event audit; got %d events", len(audit.events))
+	if len(audit.events) != 1 || audit.events[0].action != auditPasswordLogin || audit.events[0].outcome != "success" {
+		t.Errorf("jwt mode audit = %+v, want one auth.login success and no break-glass event", audit.events)
 	}
 }
 

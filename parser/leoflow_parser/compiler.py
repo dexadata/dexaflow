@@ -39,6 +39,7 @@ def compile_dag(
     """Compile the DAG in ``source`` into a dag.json dictionary."""
     config = _load_config(config_path)
     dag = _load_dag(source, config.get("dag_id"))
+    _reject_unhonored_dag_args(dag)
 
     spec: dict[str, Any] = {
         "schema_version": "1.0",
@@ -84,6 +85,9 @@ def compile_dag(
     mar = getattr(dag, "max_active_runs", None)
     if isinstance(mar, int) and not isinstance(mar, bool) and mar > 0:
         spec["max_active_runs"] = mar
+    mat = _max_active_tasks(dag)
+    if mat is not None:
+        spec["max_active_tasks"] = mat
     if getattr(dag, "catchup", None) is True:
         spec["catchup"] = True
     # Both values are kept: False makes a DAG start active on a server that
@@ -93,6 +97,39 @@ def compile_dag(
     if isinstance(paused, bool):
         spec["is_paused_upon_creation"] = paused
     return spec
+
+
+_MAX_ACTIVE_TASKS_DOCS = (
+    "https://dexaflow.dexadata.ai/author-dags/dag-authoring/"
+    "#task-concurrency-per-run-max_active_tasks"
+)
+
+
+def _max_active_tasks(dag) -> int | None:
+    """The DAG's max_active_tasks, a cap per DAG run as in Airflow 3 (#2427).
+
+    None when unset, so a DAG that sets none keeps its compiled shape. A value
+    that is not a positive integer is refused rather than dropped: the author
+    asked for a cap, and running without one would be a silent change. The
+    Airflow 2 name ``concurrency``, removed in Airflow 3, is refused by name.
+    """
+    if hasattr(dag, "concurrency"):
+        raise ValueError(
+            f"DAG {dag.dag_id!r} sets concurrency={dag.concurrency!r}, which Airflow 3 "
+            "removed. Use max_active_tasks instead: it caps the task instances active "
+            f"at once in each run of the DAG (see {_MAX_ACTIVE_TASKS_DOCS})."
+        )
+    value = getattr(dag, "max_active_tasks", None)
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+        raise ValueError(
+            f"DAG {dag.dag_id!r} sets max_active_tasks={value!r}; it must be a "
+            "positive integer, the number of task instances that may be queued or "
+            "running at once in each run of the DAG. Remove it for no cap "
+            f"(see {_MAX_ACTIVE_TASKS_DOCS})."
+        )
+    return value
 
 
 def _load_config(path: str) -> dict[str, Any]:
@@ -441,7 +478,29 @@ _UNHONORED_TASK_ARGS = {
     "depends_on_past": (False, "#2350"),
     "wait_for_downstream": (False, "#2350"),
     "priority_weight": (1, None),
+    "max_active_tis_per_dag": (None, "#2428"),
+    "max_active_tis_per_dagrun": (None, "#2428"),
 }
+
+# DAG arguments the scheduler does not honor, refused for the same reason
+# (#2336): a run timeout that never fires and an auto-pause after failed runs
+# that never pauses. Each maps to its Airflow default, which stays accepted.
+_UNHONORED_DAG_ARGS = {
+    "dagrun_timeout": None,
+    "max_consecutive_failed_dag_runs": 0,
+}
+
+
+def _reject_unhonored_dag_args(dag) -> None:
+    for name, default in _UNHONORED_DAG_ARGS.items():
+        value = getattr(dag, name, default)
+        if value == default:
+            continue
+        raise ValueError(
+            f"{name}={value!r} on DAG {dag.dag_id!r} is not honored by the Dexaflow "
+            "scheduler, which would ignore it and run the DAG with different "
+            f"semantics than Airflow. Remove it, or set it to {default!r}."
+        )
 
 
 def _reject_unhonored_args(task, dag) -> None:

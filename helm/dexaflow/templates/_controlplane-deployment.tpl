@@ -357,8 +357,10 @@ spec:
             {{- end }}
             - name: LEOFLOW_LOGS_DIR
               value: {{ .ctx.Values.config.logsDir | quote }}
+            {{- /* Live-tail publish mode (#2356): the cluster profile publishes only
+                 while someone follows the attempt; legacy keeps always. */}}
             - name: LEOFLOW_LOGS_TAIL_PUBLISH
-              value: {{ (.ctx.Values.logs.tail).publish | default "always" | quote }}
+              value: {{ include "leoflow.profiled" (dict "ctx" .ctx "value" (.ctx.Values.logs.tail).publish "cluster" "on_demand") | default "always" | quote }}
             {{- if and (not .ctx.Values.logs.persistence.enabled) (eq .ctx.Values.logs.sink.provider "disk") }}
             - name: LEOFLOW_LOGS_PERSISTENCE_ENABLED
               value: "false"

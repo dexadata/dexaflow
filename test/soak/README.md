@@ -475,6 +475,15 @@ and `violations.jsonl` are `fsync`ed per record, and `summary.md` / `verdict.jso
 are rewritten atomically (temp file plus rename) on every sample. A soak that runs
 out of disk mid-write loses at most the record being written, never the report.
 
+**What happens when the environment leaves.** When the API stops answering for
+12 consecutive samples (two minutes at the default cadence), the monitor stops
+with `stop_reason: control_plane_gone`. When the metadatabase stops answering
+for as long, it stops with `stop_reason: datastore_unreachable` and the verdict
+reads `ABORTED: datastore unreachable at 29.2h` (or `FAIL (then ABORTED: ...)`
+when violations were recorded before the loss), and no violation is counted for
+the samples without a database (#1257): a soak whose Docker host stopped is a
+run that ended, not a product that failed. Both exit 2, the harness code.
+
 The free-space floor is deliberately the largest of the three: filling the
 *machine's* disk is a worse outcome than filling the soak's own budget, and 10 GiB
 is enough headroom for the operating system to stay comfortable.
@@ -556,7 +565,7 @@ Six DAG projects in `test/soak/dags/`, all on cron schedules, all with
 | DAG | Schedule | Shape | What it is in the battery for |
 |---|---|---|---|
 | `soak_ingest` | `*/5` | write then dependent read-back | generates the data volume with DuckDB; the read-back asserts the bytes survived |
-| `soak_fanout` | `*/5` | 1 to 8 to 1, `max_active_tasks=4` | parallelism, and the per-DAG concurrency cap under real pressure (8 ready siblings, 4 slots) |
+| `soak_fanout` | `*/5` | 1 to 8 to 1, `max_active_tasks=4` | parallelism, and the per-run concurrency cap under real pressure (8 ready siblings, 4 slots); the monitor's `max_active_tasks_exceeded` fails the soak when a run has more than 4 active. Before 0.5.11 the compiler dropped `max_active_tasks`, so no soak exercised the cap ([#2427](https://github.com/dexadata/dexaflow/issues/2427)) |
 | `soak_chain` | `*/3` | 10-deep alternating bash/python chain | the most latency-sensitive DAG in the set: its wall-clock is 10 hops of dispatch, so a slowing tick shows here first |
 | `soak_operators` | `*/5` | provider operators plus a reschedule sensor | the non-native path, and `up_for_reschedule` |
 | `soak_flaky` | `*/7` | fails twice then succeeds; plus a task that always fails | the retry budget and the terminal-failure branch. Every run of this DAG ends `failed` on purpose |

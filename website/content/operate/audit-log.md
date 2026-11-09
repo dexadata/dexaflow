@@ -6,10 +6,10 @@ description: Which actions Dexaflow records, what an entry holds, how to read it
 ---
 
 Dexaflow writes an entry to its audit log when someone changes what runs:
-registers or promotes a DAG version, pauses a DAG, triggers or marks a run,
-clears or marks a task. It also records sign-ins through an identity provider,
-API token changes, operator service API calls, and the secret checks made on
-behalf of running tasks. Entries live in the `audit_log` table of the
+registers or promotes a DAG version, pauses or deletes a DAG, triggers, marks
+or deletes a run, clears or marks a task, and changes a connection, a variable
+or a pool. It also records sign-ins, API token changes, operator service API
+calls, and the secret checks made on behalf of running tasks. Entries live in the `audit_log` table of the
 Dexaflow database, one row per action, and belong to a tenant.
 
 ## What is recorded
@@ -19,10 +19,16 @@ Dexaflow database, one row per action, and belong to a tenant.
 | `dag.version.register` | A DAG version is registered (`dexaflow deploy`, `POST /api/v2/dags/{dag_id}/versions`). |
 | `dag.version.set_current` | The current version of a DAG changes, by a deploy or a promotion. |
 | `dag.pause`, `dag.unpause` | A DAG is paused or unpaused, including a register that sets it. |
+| `dag.delete` | A DAG is deleted with its versions and runs (`DELETE /api/v2/dags/{dag_id}?deregister=true`). |
+| `dag.history.clear` | A DAG's runs are deleted and the DAG kept (`DELETE /api/v2/dags/{dag_id}`, the UI's delete). |
+| `dagrun.delete` | One run is deleted. |
 | `dagrun.<run_type>.trigger` | A run is triggered, for example `dagrun.manual.trigger`. |
 | `dagrun.mark.<state>` | A run's state is set, for example `dagrun.mark.failed` or `dagrun.mark.queued` for a re-run. |
 | `taskinstance.clear` | A task instance is cleared, one entry per task. |
 | `taskinstance.mark.<state>` | A task instance's state is set by a user. |
+| `connection.create`, `connection.update`, `connection.delete` | A connection is created, changed or deleted. A `POST` of an existing id is an update. |
+| `variable.create`, `variable.update`, `variable.delete` | A variable is created, changed or deleted. A `POST` of an existing key is an update. |
+| `pool.create`, `pool.update`, `pool.delete` | A pool is created, resized or changed, or deleted. |
 | `secret.scope_warning` | A task asked for a secret its DAG did not declare. |
 | `secret.liveness_would_deny`, `secret.liveness_denied` | A secret was asked for by a task instance that was no longer live, under `auth.secret_liveness_mode` `observe` or `enforce` ([ADR 0055](/project/adrs/0055-secret-scoping-and-token-liveness/)). |
 | `api_token.create`, `api_token.revoke` | A user creates or revokes an API token. |
@@ -31,6 +37,7 @@ Dexaflow database, one row per action, and belong to a tenant.
 | `oidc.cli_code`, `oidc.cli_consent`, `oidc.cli_device_verify` | `dexaflow login` through the browser. |
 | `issuer.login.success`, `issuer.login.failure`, `issuer.bearer.failure` | Sign-in through a trusted issuer, and a bearer token from it that is refused. |
 | `ci_oidc.exchange` | A CI job exchanges its identity token for a Dexaflow token. |
+| `auth.login` | A password sign-in while OIDC is off, accepted or refused for bad credentials. |
 | `auth.break_glass` | A password sign-in while OIDC is on, allowed or refused. |
 | `user.create` | A user is created. |
 | `user.deactivate`, `user.activate` | An admin deactivates or reactivates a user through `PATCH /api/v2/users/{user_id}`. |
@@ -57,10 +64,11 @@ server logs it and the change stands.
 | `owner` | The email of the user who acted. Empty for actions with no user, such as the secret checks, a CI exchange or the retention janitor. |
 | `dag_id` | The DAG, for entries recorded on a DAG. |
 | `run_id`, `task_id`, `try_number` | The run and task the action was on, where it has them. |
-| `extra` | Everything else, as a JSON object: the version, image and spec hash of a register, the versions on both sides of a `set_current`, the outcome and reason of a sign-in, the id and name of a token, the rows and cutoff of a purge. |
+| `extra` | Everything else, as a JSON object: the version, image and spec hash of a register, the versions on both sides of a `set_current`, the outcome and reason of a sign-in, the id and name of a token, the rows and cutoff of a purge. A connection, variable or pool entry carries its name under `connection`, `variable` or `pool`, the names of the fields the request set under `fields`, and for a pool the `slots` (and `previous_slots` on a resize). |
 
 Secret values, passwords, API tokens and their hashes are never written to the
-audit log. A token entry carries the token's id and name; a secret entry
+audit log. A connection entry names the `password` or `extra` field when the
+request set it, never its value, and a variable entry never carries the value. A token entry carries the token's id and name; a secret entry
 carries the kind of secret and the task, not its value.
 
 ## Read it in the UI
@@ -109,9 +117,7 @@ retention window closes.
 ## What is not recorded
 
 - Reads: listing DAGs, opening logs, reading variables or connections.
-- Changes to connections, variables and pools, deleting a DAG or a run, and
-  user changes other than creation. Use your database's own audit for those
-  until they are recorded.
-- Password sign-ins while OIDC is off.
+- A password sign-in refused before the credential check: one over the
+  per-address limit, or one with a malformed body.
 - Actions of the scheduler and the agents, such as retries, reschedules and
   task outcomes: those are in the run's history and the task logs.

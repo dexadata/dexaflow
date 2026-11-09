@@ -112,6 +112,33 @@ helm upgrade <release> oci://ghcr.io/dexadata/charts/leoflow --version <VERSION>
   -n leoflow --reset-then-reuse-values
 ```
 
+### Supported upgrade paths
+
+You do not have to take every patch. One `helm upgrade` may skip any number
+of releases, as long as it starts from a supported release:
+
+| Upgrading to | Supported from, in one step |
+|---|---|
+| any 0.6.x | 0.5.0 or later |
+| any 0.5.x | 0.5.0 or later |
+
+Every migration in between then runs in the one migration Job, in order. The
+[skip-version upgrade test](https://github.com/dexadata/dexaflow/blob/main/test/upgrade/skip-version.sh)
+holds every release candidate to this, weekly and on each rc tag
+([#2311](https://github.com/dexadata/dexaflow/issues/2311)): it seeds a
+database at 0.5.0 with 1,000 DAGs, 1 million runs, 5 million task
+instances, 500,000 archived tries and 1 million audit rows, upgrades it to
+the candidate in one step, and checks that every migration finished within
+5 minutes, that no index was left `INVALID`, that the schema equals a fresh
+install's (`pg_dump --schema-only`), and that the control plane becomes
+ready and runs a new DAG while it still serves the old runs.
+
+Read the "Upgrading to" sections of every release you skip, in order: their
+steps still apply, and the migrations of all of them run in that one Job, so
+size its `activeDeadlineSeconds` and Helm's `--timeout` for their sum. Upgrade
+from a release older than the table in two steps, through the oldest
+supported one.
+
 ### Use `--reset-then-reuse-values`, not `--reuse-values`
 
 `--reuse-values` does **not** merge the new chart's defaults. Helm rebuilds the
@@ -1338,6 +1365,61 @@ policy:
 ```sh
 migrate -path migrations -database "$DATABASE_URL" goto 58
 ```
+
+### Upgrading to 0.5.11: a trigger at max_active_runs is queued
+
+A manual trigger of a DAG that already has `max_active_runs` runs queued or
+running is now accepted with the run in `queued`, as Airflow does
+([#2426](https://github.com/dexadata/dexaflow/issues/2426)); the scheduler
+starts it when a slot frees, oldest logical date first. Until 0.5.11 it
+answered 409 (`dag "x" is at max_active_runs cap of N`). The same holds for
+`dexaflow runs trigger`, `dexaflow deploy --trigger` and any script that calls
+`POST /api/v2/dags/{dag_id}/dagRuns`.
+
+A caller that relied on the 409 to drop a trigger while the DAG was busy now
+queues every one of them. To keep dropping them, check the DAG's active runs
+before triggering (`GET /api/v2/dags/{dag_id}/dagRuns?state=queued&state=running`).
+Scheduled runs are unchanged: the schedule still creates none while the DAG is
+at the cap. The tenant's `max_runs_per_day` still refuses a trigger with 403.
+
+### Upgrading to 0.5.11: max_active_tasks is compiled, per DAG run
+
+`max_active_tasks` on `DAG(...)` or `@dag(...)` now reaches the scheduler
+([#2427](https://github.com/dexadata/dexaflow/issues/2427)). Until 0.5.11 the
+compiler dropped it, so a DAG that set it ran without a cap. It is a cap per
+DAG run, as in Airflow 3: each run may have that many task instances queued or
+running at once.
+
+| Your DAG | What the upgrade does |
+|---|---|
+| Sets `max_active_tasks` in `dag.py` | After its next compile and deploy, each run is capped. A wide fan-out runs in waves where it ran all at once before. |
+| Sets `concurrency` (the Airflow 2 name) | `dexaflow compile` refuses it. Rename it to `max_active_tasks`. The version already deployed keeps running, uncapped. |
+| Sets `max_active_tasks` with a value that is not a positive integer | `dexaflow compile` refuses it. Remove it for no cap. |
+| A hand-written `dag.json` with `max_active_tasks` | The cap now applies to each run instead of to all runs of the DAG together, so the DAG can have up to `max_active_runs` times as many tasks active. Use a [pool](/operate/pools/) to keep a cap across runs. |
+| Sets neither | Nothing changes. |
+
+The UI and `GET /api/v2/dags/{dag_id}/details` show the DAG's own value, or
+nothing when it sets none, instead of a constant 16.
+
+### Upgrading to 0.5.12: the live log tail is published on demand
+
+Under the `cluster` profile, `logs.tail.publish` now renders `on_demand` when
+it is unset ([#2356](https://github.com/dexadata/dexaflow/issues/2356)): a
+received log line is published for the live tail only while someone follows
+the attempt, instead of one Redis `PUBLISH` per line whether anyone follows or
+not. A follower still receives every line after it subscribed: the lines held
+since the last check are replayed when it is noticed, at most a second later.
+`legacy` keeps `always`, as before.
+
+| Your install | What the upgrade does |
+|---|---|
+| A release installed with 0.5.10 or later (`cluster`) | Switches to `on_demand`. Safe during the rolling upgrade: every version since 0.5.1 skips the replayed lines it already served. |
+| A release from before 0.5.10 (`legacy`) | Nothing changes. |
+| You want to keep publishing every line | Set `logs.tail.publish: always`. |
+
+Every log stream also publishes from its own queue now, in batches of up to
+256 lines per Redis round trip, so a follower costs a chatty task far less
+receive rate than before, under either mode.
 
 ### Upgrading to 0.6.0: the UI refreshes every 5 seconds
 

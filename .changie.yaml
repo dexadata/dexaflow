@@ -28,14 +28,29 @@ versionFormat: ""
 kindFormat: '### {{.Kind}}'
 changeFormat: '- {{.Body}}'
 
-# Keep a Changelog's types, in its order. `Security` is kept even though it is
-# rarely used: a security fix filed as `Fixed` is a security fix nobody greps
-# for.
+# Three kinds an operator reads before upgrading, then Keep a Changelog's
+# types, in its order (#1557). scripts/release-notes.sh opens the release body
+# with the first three under the headings Highlights, Breaking changes and
+# Action required, and writes "None." under the last two when a release has no
+# entry, so their absence is stated rather than implied.
+#
+# - Highlights: three to five lines on what the release is for, written for
+#   the release (RELEASING.md says by whom and when), not by every PR.
+# - Breaking: what stops working as before, and what to do about it.
+# - Upgrade: what an operator must do before or after upgrading: a migration
+#   and its expected duration, a new required setting, a removed flag. Link
+#   the matching section of operate/upgrades.md.
+#
+# `Security` is kept even though it is rarely used: a security fix filed as
+# `Fixed` is a security fix nobody greps for.
 #
 # These labels and their order are duplicated in scripts/changelog-fold.sh,
 # which has to emit the kinds in a fixed order without parsing YAML. A self-test
 # there reads this list and fails if the two drift.
 kinds:
+  - label: Highlights
+  - label: Breaking
+  - label: Upgrade
   - label: Added
   - label: Changed
   - label: Deprecated

@@ -328,7 +328,8 @@ func (q *Queries) GetDagVersionByHash(ctx context.Context, arg GetDagVersionByHa
 }
 
 const getDagWithVersion = `-- name: GetDagWithVersion :one
-SELECT d.id, d.tenant_id, d.dag_id, d.description, d.is_paused, d.is_active, d.owner, d.tags, d.schedule, d.schedule_timezone, d.start_date, d.end_date, d.max_active_runs, d.catchup, d.current_version_id, d.created_at, d.updated_at, d.next_run_at, d.schedule_epoch, v.version AS current_version_label
+SELECT d.id, d.tenant_id, d.dag_id, d.description, d.is_paused, d.is_active, d.owner, d.tags, d.schedule, d.schedule_timezone, d.start_date, d.end_date, d.max_active_runs, d.catchup, d.current_version_id, d.created_at, d.updated_at, d.next_run_at, d.schedule_epoch, v.version AS current_version_label,
+       COALESCE((v.spec->>'max_active_tasks')::integer, 0)::integer AS max_active_tasks
 FROM dags d
 LEFT JOIN dag_versions v ON v.id = d.current_version_id
 WHERE d.tenant_id = $1 AND d.dag_id = $2
@@ -360,9 +361,12 @@ type GetDagWithVersionRow struct {
 	NextRunAt           pgtype.Timestamptz `json:"next_run_at"`
 	ScheduleEpoch       int64              `json:"schedule_epoch"`
 	CurrentVersionLabel *string            `json:"current_version_label"`
+	MaxActiveTasks      int32              `json:"max_active_tasks"`
 }
 
-// See ListDagsWithVersion.
+// See ListDagsWithVersion. max_active_tasks is read from the current version's
+// spec (zero when it declares none), the cap per DAG run the scheduler applies
+// (#2427); it has no dags column since only these reads show it.
 func (q *Queries) GetDagWithVersion(ctx context.Context, arg GetDagWithVersionParams) (GetDagWithVersionRow, error) {
 	row := q.db.QueryRow(ctx, getDagWithVersion, arg.TenantID, arg.DagID)
 	var i GetDagWithVersionRow
@@ -387,6 +391,7 @@ func (q *Queries) GetDagWithVersion(ctx context.Context, arg GetDagWithVersionPa
 		&i.NextRunAt,
 		&i.ScheduleEpoch,
 		&i.CurrentVersionLabel,
+		&i.MaxActiveTasks,
 	)
 	return i, err
 }
@@ -648,7 +653,8 @@ func (q *Queries) ListDagsFiltered(ctx context.Context, arg ListDagsFilteredPara
 }
 
 const listDagsWithFilter = `-- name: ListDagsWithFilter :many
-SELECT d.id, d.tenant_id, d.dag_id, d.description, d.is_paused, d.is_active, d.owner, d.tags, d.schedule, d.schedule_timezone, d.start_date, d.end_date, d.max_active_runs, d.catchup, d.current_version_id, d.created_at, d.updated_at, d.next_run_at, d.schedule_epoch, v.version AS current_version_label
+SELECT d.id, d.tenant_id, d.dag_id, d.description, d.is_paused, d.is_active, d.owner, d.tags, d.schedule, d.schedule_timezone, d.start_date, d.end_date, d.max_active_runs, d.catchup, d.current_version_id, d.created_at, d.updated_at, d.next_run_at, d.schedule_epoch, v.version AS current_version_label,
+       COALESCE((v.spec->>'max_active_tasks')::integer, 0)::integer AS max_active_tasks
 FROM dags d
 LEFT JOIN dag_versions v ON v.id = d.current_version_id
 LEFT JOIN LATERAL (
@@ -736,6 +742,7 @@ type ListDagsWithFilterRow struct {
 	NextRunAt           pgtype.Timestamptz `json:"next_run_at"`
 	ScheduleEpoch       int64              `json:"schedule_epoch"`
 	CurrentVersionLabel *string            `json:"current_version_label"`
+	MaxActiveTasks      int32              `json:"max_active_tasks"`
 }
 
 // The Airflow 3.3 DAG list's search, tag, owner, favorite and sort controls
@@ -788,6 +795,7 @@ func (q *Queries) ListDagsWithFilter(ctx context.Context, arg ListDagsWithFilter
 			&i.NextRunAt,
 			&i.ScheduleEpoch,
 			&i.CurrentVersionLabel,
+			&i.MaxActiveTasks,
 		); err != nil {
 			return nil, err
 		}
@@ -800,7 +808,8 @@ func (q *Queries) ListDagsWithFilter(ctx context.Context, arg ListDagsWithFilter
 }
 
 const listDagsWithVersion = `-- name: ListDagsWithVersion :many
-SELECT d.id, d.tenant_id, d.dag_id, d.description, d.is_paused, d.is_active, d.owner, d.tags, d.schedule, d.schedule_timezone, d.start_date, d.end_date, d.max_active_runs, d.catchup, d.current_version_id, d.created_at, d.updated_at, d.next_run_at, d.schedule_epoch, v.version AS current_version_label
+SELECT d.id, d.tenant_id, d.dag_id, d.description, d.is_paused, d.is_active, d.owner, d.tags, d.schedule, d.schedule_timezone, d.start_date, d.end_date, d.max_active_runs, d.catchup, d.current_version_id, d.created_at, d.updated_at, d.next_run_at, d.schedule_epoch, v.version AS current_version_label,
+       COALESCE((v.spec->>'max_active_tasks')::integer, 0)::integer AS max_active_tasks
 FROM dags d
 LEFT JOIN dag_versions v ON v.id = d.current_version_id
 WHERE d.tenant_id = $1 AND d.is_active = true
@@ -835,6 +844,7 @@ type ListDagsWithVersionRow struct {
 	NextRunAt           pgtype.Timestamptz `json:"next_run_at"`
 	ScheduleEpoch       int64              `json:"schedule_epoch"`
 	CurrentVersionLabel *string            `json:"current_version_label"`
+	MaxActiveTasks      int32              `json:"max_active_tasks"`
 }
 
 // The DAG plus the LABEL of its current version. The UI's clear dialog compares
@@ -871,6 +881,7 @@ func (q *Queries) ListDagsWithVersion(ctx context.Context, arg ListDagsWithVersi
 			&i.NextRunAt,
 			&i.ScheduleEpoch,
 			&i.CurrentVersionLabel,
+			&i.MaxActiveTasks,
 		); err != nil {
 			return nil, err
 		}

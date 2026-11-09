@@ -19,7 +19,7 @@ type LeoflowConfig struct {
 	PythonVersion string   `json:"python_version,omitempty" yaml:"python_version,omitempty"`
 	// PythonVersionDefaulted reports that ApplyDefaults supplied PythonVersion
 	// because the config declared none. It is not part of the authoring surface
-	// and never serialized — it exists so a consumer can tell "the author chose
+	// and never serialized: it exists so a consumer can tell "the author chose
 	// 3.11" from "nobody said anything", which are the same string afterwards.
 	// `dexaflow lite` needs the distinction: enforcing a version the CLI invented
 	// refuses to boot over a choice the user never made (#1092 follow-up).
@@ -80,7 +80,7 @@ type AlertsConfig struct {
 
 // AlertRule is one channel to notify on an alert event. The endpoint and its
 // secret always come from a managed connection (Conn), never a literal URL or
-// token in dexaflow.yaml — that keeps credentials out of the compiled dag.json and
+// token in dexaflow.yaml: that keeps credentials out of the compiled dag.json and
 // mirrors the env-ref secret discipline.
 type AlertRule struct {
 	// Type is the channel: "slack" (Slack incoming webhook) or "webhook" (a generic
@@ -100,7 +100,7 @@ type DbtConfig struct {
 	// Project is the directory containing dbt_project.yml.
 	Project string `json:"project,omitempty" yaml:"project,omitempty"`
 	// Granularity is the task partition strategy: node, level or folder (ADR 0042
-	// §5). Empty means node. Tag and selector grouping are not implemented — the
+	// §5). Empty means node. Tag and selector grouping are not implemented: the
 	// schema enum is the three above; see #398.
 	Granularity string `json:"granularity,omitempty" yaml:"granularity,omitempty"`
 	// Manifest optionally points to a pre-built manifest.json (the Pro/CI baked

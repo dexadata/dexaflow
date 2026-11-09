@@ -19,14 +19,14 @@ release ships.
 
 | Area | Production profile | Why, and where the detail is |
 |---|---|---|
-| Edition and topology | Cluster edition, non-split, `replicaCount: 2`, from [`values-ha.yaml`](https://github.com/dexadata/dexaflow/blob/main/helm/dexaflow/examples/values-ha.yaml) | A leader-elected scheduler with a warm standby and an active-active API. Split mode is not dispatch HA ([control-plane HA](/operate/control-plane-ha/#split-mode-is-not-dispatch-ha)). |
+| Edition and topology | Cluster edition, non-split, `replicaCount: 2`, from [`values-ha.yaml`](https://github.com/dexadata/dexaflow/blob/main/helm/dexaflow/examples/values-ha.yaml) | A leader-elected scheduler with a warm standby and an active-active API. Split mode needs `split.scheduler.replicaCount: 2` for the same failover ([control-plane HA](/operate/control-plane-ha/#split-mode-with-a-scheduler-standby)). |
 | Placement | Replicas spread across nodes, and across zones on a multi-zone cluster | Two replicas on one node or in one zone are one replica ([control-plane HA](/operate/control-plane-ha/#two-replicas-on-one-node-are-one-replica)). |
 | Postgres | Managed Postgres 16 with high availability and point-in-time recovery | The only durable state of the control plane. Direct connections, or PgBouncer in **session** mode, for every process that runs the scheduler: the leader election holds a session advisory lock ([connection budget](/operate/control-plane-ha/#postgres-connection-budget)). |
 | Redis | Managed Redis with persistence, `maxmemory-policy noeviction`, reached through the provider's failover endpoint | Holds XCom values of running DAGs and carries the live log tail ([Redis requirements](/operate/redis/)). |
 | Task logs | Object storage sink (`logs.sink.provider: s3` or `gcs`), no log PVC | A `ReadWriteOnce` log volume cannot follow a second replica ([control-plane HA](/operate/control-plane-ha/#the-storage-precondition)). |
 | Task execution | Dedicated task pods | Warm pools (`execution.warmPoolsEnabled`) are **experimental** and outside the profile ([warm pools](/operate/warm-pools/)). |
 | Retention | On, with the [starting configuration](/operate/data-retention/#a-starting-configuration) | Without it `dag_runs`, `task_instances` and `audit_log` grow without bound. |
-| Monitoring | `metrics.serviceMonitor.enabled` and `metrics.prometheusRule.enabled` | The rules the chart ships page on the states that stop work silently, such as a schema that is not ready ([helm chart](/operate/helm-chart/)). The project ships no dashboard yet. |
+| Monitoring | `metrics.serviceMonitor.enabled` and `metrics.prometheusRule.enabled` | The rules the chart ships page on the states that stop work silently, such as a schema that is not ready ([helm chart](/operate/helm-chart/)). `metrics.grafanaDashboard.enabled` adds the overview dashboard ([metrics](/reference/metrics/#grafana-dashboard)). |
 | Versions | A pinned chart version, whose `appVersion` pins the images, upgraded along the [supported path](/operate/upgrades/) | A minor is upgraded from the latest patch of the previous minor ([versioning](/project/versioning/#upgrade-path)). |
 | Backups | The RPO and RTO targets of [Cluster backup](/operate/backup-restore/#cluster-helm) | Postgres, Redis, the log bucket and the secrets are separate state, each with its own loss. |
 
@@ -47,6 +47,8 @@ metrics:
   serviceMonitor:
     enabled: true
   prometheusRule:
+    enabled: true
+  grafanaDashboard:
     enabled: true
 ```
 

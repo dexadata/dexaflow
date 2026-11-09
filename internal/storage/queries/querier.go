@@ -80,9 +80,6 @@ type Querier interface {
 	// keeps every tenant's ladder equal to default's as later migrations change it.
 	CopyDefaultSystemRoles(ctx context.Context, tenantID pgtype.UUID) error
 	CountAPITokens(ctx context.Context, arg CountAPITokensParams) (int64, error)
-	// Counts queued+running runs for a single DAG; used by the manual-trigger
-	// path to enforce max_active_runs (#200) before insert.
-	CountActiveDagRunsByDagID(ctx context.Context, arg CountActiveDagRunsByDagIDParams) (int64, error)
 	CountAuditLogs(ctx context.Context, arg CountAuditLogsParams) (int64, error)
 	CountConnections(ctx context.Context, tenantID pgtype.UUID) (int64, error)
 	CountConnectionsFiltered(ctx context.Context, arg CountConnectionsFilteredParams) (int64, error)
@@ -356,7 +353,9 @@ type Querier interface {
 	// Unscoped, like GetDagVersionByID: the spec cache's batch fill for a warm
 	// pool reconcile tick, which reads the versions of its own targets (#1707).
 	GetDagVersionsByIDs(ctx context.Context, ids []pgtype.UUID) ([]DagVersion, error)
-	// See ListDagsWithVersion.
+	// See ListDagsWithVersion. max_active_tasks is read from the current version's
+	// spec (zero when it declares none), the cap per DAG run the scheduler applies
+	// (#2427); it has no dags column since only these reads show it.
 	GetDagWithVersion(ctx context.Context, arg GetDagWithVersionParams) (GetDagWithVersionRow, error)
 	GetDefaultTenant(ctx context.Context) (GetDefaultTenantRow, error)
 	GetPool(ctx context.Context, arg GetPoolParams) (GetPoolRow, error)
@@ -681,12 +680,14 @@ type Querier interface {
 	// does not record them, so every attempt reports the pool the task is charged
 	// to now (#1589).
 	ListTaskInstanceAttempts(ctx context.Context, arg ListTaskInstanceAttemptsParams) ([]ListTaskInstanceAttemptsRow, error)
+	// The scheduler tick's read (#2325): for every active run, in one round trip,
+	// only the columns the planner's projection reads (taskInstanceMaps), not the
+	// whole row. The pod, node, log and error columns a settled attempt carries
+	// are most of a row's width and nothing in planning reads them. No ORDER BY:
+	// the caller groups by dag_run_id itself and the projection builds maps, so a
+	// sort (which spilled to disk at 100k rows) buys nothing.
+	ListTaskInstancePlanStateByRuns(ctx context.Context, dagRunIds []pgtype.UUID) ([]ListTaskInstancePlanStateByRunsRow, error)
 	ListTaskInstancesByRun(ctx context.Context, arg ListTaskInstancesByRunParams) ([]TaskInstance, error)
-	// The batched form of ListTaskInstancesByRun for the scheduler tick: every
-	// active run's task instances in one round trip instead of one per run. Rows
-	// come grouped by run and, within a run, in the same task_id order the per-run
-	// query returns, so the caller can split them without re-sorting.
-	ListTaskInstancesByRuns(ctx context.Context, dagRunIds []pgtype.UUID) ([]TaskInstance, error)
 	ListTaskInstancesFiltered(ctx context.Context, arg ListTaskInstancesFilteredParams) ([]TaskInstance, error)
 	ListTenantDagTags(ctx context.Context, arg ListTenantDagTagsParams) ([]string, error)
 	// Retention janitor (performance item D5). Every statement is tenant scoped and
@@ -1251,6 +1252,19 @@ type Querier interface {
 	// stamps sessions_valid_after, so the sessions the user had stay refused after
 	// a reactivation; reactivating leaves the stamp as it is.
 	SetUserActive(ctx context.Context, arg SetUserActiveParams) (SetUserActiveRow, error)
+	// A user's run verdict settles the run's unfinished task instances in the
+	// transaction that sets the run's state, as Airflow 3's
+	// set_dag_run_state_to_failed and set_dag_run_state_to_success do (#2425).
+	// On failed, a running or up_for_reschedule attempt fails and every other
+	// unfinished task instance (none, scheduled, queued, up_for_retry) is skipped;
+	// on success, every unfinished task instance succeeds. Like a user's mark of a
+	// task instance, the row is the verdict: it clears last_failure_kind and
+	// confirms the row, so a late report of the old attempt cannot override it.
+	// The attempt's next heartbeat or state report matches no live row, so the
+	// agent is told to terminate and kills its task process group, the stop path
+	// of the tenant stop suspension (#2181). Finished task instances keep their
+	// state.
+	SettleTaskInstancesForRunVerdict(ctx context.Context, arg SettleTaskInstancesForRunVerdictParams) (int64, error)
 	// Transitions a run's state and stamps the run's own timestamps so the UI can
 	// show its duration: started_at on first entry into 'running', ended_at on a
 	// terminal state. Other timestamps are preserved (the scheduler may re-run).

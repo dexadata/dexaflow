@@ -8,11 +8,22 @@ description: Write the changelog fragment and the docs a pull request needs to p
 1. **Changelog fragment.** Run `make changelog` and pick the kind:
    - `Added` for something new;
    - `Changed` for any behavior an operator or DAG author can notice, even
-     when it fixes a bug: the docs gate at release cut reads `Added`,
+     when it fixes a bug: the docs gate reads `Breaking`, `Upgrade`, `Added`,
      `Changed`, `Deprecated` and `Removed`, and a behavior change filed as
      `Fixed` slips past it;
    - `Fixed` for a bug fix that changes nothing else;
-   - `Security`, `Deprecated` or `Removed` when they apply.
+   - `Security`, `Deprecated` or `Removed` when they apply;
+   - `Breaking` for something that stops working as before, with what users
+     do about it (an intended API break needs it, or `Changed` or `Removed`);
+   - `Upgrade` for what an operator must do before or after upgrading: a
+     migration and how long it takes, a new required setting, a removed flag,
+     with a link to its section of [upgrades](/operate/upgrades/).
+
+   A change can need two fragments: the `Changed` entry that says what is
+   different, and the `Upgrade` entry that says what to do. `Breaking` and
+   `Upgrade` entries open the release notes, under Breaking changes and Action
+   required. `Highlights` is written for the release, not by each PR (see
+   [RELEASING.md](https://github.com/dexadata/dexaflow/blob/main/RELEASING.md#release-notes)).
 
    One file per PR in `.changes/unreleased/`, so fragments never conflict. A PR
    with nothing user-facing uses the `skip-changelog` label instead.

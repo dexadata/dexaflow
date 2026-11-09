@@ -108,6 +108,7 @@ func TestCorrectnessInvariantsFireEvenInsideAFaultWindow(t *testing.T) {
 		{"success archived into history", func(s *sample) { s.SuccessInHistory = 1 }, "success_archived"},
 		{"upstream-failed task ran", func(s *sample) { s.UpstreamFailedExecuted = 1 }, "upstream_failed_task_ran"},
 		{"dag import error", func(s *sample) { s.ImportErrors = 1 }, "import_error"},
+		{"fan-out past max_active_tasks", func(s *sample) { s.FanoutMaxActive = 5 }, "max_active_tasks_exceeded"},
 		{"leader stepped down", func(s *sample) { s.StepDowns = 1 }, "leader_churn"},
 		{"task had no executor", func(s *sample) { s.Undispatchable = 1 }, "undispatchable_task"},
 	}
@@ -792,5 +793,45 @@ func TestLeaderChurnCountsEventsNotSamples(t *testing.T) {
 		if v.Check == "leader_churn" && !strings.Contains(v.Detail, "3 new") {
 			t.Fatalf("the violation does not say how many step-downs it covers: %q", v.Detail)
 		}
+	}
+}
+
+// TestAnUnreachableDatastoreAbortsInsteadOfFailing is #1257: Docker Desktop
+// stopped 29 hours into a 60 hour run and took the soak's Postgres with it.
+// The control plane stayed up and retried, and the monitor kept sampling for
+// eighteen more hours, recording 31,485 violations against a database that
+// was not there. A datastore the monitor cannot reach is not a failing
+// product, it is a run that stopped running.
+func TestAnUnreachableDatastoreAbortsInsteadOfFailing(t *testing.T) {
+	c := newChecker(defaultOptions())
+	gone := healthySample()
+	gone.DatastoreUnreachable = true
+	gone.ElapsedS = 29.2 * 3600
+	gone.WindowMin = 120
+	gone.RunsCreated = map[string]int{}
+	gone.WorstLatenessS = map[string]float64{}
+	gone.SchedulerHealth = "unhealthy"
+
+	for i := 0; i < unreachableSamplesBeforeGivingUp; i++ {
+		if vs := c.Check(gone); len(vs) != 0 {
+			t.Fatalf("sample %d produced %v against a database that is not there", i, checkNames(vs))
+		}
+		gone.ElapsedS += 10
+	}
+	if !c.DatastoreGone() {
+		t.Fatal("DatastoreGone() is false past the grace period, so the run would keep sampling into the void")
+	}
+	if got := c.DatastoreLostAtS(); got != 29.2*3600 {
+		t.Errorf("DatastoreLostAtS() = %v, want the first unreachable sample, %v", got, 29.2*3600)
+	}
+
+	// A blip shorter than the grace period resets, like the API one.
+	c2 := newChecker(defaultOptions())
+	for i := 0; i < unreachableSamplesBeforeGivingUp-1; i++ {
+		c2.Check(gone)
+	}
+	c2.Check(healthySample())
+	if c2.DatastoreGone() {
+		t.Error("a recovered datastore still counted as gone")
 	}
 }

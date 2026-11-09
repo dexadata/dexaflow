@@ -1,0 +1,19 @@
+# Code owners: who reviews a change to each area (GOVERNANCE.md).
+# Later entries win over earlier ones for the same path.
+
+# Default owner of everything.
+*                         @neochaotic
+
+# Areas where a mistake is hard to undo: schema, auth, persistence, the
+# executor, the wire and API contracts, CI, the release scripts and the chart.
+/migrations/              @neochaotic
+/internal/auth/           @neochaotic
+/internal/storage/        @neochaotic
+/internal/executor/       @neochaotic
+/proto/                   @neochaotic
+/docs/api/                @neochaotic
+/pkg/                     @neochaotic
+/.github/workflows/       @neochaotic
+/scripts/cut-release.sh   @neochaotic
+/scripts/release-gap.sh   @neochaotic
+/helm/                    @neochaotic

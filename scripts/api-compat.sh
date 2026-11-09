@@ -17,7 +17,7 @@
 #
 # A break is allowed when it is intended and announced: the pull request
 # carries the `breaking-change` label AND adds a changelog fragment of kind
-# Changed or Removed (the fragment is what tells users; the label is what tells
+# Breaking, Changed or Removed (the fragment is what tells users; the label is what tells
 # reviewers). Either one alone is not enough.
 #
 # A tool that cannot run is a failure, never a pass: a gate that did not look
@@ -45,7 +45,7 @@ OPENAPI="docs/api/openapi.yaml"
 # yet is new, so it has nothing to break.
 GO_PKGS=()
 FRAGMENT_DIR=".changes/unreleased"
-ANNOUNCE_KINDS_RE='^(Changed|Removed)$'
+ANNOUNCE_KINDS_RE='^(Breaking|Changed|Removed)$'
 
 # fragment_kind <file>: the `kind:` of a changelog fragment, empty when none.
 fragment_kind() {
@@ -80,7 +80,7 @@ decide() {
 	echo "FAIL: this pull request breaks a public API (see above)."
 	echo "If the break is a mistake, restore compatibility. If it is intended, it needs both:"
 	[ "$label" = 1 ] || echo "  - the '$LABEL' label on the pull request (a maintainer applies it), and"
-	[ "$announced" = 1 ] || echo "  - a changelog fragment of kind Changed or Removed that names the break (make changelog)."
+	[ "$announced" = 1 ] || echo "  - a changelog fragment of kind Breaking, Changed or Removed that names the break (make changelog)."
 	return 1
 }
 
@@ -174,11 +174,12 @@ self_test() {
 	# The decision.
 	_expect "no break passes" 0 "no breaking change" -- decide 0 0 ""
 	_expect "a break with nothing fails" 1 "breaking-change" -- decide 1 0 ""
-	_expect "a break with the label only fails" 1 "Changed or Removed" -- decide 1 1 ""
+	_expect "a break with the label only fails" 1 "Breaking, Changed or Removed" -- decide 1 1 ""
 	_expect "a break with a fragment only fails" 1 "label" -- decide 1 0 "Removed"
-	_expect "a break with the label and a Fixed fragment fails" 1 "Changed or Removed" -- decide 1 1 "Fixed"
+	_expect "a break with the label and a Fixed fragment fails" 1 "Breaking, Changed or Removed" -- decide 1 1 "Fixed"
 	_expect "a break with the label and a Changed fragment passes" 0 "announced" -- decide 1 1 $'Fixed\nChanged'
 	_expect "a break with the label and a Removed fragment passes" 0 "announced" -- decide 1 1 "Removed"
+	_expect "a break with the label and a Breaking fragment passes" 0 "announced" -- decide 1 1 "Breaking"
 
 	# Which fragments are new.
 	mkdir -p "$tmp/h/$FRAGMENT_DIR" "$tmp/b/$FRAGMENT_DIR"

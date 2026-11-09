@@ -104,3 +104,34 @@ func TestRedisTailerHasSubscribers(t *testing.T) {
 		time.Sleep(10 * time.Millisecond)
 	}
 }
+
+// TestRedisTailerPublishBatchKeepsOrder (#2356): a batch reaches a follower as
+// separate lines, in the order they were sent.
+func TestRedisTailerPublishBatchKeepsOrder(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	tailer := logs.NewRedisTailer(testRedis(t))
+	ref := logs.Ref{TenantID: "t", DagID: "d", RunID: "r-batch", TaskID: "task", TryNumber: 1}
+
+	lines, stop := tailer.Subscribe(ctx, ref)
+	defer stop()
+	time.Sleep(100 * time.Millisecond) // let the subscription register
+
+	want := []string{"one", "two", "three", "four"}
+	if err := tailer.PublishBatch(ctx, ref, want); err != nil {
+		t.Fatalf("PublishBatch: %v", err)
+	}
+	if err := tailer.PublishBatch(ctx, ref, nil); err != nil {
+		t.Fatalf("PublishBatch of nothing: %v", err)
+	}
+	for i, w := range want {
+		select {
+		case got := <-lines:
+			if got != w {
+				t.Fatalf("line %d = %q, want %q", i, got, w)
+			}
+		case <-ctx.Done():
+			t.Fatalf("timed out waiting for line %d of the batch", i)
+		}
+	}
+}

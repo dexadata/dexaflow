@@ -118,12 +118,6 @@ SELECT count(*) FROM dag_runs
 WHERE dag_runs.dag_id = $1
   AND EXISTS (SELECT 1 FROM dags d WHERE d.id = $1 AND d.tenant_id = $2);
 
--- name: CountActiveDagRunsByDagID :one
--- Counts queued+running runs for a single DAG; used by the manual-trigger
--- path to enforce max_active_runs (#200) before insert.
-SELECT count(*) FROM dag_runs
-WHERE tenant_id = $1 AND dag_id = $2 AND state IN ('queued', 'running');
-
 -- name: ListStaleQueuedTaskInstances :many
 -- Lists one page of the TIs in `queued` for at least the dispatch-lost
 -- threshold, with their queued_at, for the dispatch-lost reaper (#202). The
@@ -246,6 +240,37 @@ UPDATE dag_runs
 SET state = $2, started_at = $3, ended_at = $4
 WHERE id = $1 AND tenant_id = sqlc.arg(tenant_id)
 RETURNING *;
+
+-- name: SettleTaskInstancesForRunVerdict :execrows
+-- A user's run verdict settles the run's unfinished task instances in the
+-- transaction that sets the run's state, as Airflow 3's
+-- set_dag_run_state_to_failed and set_dag_run_state_to_success do (#2425).
+-- On failed, a running or up_for_reschedule attempt fails and every other
+-- unfinished task instance (none, scheduled, queued, up_for_retry) is skipped;
+-- on success, every unfinished task instance succeeds. Like a user's mark of a
+-- task instance, the row is the verdict: it clears last_failure_kind and
+-- confirms the row, so a late report of the old attempt cannot override it.
+-- The attempt's next heartbeat or state report matches no live row, so the
+-- agent is told to terminate and kills its task process group, the stop path
+-- of the tenant stop suspension (#2181). Finished task instances keep their
+-- state.
+UPDATE task_instances
+SET state = CASE
+        WHEN sqlc.arg(verdict)::text = 'success' THEN 'success'::task_state
+        WHEN state IN ('running', 'up_for_reschedule') THEN 'failed'::task_state
+        ELSE 'skipped'::task_state
+    END,
+    ended_at = now(),
+    error_message = CASE
+        WHEN sqlc.arg(verdict)::text = 'failed' AND state IN ('running', 'up_for_reschedule')
+            THEN 'stopped: the run was marked failed'
+        ELSE error_message
+    END,
+    last_failure_kind = NULL,
+    infra_confirmed_at = now()
+WHERE tenant_id = sqlc.arg(tenant_id)
+  AND dag_run_id = sqlc.arg(dag_run_id)
+  AND state IN ('none', 'scheduled', 'queued', 'running', 'up_for_retry', 'up_for_reschedule');
 
 -- name: ReopenDagRunKeepingVersion :exec
 -- The same re-open as ResetDagRunToVersion, WITHOUT touching dag_version_id: the
@@ -421,14 +446,18 @@ WHERE tenant_id = sqlc.arg(tenant_id) AND dag_run_id = sqlc.arg(dag_run_id)
   AND (sqlc.narg('task_id_prefix_pattern')::text IS NULL OR task_id ILIKE sqlc.narg('task_id_prefix_pattern') || '%')
   AND (sqlc.narg('pool')::text IS NULL OR pool = sqlc.narg('pool'));
 
--- name: ListTaskInstancesByRuns :many
--- The batched form of ListTaskInstancesByRun for the scheduler tick: every
--- active run's task instances in one round trip instead of one per run. Rows
--- come grouped by run and, within a run, in the same task_id order the per-run
--- query returns, so the caller can split them without re-sorting.
-SELECT * FROM task_instances
-WHERE dag_run_id = ANY(sqlc.arg(dag_run_ids)::uuid[])
-ORDER BY dag_run_id, task_id;
+-- name: ListTaskInstancePlanStateByRuns :many
+-- The scheduler tick's read (#2325): for every active run, in one round trip,
+-- only the columns the planner's projection reads (taskInstanceMaps), not the
+-- whole row. The pod, node, log and error columns a settled attempt carries
+-- are most of a row's width and nothing in planning reads them. No ORDER BY:
+-- the caller groups by dag_run_id itself and the projection builds maps, so a
+-- sort (which spilled to disk at 100k rows) buys nothing.
+SELECT dag_run_id, task_id, state, try_number, max_tries, ended_at,
+       reschedule_at, dispatch_attempts, next_dispatch_at, last_failure_kind,
+       infra_confirmed_at, infra_attempts
+FROM task_instances
+WHERE dag_run_id = ANY(sqlc.arg(dag_run_ids)::uuid[]);
 
 -- name: ListTaskInstanceAttempts :many
 -- Returns every attempt for (run, task), oldest first. UNIONs the current

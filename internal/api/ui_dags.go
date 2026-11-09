@@ -51,7 +51,7 @@ type dagWithRunsDTO struct {
 	TimetableDescription        *string          `json:"timetable_description"`
 	TimetablePartitioned        bool             `json:"timetable_partitioned"`
 	Tags                        []dagTagDTO      `json:"tags"`
-	MaxActiveTasks              int              `json:"max_active_tasks"`
+	MaxActiveTasks              *int             `json:"max_active_tasks"`
 	MaxActiveRuns               *int             `json:"max_active_runs"`
 	MaxConsecutiveFailedDagRuns int              `json:"max_consecutive_failed_dag_runs"`
 	HasTaskConcurrencyLimits    bool             `json:"has_task_concurrency_limits"`
@@ -74,9 +74,16 @@ type dagWithRunsCollectionDTO struct {
 	TotalEntries int              `json:"total_entries"`
 }
 
-// defaultMaxActiveTasks mirrors Airflow's per-DAG task concurrency default;
-// Dexaflow does not model it yet but the field is required.
-const defaultMaxActiveTasks = 16
+// maxActiveTasksOf is the DAG's max_active_tasks for the UI: the cap per DAG
+// run it declares, or null when it declares none, which means no cap (#2427).
+// Airflow reports its server default there; Dexaflow has none to report.
+func maxActiveTasksOf(d domain.DAG) *int {
+	if d.MaxActiveTasks <= 0 {
+		return nil
+	}
+	n := d.MaxActiveTasks
+	return &n
+}
 
 func toDagWithRunsDTO(d domain.DAG, runs []domain.DagRun) dagWithRunsDTO {
 	tags := make([]dagTagDTO, 0, len(d.Tags))
@@ -120,7 +127,7 @@ func toDagWithRunsDTO(d domain.DAG, runs []domain.DagRun) dagWithRunsDTO {
 		TimetableDescription:        timetableDescription(d.Schedule),
 		TimetablePartitioned:        false,
 		Tags:                        tags,
-		MaxActiveTasks:              defaultMaxActiveTasks,
+		MaxActiveTasks:              maxActiveTasksOf(d),
 		MaxActiveRuns:               &maxRuns,
 		MaxConsecutiveFailedDagRuns: 0,
 		AllowedRunTypes:             []string{"manual", "scheduled"},

@@ -62,7 +62,7 @@ func planRun(run RunState) ([]PlannedTransition, []PoolWait) {
 	out = planRetryTransitions(run, g, stored, effective, decided, out)
 
 	// Admission gates (ADR 0053): a scheduled task promotes to queued only if it
-	// clears BOTH the per-DAG max_active_tasks gate (Stage 1) and, on the Pro
+	// clears BOTH the per-run max_active_tasks gate (Stage 1) and, on the Pro
 	// path, the cross-DAG named-pool slot gate (Stage 3). headroom is the
 	// remaining max_active_tasks budget this tick (math.MaxInt when unset, so that
 	// gate is a no-op); promoted tracks what we spend against it. poolPromoted
@@ -94,7 +94,7 @@ func planRun(run RunState) ([]PlannedTransition, []PoolWait) {
 				continue
 			}
 			if promoted >= headroom {
-				continue // DAG at max_active_tasks — park until a sibling frees a slot.
+				continue // run at max_active_tasks: park until one of its tasks frees a slot.
 			}
 			pk := poolKeyFor(run, t)
 			slots := t.EffectivePoolSlots()
@@ -230,14 +230,14 @@ func poolHasSlot(run RunState, poolKey string, slots int, promotedByPool map[str
 	return run.PoolActive[poolKey]+promotedByPool[poolKey]+slots <= budget
 }
 
-// admissionHeadroom returns how many more of this DAG's scheduled tasks PlanRun
-// may promote to queued this tick under the per-DAG max_active_tasks cap (ADR
-// 0053 Stage 1). A non-positive cap means unlimited — the gate is a no-op, so an
-// unset DAG (and all of Lite, which never sets the field) plans byte-identically
-// to today; math.MaxInt is the "unbounded" sentinel the promotion loop compares
-// against. Otherwise it is the cap minus the DAG's already-active (queued+
-// running) task instances, floored at zero (never negative, so a DAG over its
-// cap simply admits nothing rather than wrapping).
+// admissionHeadroom returns how many more of this run's scheduled tasks PlanRun
+// may promote to queued this tick under the max_active_tasks cap, which is per
+// DAG run as in Airflow 3 (ADR 0053 Stage 1, #2427). A non-positive cap means
+// unlimited: the gate is a no-op, so an unset DAG (and all of Lite, which never
+// sets the field) plans as before; math.MaxInt is the "unbounded" sentinel the
+// promotion loop compares against. Otherwise it is the cap minus the run's
+// already-active (queued+running) task instances, floored at zero (never
+// negative, so a run over its cap simply admits nothing rather than wrapping).
 func admissionHeadroom(run RunState) int {
 	if run.MaxActiveTasks <= 0 {
 		return math.MaxInt

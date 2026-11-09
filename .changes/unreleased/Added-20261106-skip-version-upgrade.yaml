@@ -1,0 +1,10 @@
+kind: Added
+body: |-
+  **Skip-version upgrades are tested and supported.** A new workflow upgrades a
+  database seeded at 0.5.0 with 1 million runs and 5 million task instances
+  straight to the candidate, weekly and on every release candidate, and checks
+  each migration's time, that no index is left invalid, that the schema equals
+  a fresh install's and that a DAG runs afterwards. The upgrade guide now
+  states the supported range: one `helm upgrade` may go from 0.5.0 or later to
+  any 0.5.x or 0.6.x (#2311).
+time: 2026-11-06T21:10:00.000000000+00:00
