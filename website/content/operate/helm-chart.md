@@ -285,7 +285,7 @@ replica report itself unready at the same moment.
 
 The bundled UI polls DAG, run and task-instance state on a fixed interval.
 `ui.autoRefreshIntervalSeconds` sets it; left empty, the chart renders nothing
-and the server uses 5 seconds (30 before v0.6.0). Every open browser tab polls on its own, so the
+and the server uses 5 seconds (30 before v0.5.9). Every open browser tab polls on its own, so the
 load grows with the number of tabs, not of users.
 
 What one refresh costs was measured in
@@ -308,12 +308,12 @@ or many tabs left open on wall displays, is the reason to raise it:
 
 ```yaml
 ui:
-  autoRefreshIntervalSeconds: 30  # the default before v0.6.0
+  autoRefreshIntervalSeconds: 30  # the default before v0.5.9
 ```
 
 A zero or negative value is not a faster refresh: the server falls back to the
 default, so a misconfigured value cannot drop the interval to 0. The default
-moved from 30 to 5 seconds in v0.6.0
+moved from 30 to 5 seconds in v0.5.9
 ([#1196](https://github.com/dexadata/dexaflow/issues/1196)); see the
 [upgrade note](/operate/upgrades/#upgrading-to-060-the-ui-refreshes-every-5-seconds).
 

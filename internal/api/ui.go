@@ -74,7 +74,7 @@ var uiConfigRequiredFields = []string{
 // no explicit override is configured. Lite overrides it to 1s for a snappy
 // inner loop. 5s is what a team watching runs progress expects, and one api
 // process serves about 1,400 open tabs of a page with a run in progress at that
-// rate (Experiment 4, #1196); it was 30s before v0.6.0.
+// rate (Experiment 4, #1196); it was 30s before v0.5.9.
 const DefaultUIAutoRefreshIntervalSeconds = 5
 
 // registerUI mounts the Airflow 3.2.1 internal UI API (/ui/*) that the bundled

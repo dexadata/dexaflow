@@ -106,7 +106,7 @@ Package api implements the Airflow\-compatible HTTP control plane \(ADR 0007\).
 
 ## Constants
 
-<a name="DefaultUIAutoRefreshIntervalSeconds"></a>DefaultUIAutoRefreshIntervalSeconds is the value returned by /ui/config when no explicit override is configured. Lite overrides it to 1s for a snappy inner loop. 5s is what a team watching runs progress expects, and one api process serves about 1,400 open tabs of a page with a run in progress at that rate \(Experiment 4, \#1196\); it was 30s before v0.6.0.
+<a name="DefaultUIAutoRefreshIntervalSeconds"></a>DefaultUIAutoRefreshIntervalSeconds is the value returned by /ui/config when no explicit override is configured. Lite overrides it to 1s for a snappy inner loop. 5s is what a team watching runs progress expects, and one api process serves about 1,400 open tabs of a page with a run in progress at that rate \(Experiment 4, \#1196\); it was 30s before v0.5.9.
 
 ```go
 const DefaultUIAutoRefreshIntervalSeconds = 5
@@ -1336,7 +1336,7 @@ type UIDeps struct {
     // AutoRefreshIntervalSeconds controls the SPA's polling cadence for DAG /
     // DagRun / task-instance state refresh (Airflow's auto_refresh_interval).
     // Non-positive (the zero default) falls back to DefaultUIAutoRefreshIntervalSeconds
-    // (5s; 30s before v0.6.0). `dexaflow lite` sets it to 1s for a snappy inner loop.
+    // (5s; 30s before v0.5.9). `dexaflow lite` sets it to 1s for a snappy inner loop.
     AutoRefreshIntervalSeconds int
     // Theme is the Chakra theme /ui/config hands the UI (Airflow's `[api]
     // theme`: tokens, globalCss, icon, icon_dark_mode), already validated as a

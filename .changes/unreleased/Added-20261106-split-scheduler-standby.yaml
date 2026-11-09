@@ -4,6 +4,6 @@ body: |-
   a leader and a standby that waits on the same leader lock, with a
   PodDisruptionBudget of its own, so the restricted API identity of the split no
   longer costs dispatch failover (ADR 0105). The default stays `1`. Charts
-  before 0.5.11 ignored the value; any value other than `1` or `2` now fails the
+  before 0.5.10 ignored the value; any value other than `1` or `2` now fails the
   render instead of being ignored, so check it before upgrading (#2316).
 time: 2026-11-06T20:30:00.000000000+00:00

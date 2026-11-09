@@ -142,7 +142,7 @@ with DAG("fan_out", schedule="@daily", max_active_runs=2, max_active_tasks=4):
 Unset means no cap. The value must be a positive integer; anything else is
 refused at compile. `concurrency`, the Airflow 2 name that Airflow 3 removed,
 is refused with a message naming `max_active_tasks`. To cap tasks across all
-runs of a DAG, or across DAGs, use a [pool](/operate/pools/). Before 0.5.11
+runs of a DAG, or across DAGs, use a [pool](/operate/pools/). Before 0.5.10
 the compiler dropped `max_active_tasks`, so a DAG that set it ran without a
 cap ([#2427](https://github.com/dexadata/dexaflow/issues/2427)).
 

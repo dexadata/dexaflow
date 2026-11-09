@@ -565,7 +565,7 @@ Six DAG projects in `test/soak/dags/`, all on cron schedules, all with
 | DAG | Schedule | Shape | What it is in the battery for |
 |---|---|---|---|
 | `soak_ingest` | `*/5` | write then dependent read-back | generates the data volume with DuckDB; the read-back asserts the bytes survived |
-| `soak_fanout` | `*/5` | 1 to 8 to 1, `max_active_tasks=4` | parallelism, and the per-run concurrency cap under real pressure (8 ready siblings, 4 slots); the monitor's `max_active_tasks_exceeded` fails the soak when a run has more than 4 active. Before 0.5.11 the compiler dropped `max_active_tasks`, so no soak exercised the cap ([#2427](https://github.com/dexadata/dexaflow/issues/2427)) |
+| `soak_fanout` | `*/5` | 1 to 8 to 1, `max_active_tasks=4` | parallelism, and the per-run concurrency cap under real pressure (8 ready siblings, 4 slots); the monitor's `max_active_tasks_exceeded` fails the soak when a run has more than 4 active. Before 0.5.10 the compiler dropped `max_active_tasks`, so no soak exercised the cap ([#2427](https://github.com/dexadata/dexaflow/issues/2427)) |
 | `soak_chain` | `*/3` | 10-deep alternating bash/python chain | the most latency-sensitive DAG in the set: its wall-clock is 10 hops of dispatch, so a slowing tick shows here first |
 | `soak_operators` | `*/5` | provider operators plus a reschedule sensor | the non-native path, and `up_for_reschedule` |
 | `soak_flaky` | `*/7` | fails twice then succeeds; plus a task that always fails | the retry budget and the terminal-failure branch. Every run of this DAG ends `failed` on purpose |

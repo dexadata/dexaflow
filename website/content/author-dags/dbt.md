@@ -395,7 +395,7 @@ leaving it is a migration rather than an edit.
 operators, no Python or Bash. And because those live on the DAG object a
 `dag.py` builds, it also has nowhere to declare `start_date`, `catchup`,
 `max_active_runs`, `max_active_tasks` or DAG-level `params`. (`max_active_tasks`
-is settable in a `dag.py` since 0.5.11, a cap per DAG run
+is settable in a `dag.py` since 0.5.10, a cap per DAG run
 ([#2427](https://github.com/dexadata/dexaflow/issues/2427)); `end_date` is not
 author-settable on either path yet.)
 A top-level `connections:`/`variables:` is worse than rejected — the schema accepts

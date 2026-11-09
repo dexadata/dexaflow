@@ -258,7 +258,7 @@ tests:
           path: spec.replicas
           value: 2
 
-  # Charts before 0.5.11 ignored the value, so a leftover number must fail loudly
+  # Charts before 0.5.10 ignored the value, so a leftover number must fail loudly
   # rather than start that many schedulers on an upgrade.
   - it: refuses a scheduler replica count other than 1 or 2
     template: deployment.yaml
