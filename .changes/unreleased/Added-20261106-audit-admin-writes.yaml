@@ -1,9 +1,0 @@
-kind: Added
-body: |-
-  **The audit log records admin writes.** Creating, changing and deleting a
-  connection, a variable or a pool, deleting a DAG, clearing its history,
-  deleting a run, and a password sign-in while OIDC is off now each write an
-  entry (`connection.*`, `variable.*`, `pool.*`, `dag.delete`,
-  `dag.history.clear`, `dagrun.delete`, `auth.login`). An entry names the
-  resource and the fields the request set, never a secret value (#2228).
-time: 2026-11-06T19:20:00.000000000+00:00
