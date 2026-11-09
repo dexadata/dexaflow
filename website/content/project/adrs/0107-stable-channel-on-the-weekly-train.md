@@ -2,11 +2,11 @@
 title: "ADR 0107: A stable channel on top of the weekly patch train"
 linkTitle: "0107 · Stable channel"
 weight: 1070
-description: "ADR 0107 (proposed): keep the weekly patch train and mark a patch stable once it has soaked, passed the chaos run and been out seven days without a regression report. The install script, the chart README and the production profile point production users at the newest stable patch, and every release body states its rollback class."
+description: "ADR 0107: keep the weekly patch train and mark a patch stable once it has been out seven days with green CI, a passing weekly chaos run and no regression report; the 48 hour soak joins the bar once a runner can run it unattended. The install script, the chart README and the production profile point production users at the newest stable patch, and every release body states its rollback class."
 ---
 
-**Status:** Proposed
-**Date:** 2026-11-06
+**Status:** Accepted
+**Date:** 2026-11-06 (accepted 2026-11-09)
 **Relates:** ADR 0033 (rc tags and E2E gates), ADR 0068 (patch content gated by safety), ADR 0071 (stage, verify, promote), ADR 0102 (patches from main), #1557 (release notes opening), #2308
 
 ## Context
@@ -25,7 +25,8 @@ a production operator would want, but they are not attached to a version:
 
 - The soak battery (`test/soak`) runs for 48 hours on the maintainer's
   hardware; CI only runs its six minute smoke, nightly and on rc tags.
-- The chaos harness (`scripts/chaos`) exists but runs by hand.
+- The chaos scenarios (`scripts/chaos`) run every week on a k3d runner
+  (`chaos-weekly.yaml`, #2411).
 - Regressions are reported as issues, with no label that ties them to the
   version they appeared in.
 
@@ -34,18 +35,26 @@ changes and Action required; it still does not say how an operator gets back
 if the upgrade goes wrong, which is the first question before a production
 upgrade.
 
-## Decision (proposed)
+## Decision
 
 1. **The weekly train stays.** Every patch is still cut, tagged and published
    as today (ADR 0033, ADR 0071, ADR 0102). Nothing about its content changes.
 2. **A patch becomes stable when all of these hold:**
    - it has been published for at least 7 days;
-   - the 48 hour soak (`test/soak`) passed on that exact tag, recorded in its
-     verdict file;
-   - the chaos run (`scripts/chaos/run.sh`) passed on that tag;
+   - the workflows of the tag and of the rc it was promoted from are green,
+     including the soak smoke that runs on every rc tag;
+   - the first weekly chaos run (`chaos-weekly.yaml`) on a `main` commit that
+     contains the tag passed;
    - no open issue labeled `regression` names it (the label is new; an issue
      gets it when a behavior that worked in an earlier GA broke, and names the
      first version it broke in).
+   The 48 hour soak (`test/soak`) is not part of the bar yet: it runs on the
+   maintainer's hardware, and requiring it every week would make one machine
+   the gate. Until a runner can run it unattended it is optional evidence:
+   when it has run on the tag, the pull request that marks the patch links its
+   verdict file, and a failed soak blocks the mark. Once that runner exists,
+   a passing 48 hour soak on the tag joins the bar (phase 2), by a change to
+   this ADR.
    A later patch of the same minor that meets the bar replaces it. A patch
    found to carry a regression after it was marked stable loses the mark, and
    the previous stable patch is named again until a fixed one qualifies.
@@ -102,10 +111,10 @@ upgrade.
 
 - Production users get a default that has run for at least a week, and the
   weekly train keeps its pace for everyone else.
-- The 48 hour soak and the chaos run become release evidence and need a place
-  to run every week: today that is the maintainer's hardware, which is the
-  bottleneck this ADR adds. A self-hosted runner for both is the follow-up
-  that removes it.
+- The weekly chaos run and the rc soak smoke become release evidence; both
+  already run on GitHub runners, so phase 1 adds no work on the maintainer's
+  hardware. The 48 hour soak stays optional until a self-hosted runner can run
+  it every week; that runner is the follow-up that starts phase 2.
 - The `regression` label needs triage discipline: a report has to name the
   version it first appeared in, or the mark cannot be judged.
 - A stable patch can be up to two or three weeks behind the newest one, and a
@@ -115,9 +124,8 @@ upgrade.
 
 ## Open questions
 
-- Who marks a patch stable: the maintainer by hand, or a scheduled workflow
-  that opens the `.github/stable.txt` pull request when the evidence is in?
-- Whether the soak and the chaos run on every patch or only on the candidate
-  for stable each week.
+- Who marks a patch stable. Phase 1: the maintainer approves a pull request
+  that changes `.github/stable.txt`, which any contributor can open once the
+  evidence is in. A scheduled workflow that opens it is a later step.
 - How many minors keep a stable line once 0.6 ships: only the newest, or the
   newest two while users move.
