@@ -92,8 +92,9 @@ Every pull request that changes shipped behavior records what changed. It does
 make changelog          # or: changie new
 ```
 
-`changie` asks for a kind (Added / Changed / Deprecated / Removed / Fixed /
-Security) and a one-line body, then writes `.changes/unreleased/<slug>.yaml`.
+`changie` asks for a kind (Breaking / Upgrade / Added / Changed / Deprecated /
+Removed / Fixed / Security; Highlights is written for the release, not per
+PR) and a one-line body, then writes `.changes/unreleased/<slug>.yaml`.
 Commit that file with your change. The release cut assembles every pending
 fragment into `CHANGELOG.md` under `## [Unreleased]`, so the entry reaches the
 published changelog without anyone hand-merging it.
@@ -138,8 +139,8 @@ Dependabot is exempt automatically.
 
 The **docs guard** works the same way for the docs site. A PR that changes a
 chart value, the authoring schema, a CLI command, a server setting, a
-migration, the OpenAPI document, or adds a changelog fragment of kind Added,
-Changed, Deprecated or Removed updates `website/content/` in the same PR. When
+migration, the OpenAPI document, or adds a changelog fragment of kind
+Breaking, Upgrade, Added, Changed, Deprecated or Removed updates `website/content/` in the same PR. When
 nothing in it is user-discoverable, add a line with the reason to the PR
 description (the **`skip-docs`** label is optional):
 
@@ -161,8 +162,9 @@ PR needs both:
 
 - the **`breaking-change`** label, which a maintainer applies after agreeing
   to the break, and
-- a changelog fragment of kind `Changed` or `Removed` that names what broke and
-  what users do about it.
+- a changelog fragment of kind `Breaking` (preferred: it opens the release
+  notes), `Changed` or `Removed` that names what broke and what users do about
+  it.
 
 Run it locally against `main` before pushing:
 
@@ -226,6 +228,13 @@ and applied by golang-migrate on start and by the chart's pre-upgrade Job.
 - **Every up has a down.** When a change cannot be undone (a data fix, an enum
   value), the down file is a comment that says why it is a no-op, and the up
   must be safe to apply again.
+- **No blocking lock on a large table.** `migrations/lock_safety_test.go`
+  refuses, on `task_instances`, `dag_runs` and the other tables that grow with
+  the work, the statements that hold a strong lock while they scan or rewrite
+  (a non-concurrent index, a type change, `SET NOT NULL`, a constraint
+  validated in place, a full-table `UPDATE`) and an `ALTER TABLE` without
+  `SET LOCAL lock_timeout`, and names the safe pattern (#2312). An accepted
+  exception goes in `migrations/lock_exceptions.txt` with its reason.
 - **Built-in roles change in every tenant.** A tenant created through the
   service API copies the built-in roles and their grants from `default` once,
   when it is created. A migration that adds, changes or revokes a built-in role
@@ -278,6 +287,10 @@ For an end-to-end author→run loop without Kubernetes, use `dexaflow lite`
 ## Project Layout
 
 See [`README.md`](README.md) for the high-level layout. Detailed module documentation lives in package-level `doc.go` files (mandatory per ADR 0012).
+
+## Governance
+
+How decisions are made and who reviews what: [`GOVERNANCE.md`](GOVERNANCE.md), [`MAINTAINERS.md`](MAINTAINERS.md) and [`.github/CODEOWNERS`](.github/CODEOWNERS).
 
 ## Communication
 

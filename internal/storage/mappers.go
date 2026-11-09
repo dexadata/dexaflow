@@ -117,6 +117,7 @@ func mapDagWithVersion(d queries.GetDagWithVersionRow) domain.DAG {
 	if d.CurrentVersionLabel != nil {
 		out.CurrentVersion = *d.CurrentVersionLabel
 	}
+	out.MaxActiveTasks = int(d.MaxActiveTasks)
 	return out
 }
 
@@ -130,6 +131,7 @@ func mapDagWithFilter(d queries.ListDagsWithFilterRow) domain.DAG {
 	if d.CurrentVersionLabel != nil {
 		out.CurrentVersion = *d.CurrentVersionLabel
 	}
+	out.MaxActiveTasks = int(d.MaxActiveTasks)
 	return out
 }
 

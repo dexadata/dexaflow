@@ -7,8 +7,8 @@ import (
 	"strings"
 )
 
-// ParseConnectionURI reads an Airflow connection URI — the AIRFLOW_CONN_<ID>
-// form a task consumes — back into a Connection.
+// ParseConnectionURI reads an Airflow connection URI, the AIRFLOW_CONN_<ID>
+// form a task consumes, back into a Connection.
 //
 // It is the inverse of the URI the control plane delivers to tasks, and it
 // follows Airflow's own from_uri semantics wherever the two could differ,
@@ -19,7 +19,7 @@ import (
 //     the emitter applies it;
 //   - userinfo is percent-decoded into login and password;
 //   - the path becomes the schema with ONE leading slash removed, which is what
-//     Airflow does — note this is lossy for an absolute path like sqlite's
+//     Airflow does; note this is lossy for an absolute path like sqlite's
 //     `sqlite:///tmp/db`, whose schema comes back as `tmp/db`. Matching Airflow
 //     is the right loss to take: the task resolves the connection through
 //     Airflow, so Airflow's reading is the meaning;

@@ -165,6 +165,81 @@ def test_default_values_of_unhonored_arguments_still_compile(monkeypatch, tmp_pa
     assert spec["tasks"][0]["task_id"] == "b"
 
 
+@pytest.mark.parametrize("kwarg,needle", [
+    ("max_active_tis_per_dag=1", "max_active_tis_per_dag"),
+    ("max_active_tis_per_dagrun=2", "max_active_tis_per_dagrun"),
+])
+def test_task_concurrency_caps_are_refused_until_carried(monkeypatch, tmp_path, kwarg, needle):
+    message = _refusal(monkeypatch, tmp_path, f"""
+        from airflow.sdk import DAG, task
+        from airflow.providers.standard.operators.bash import BashOperator
+        @task({kwarg})
+        def a(): ...
+        with DAG("g"):
+            a()
+            BashOperator(task_id="b", bash_command="true")
+    """)
+    assert needle in message
+    assert "'a'" in message
+    assert "#2428" in message
+
+
+def test_task_concurrency_cap_is_refused_from_default_args(monkeypatch, tmp_path):
+    message = _refusal(monkeypatch, tmp_path, """
+        from airflow.sdk import DAG
+        from airflow.providers.standard.operators.bash import BashOperator
+        with DAG("g", default_args={"max_active_tis_per_dag": 1}):
+            BashOperator(task_id="b", bash_command="true")
+    """)
+    assert "max_active_tis_per_dag" in message
+    assert "default_args" in message
+
+
+@pytest.mark.parametrize("kwarg,needle", [
+    ("dagrun_timeout=timedelta(hours=1)", "dagrun_timeout"),
+    ("max_consecutive_failed_dag_runs=3", "max_consecutive_failed_dag_runs"),
+])
+def test_unhonored_dag_argument_is_refused(monkeypatch, tmp_path, kwarg, needle):
+    message = _refusal(monkeypatch, tmp_path, f"""
+        from datetime import timedelta
+        from airflow.sdk import DAG
+        from airflow.providers.standard.operators.bash import BashOperator
+        with DAG("g", {kwarg}):
+            BashOperator(task_id="b", bash_command="true")
+    """)
+    assert needle in message
+    assert "'g'" in message
+    assert "ignore" in message
+
+
+@pytest.mark.parametrize("kwargs", [
+    "dagrun_timeout=None",
+    "max_consecutive_failed_dag_runs=0",
+])
+def test_default_values_of_unhonored_dag_arguments_still_compile(monkeypatch, tmp_path, kwargs):
+    spec = _compile(monkeypatch, tmp_path, f"""
+        from airflow.sdk import DAG
+        from airflow.providers.standard.operators.bash import BashOperator
+        with DAG("g", {kwargs}):
+            BashOperator(task_id="b", bash_command="true", max_active_tis_per_dag=None)
+    """)
+    assert spec["tasks"][0]["task_id"] == "b"
+
+
+def test_dag_without_the_refused_arguments_compiles_unchanged(monkeypatch, tmp_path):
+    spec = _compile(monkeypatch, tmp_path, """
+        from airflow.sdk import DAG
+        from airflow.providers.standard.operators.bash import BashOperator
+        with DAG("g", schedule="@daily", max_active_runs=2):
+            BashOperator(task_id="b", bash_command="true", retries=1)
+    """)
+    assert spec == {
+        "schema_version": "1.0", "dag_id": "g", "dag_version": "v1", "image": "img:v1",
+        "schedule": "@daily", "max_active_runs": 2,
+        "tasks": [{"task_id": "b", "type": "bash", "entrypoint": "true", "retries": 1}],
+    }
+
+
 # ───────────── setup and teardown, task groups ─────────────
 
 def test_as_setup_is_refused_with_a_message(monkeypatch, tmp_path):

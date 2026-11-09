@@ -279,11 +279,22 @@ class DAG:
         self.description = kwargs.get("description")
         self.start_date = kwargs.get("start_date")
         self.max_active_runs = kwargs.get("max_active_runs")
+        # max_active_tasks caps the task instances active at once in each run
+        # of the DAG, as in Airflow 3 (#2427). The removed Airflow 2 alias
+        # concurrency is kept only so the compiler can refuse it by name.
+        self.max_active_tasks = kwargs.get("max_active_tasks")
+        if "concurrency" in kwargs:
+            self.concurrency = kwargs["concurrency"]
         self.catchup = kwargs.get("catchup")
         # Airflow's is_paused_upon_creation: whether the DAG starts paused when
         # it is first registered, overriding the server's
         # dags_are_paused_at_creation. None (unset) leaves it to the server.
         self.is_paused_upon_creation = kwargs.get("is_paused_upon_creation")
+        # Arguments the scheduler does not honor yet: kept only so the
+        # compiler can refuse a non-default value instead of dropping it
+        # (#2336). Airflow's defaults when unset.
+        self.dagrun_timeout = kwargs.get("dagrun_timeout")
+        self.max_consecutive_failed_dag_runs = kwargs.get("max_consecutive_failed_dag_runs", 0)
         # Collect on construction too, so DAGs defined without `with` (e.g.
         # module-level `dag = DAG(...)` with operators attached via dag=) are seen.
         COLLECTED[dag_id] = self

@@ -1,0 +1,74 @@
+suite: optional Grafana dashboard ConfigMap (#1577)
+templates:
+  - grafana-dashboard.yaml
+release:
+  name: dexaflow
+  namespace: data
+set:
+  agentTLS.enabled: true
+  agentTLS.serverCertSecret: dexaflow-tls
+  agentTLS.caConfigMap: dexaflow-ca
+  database.url: postgres://h/d
+  redis.url: redis://h/0
+  auth.jwtSecret: s
+tests:
+  - it: renders nothing by default
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  # An upgrade with --reuse-values from a release whose values predate the
+  # key carries no grafanaDashboard at all; the template must still render.
+  - it: renders nothing when the values predate the key
+    set:
+      metrics.grafanaDashboard: null
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  - it: renders the dashboard with the sidecar label when enabled
+    set:
+      metrics.grafanaDashboard.enabled: true
+    asserts:
+      - hasDocuments:
+          count: 1
+      - isKind:
+          of: ConfigMap
+      - equal:
+          path: metadata.name
+          value: dexaflow-dashboards
+      - equal:
+          path: metadata.namespace
+          value: data
+      - equal:
+          path: metadata.labels.grafana_dashboard
+          value: "1"
+      - exists:
+          path: data["dexaflow-overview.json"]
+      - matchRegex:
+          path: data["dexaflow-overview.json"]
+          pattern: '"uid": "dexaflow-overview"'
+
+  - it: honors the namespace, labels and annotations overrides
+    set:
+      metrics.grafanaDashboard.enabled: true
+      metrics.grafanaDashboard.namespace: monitoring
+      metrics.grafanaDashboard.labels:
+        dashboards: dexaflow
+      metrics.grafanaDashboard.annotations:
+        grafana_folder: Dexaflow
+    asserts:
+      - equal:
+          path: metadata.namespace
+          value: monitoring
+      - equal:
+          path: metadata.labels.dashboards
+          value: dexaflow
+      # Helm merges maps, so the default sidecar label stays next to an added
+      # one; `labels.grafana_dashboard: null` removes it.
+      - equal:
+          path: metadata.labels.grafana_dashboard
+          value: "1"
+      - equal:
+          path: metadata.annotations.grafana_folder
+          value: Dexaflow

@@ -16,8 +16,8 @@ type Problem struct {
 // caller, while handing the real error to the request log.
 //
 // It exists because the two audiences need different text. A storage failure
-// carries the driver's own message — for Postgres, "severity: message (SQLSTATE
-// code)" with our constraint, table and column names inside — and a tenant of a
+// carries the driver's own message, for Postgres, "severity: message (SQLSTATE
+// code)" with our constraint, table and column names inside, and a tenant of a
 // multi-tenant control plane must not receive that (CWE-209). The operator, on
 // the other hand, cannot diagnose the failure without it. Redacting the
 // response and dropping the cause would trade one defect for another, so cause

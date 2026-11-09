@@ -16,8 +16,10 @@
 # and API behaviour that reached the CHANGELOG but not the docs site, because
 # none of those paths was on the list. It now also covers the server settings
 # (internal/config), the schema migrations, the OpenAPI document, and any change
-# whose changelog fragment is Added, Changed, Deprecated or Removed: a fragment
-# of those kinds is the author saying users will see something different.
+# whose changelog fragment is Breaking, Upgrade, Added, Changed, Deprecated or
+# Removed: a fragment of those kinds is the author saying users will see
+# something different. Highlights is left out: it summarizes entries that
+# already carry their own docs.
 # Fixed and Security fragments alone do not count; a fix restores documented
 # behaviour, and one that changes it is expected to say so with Changed.
 #
@@ -42,7 +44,7 @@ DOCS_DIR="website/content"
 SURFACE_RE='^(helm/dexaflow/values\.yaml|docs/api/leoflow-yaml-schema\.json|internal/domain/schemas/.+|internal/cli/[a-z0-9_]+\.go|internal/config/[a-z0-9_]+\.go|internal/api/openapi\.yaml|migrations/[0-9]+_[a-z0-9_]+\.up\.sql)$'
 # Changelog fragments (changie) and the kinds that announce a visible change.
 FRAGMENT_RE='^\.changes/unreleased/[^/]+\.ya?ml$'
-FRAGMENT_KINDS_RE='^(Added|Changed|Deprecated|Removed)$'
+FRAGMENT_KINDS_RE='^(Breaking|Upgrade|Added|Changed|Deprecated|Removed)$'
 # A Go TEST file is not user-facing surface. `[a-z_]+\.go` matched
 # compile_baseimage_integration_test.go, so this gate blocked a test-only PR and
 # sent its author looking for a `skip-docs` label that did not exist. Digits are

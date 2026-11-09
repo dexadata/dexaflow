@@ -16,6 +16,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/dexadata/dexaflow/internal/auth"
+	"github.com/dexadata/dexaflow/internal/tenantctx"
 )
 
 const (
@@ -173,6 +174,7 @@ func DevBypassAuth() gin.HandlerFunc {
 	devUser := &auth.User{ID: "leoflow-dev", TenantID: "default", Email: "dev@leoflow.local", Roles: []string{"admin"}}
 	return func(c *gin.Context) {
 		c.Set(contextKeyUser, devUser)
+		c.Request = c.Request.WithContext(tenantctx.With(c.Request.Context(), devUser.TenantID))
 		c.Next()
 	}
 }
@@ -236,6 +238,9 @@ func jwtAuth(authn auth.Authenticator, bearer *issuerBearerAuth, session session
 					return
 				}
 				c.Set(contextKeyUser, user)
+				// Bind the request's queries to its tenant, so row level
+				// security (ADR 0104), when on, hides every other tenant's rows.
+				c.Request = c.Request.WithContext(tenantctx.With(c.Request.Context(), user.TenantID))
 				c.Next()
 				return
 			}

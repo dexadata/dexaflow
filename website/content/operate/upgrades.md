@@ -112,6 +112,33 @@ helm upgrade <release> oci://ghcr.io/dexadata/charts/leoflow --version <VERSION>
   -n leoflow --reset-then-reuse-values
 ```
 
+### Supported upgrade paths
+
+You do not have to take every patch. One `helm upgrade` may skip any number
+of releases, as long as it starts from a supported release:
+
+| Upgrading to | Supported from, in one step |
+|---|---|
+| any 0.6.x | 0.5.0 or later |
+| any 0.5.x | 0.5.0 or later |
+
+Every migration in between then runs in the one migration Job, in order. The
+[skip-version upgrade test](https://github.com/dexadata/dexaflow/blob/main/test/upgrade/skip-version.sh)
+holds every release candidate to this, weekly and on each rc tag
+([#2311](https://github.com/dexadata/dexaflow/issues/2311)): it seeds a
+database at 0.5.0 with 1,000 DAGs, 1 million runs, 5 million task
+instances, 500,000 archived tries and 1 million audit rows, upgrades it to
+the candidate in one step, and checks that every migration finished within
+5 minutes, that no index was left `INVALID`, that the schema equals a fresh
+install's (`pg_dump --schema-only`), and that the control plane becomes
+ready and runs a new DAG while it still serves the old runs.
+
+Read the "Upgrading to" sections of every release you skip, in order: their
+steps still apply, and the migrations of all of them run in that one Job, so
+size its `activeDeadlineSeconds` and Helm's `--timeout` for their sum. Upgrade
+from a release older than the table in two steps, through the oldest
+supported one.
+
 ### Use `--reset-then-reuse-values`, not `--reuse-values`
 
 `--reuse-values` does **not** merge the new chart's defaults. Helm rebuilds the
@@ -420,6 +447,7 @@ holds, then re-run.
 | 056 (usage events pruned mark) | 56 | nothing: one transaction, rolled back, and every statement can be repeated | 55 |
 | 057 (UUIDv7 keys) | 57 | nothing: one transaction with a 5 s `lock_timeout`, rolled back, and every statement can be repeated | 56; retry when `dag_runs` and `task_instances` are quiet |
 | 058 (user session cutoff) | 58 | nothing: one transaction with a 5 s `lock_timeout`, rolled back, and every statement can be repeated | 57; retry when `users` is quiet |
+| 059 (tenant row security policies) | 59 | nothing: one transaction with a 5 s `lock_timeout`, rolled back, and every statement can be repeated | 58; retry when the tenant tables are quiet |
 
 **How to run `migrate force`.** The hook image is the `dexaflow-migrate`
 wrapper plus the SQL files at `/migrations`; it takes the golang-migrate CLI's
@@ -1279,6 +1307,26 @@ migrate -path migrations -database "$DATABASE_URL" goto 56
 That restores `gen_random_uuid()` as the default and drops the function. Ids
 already made as UUIDv7 stay as they are and keep working.
 
+### Upgrading to 0.5.9: the UI refreshes every 5 seconds
+
+The bundled UI now polls DAG, run and task-instance state every 5 seconds
+instead of 30 when `ui.autoRefreshIntervalSeconds` is unset
+([#1196](https://github.com/dexadata/dexaflow/issues/1196),
+[#2245](https://github.com/dexadata/dexaflow/pull/2245)). An open DAG or run
+page with a run in progress costs about 27 database transactions per refresh,
+so the same number of open tabs puts about six times the UI load on the
+metadata database; one api process serves about 1,400 such tabs at 5 seconds
+([Experiment 4](https://github.com/dexadata/dexaflow/blob/main/test/load/BASELINE.md#ui-refresh-cycle)).
+An install that already sets the value keeps it. To keep the old cadence, set
+it before upgrading:
+
+```yaml
+ui:
+  autoRefreshIntervalSeconds: 30
+```
+
+Rolling back to 0.5.8 or earlier restores 30 seconds unless the value is set.
+
 ### Upgrading to 0.5.10: the install profile
 
 0.5.10 adds a chart value, `profile`
@@ -1306,29 +1354,92 @@ the profile, `0` and `false` included.
 | You want the new defaults on an existing release | `helm upgrade ... --set profile=cluster`. Task pods keep running; the control plane restarts with buffered dispatch. |
 | Rendered by `helm template`, ArgoCD or Flux | The renderer cannot read the live release and renders `cluster`. Set `profile: legacy` in your values **before** syncing 0.5.10 to keep the earlier behavior. |
 
-The dedicated scheduler database pool (`database.schedulerMaxConns`) is not part
-of the profile yet: with it on and the API pool saturated, agent heartbeats can
-stall while the reapers keep running on their own pool
+The dedicated database pools (`database.schedulerMaxConns` and
+`database.agentMaxConns`) are not part of the profile: they add connections on
+every pod, so size them against the Postgres connection budget and set them
+together. With only the scheduler pool set and the API pool saturated, agent
+heartbeats could stall while the reapers kept running on their own pool; the
+agent pool and the heartbeat reaper's mass-silence hold close that
 ([#1624](https://github.com/dexadata/dexaflow/issues/1624)).
 
-### Upgrading to 0.6.0: the UI refreshes every 5 seconds
+### Upgrading to 0.5.10: row level security policies
 
-The bundled UI now polls DAG, run and task-instance state every 5 seconds
-instead of 30 when `ui.autoRefreshIntervalSeconds` is unset
-([#1196](https://github.com/dexadata/dexaflow/issues/1196)). An open DAG or run
-page with a run in progress costs about 27 database transactions per refresh,
-so the same number of open tabs puts about six times the UI load on the
-metadata database; one api process serves about 1,400 such tabs at 5 seconds
-([Experiment 4](https://github.com/dexadata/dexaflow/blob/main/test/load/BASELINE.md#ui-refresh-cycle)).
-An install that already sets the value keeps it. To keep the old cadence, set
-it before upgrading:
+0.5.10 applies one migration, 059.
 
-```yaml
-ui:
-  autoRefreshIntervalSeconds: 30
+- **`059_tenant_row_security`** creates the function `dexaflow_bound_tenant()`
+  and a policy `dexaflow_tenant_barrier` on each of the sixteen tables with a
+  `tenant_id` column ([ADR 0104](/project/adrs/0104-row-level-security/),
+  [#2180](https://github.com/dexadata/dexaflow/issues/2180)). It turns row
+  level security on for none of them, so nothing reads or writes differently
+  until you choose to ([Row level security](/operate/multitenancy/#row-level-security)).
+  Creating a policy locks its table for an instant; the transaction waits at
+  most 5 seconds for each lock.
+
+**Rolling back 0.5.10.** The previous control plane boots against schema 059
+with the warning `database schema is ahead of this binary; proceeding`. It
+never binds a connection, so it passes every policy even with row level
+security on. The down migration turns row level security off on every tenant
+table before dropping the policies, so a table is never left enforcing with no
+policy:
+
+```sh
+migrate -path migrations -database "$DATABASE_URL" goto 58
 ```
 
-Rolling back to 0.5.x restores 30 seconds unless the value is set.
+### Upgrading to 0.5.10: a trigger at max_active_runs is queued
+
+A manual trigger of a DAG that already has `max_active_runs` runs queued or
+running is now accepted with the run in `queued`, as Airflow does
+([#2426](https://github.com/dexadata/dexaflow/issues/2426)); the scheduler
+starts it when a slot frees, oldest logical date first. Until 0.5.10 it
+answered 409 (`dag "x" is at max_active_runs cap of N`). The same holds for
+`dexaflow runs trigger`, `dexaflow deploy --trigger` and any script that calls
+`POST /api/v2/dags/{dag_id}/dagRuns`.
+
+A caller that relied on the 409 to drop a trigger while the DAG was busy now
+queues every one of them. To keep dropping them, check the DAG's active runs
+before triggering (`GET /api/v2/dags/{dag_id}/dagRuns?state=queued&state=running`).
+Scheduled runs are unchanged: the schedule still creates none while the DAG is
+at the cap. The tenant's `max_runs_per_day` still refuses a trigger with 403.
+
+### Upgrading to 0.5.10: max_active_tasks is compiled, per DAG run
+
+`max_active_tasks` on `DAG(...)` or `@dag(...)` now reaches the scheduler
+([#2427](https://github.com/dexadata/dexaflow/issues/2427)). Until 0.5.10 the
+compiler dropped it, so a DAG that set it ran without a cap. It is a cap per
+DAG run, as in Airflow 3: each run may have that many task instances queued or
+running at once.
+
+| Your DAG | What the upgrade does |
+|---|---|
+| Sets `max_active_tasks` in `dag.py` | After its next compile and deploy, each run is capped. A wide fan-out runs in waves where it ran all at once before. |
+| Sets `concurrency` (the Airflow 2 name) | `dexaflow compile` refuses it. Rename it to `max_active_tasks`. The version already deployed keeps running, uncapped. |
+| Sets `max_active_tasks` with a value that is not a positive integer | `dexaflow compile` refuses it. Remove it for no cap. |
+| A hand-written `dag.json` with `max_active_tasks` | The cap now applies to each run instead of to all runs of the DAG together, so the DAG can have up to `max_active_runs` times as many tasks active. Use a [pool](/operate/pools/) to keep a cap across runs. |
+| Sets neither | Nothing changes. |
+
+The UI and `GET /api/v2/dags/{dag_id}/details` show the DAG's own value, or
+nothing when it sets none, instead of a constant 16.
+
+### Upgrading to 0.5.10: the live log tail is published on demand
+
+Under the `cluster` profile, `logs.tail.publish` now renders `on_demand` when
+it is unset ([#2356](https://github.com/dexadata/dexaflow/issues/2356)): a
+received log line is published for the live tail only while someone follows
+the attempt, instead of one Redis `PUBLISH` per line whether anyone follows or
+not. A follower still receives every line after it subscribed: the lines held
+since the last check are replayed when it is noticed, at most a second later.
+`legacy` keeps `always`, as before.
+
+| Your install | What the upgrade does |
+|---|---|
+| A fresh install, or a release you move to `profile=cluster` | Publishes `on_demand`. Safe during the rolling upgrade: every version since 0.5.1 skips the replayed lines it already served. |
+| A release from before 0.5.10 (`legacy`) | Nothing changes. |
+| You want to keep publishing every line | Set `logs.tail.publish: always`. |
+
+Every log stream also publishes from its own queue now, in batches of up to
+256 lines per Redis round trip, so a follower costs a chatty task far less
+receive rate than before, under either mode.
 
 ## Ephemeral database loss (emptyDir Postgres)
 

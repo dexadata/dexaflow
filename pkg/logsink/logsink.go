@@ -4,8 +4,8 @@
 //
 // A [Sink] opens a [LogWriter] for one attempt, named by a [Ref], and the
 // server writes the attempt's [Event] values to it as the agent streams them.
-// [Sink.Read] returns the stored log as JSON lines, one event per line, in the
-// order they were written.
+// The Read method of a [Sink] returns the stored log as JSON lines, one event
+// per line, in the order they were written.
 //
 // Three optional interfaces let the server do more with a sink that supports
 // them, and it checks for each with a type assertion. A [LogWriter] that is
@@ -14,8 +14,9 @@
 // mid-task, instead of refusing the reconnect. A [Sink] that is also a
 // [MarkerSink] can add one event to a log that was already closed, which the
 // server uses to record why it stopped a task. A sink that implements none of
-// them still works: the server falls back to [LogWriter.WriteEvent], the agent
-// stops reconnecting the stream, and the marker is skipped.
+// them still works: the server falls back to the WriteEvent method of
+// [LogWriter], the agent stops reconnecting the stream, and the marker is
+// skipped.
 //
 // Everything exported here follows the pkg/ compatibility rule of ADR 0099:
 // no breaking change in a patch release.

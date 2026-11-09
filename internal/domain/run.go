@@ -8,22 +8,25 @@ import (
 // DAG is a registered DAG with its scheduling metadata (distinct from DAGSpec,
 // which is the compiled artifact).
 type DAG struct {
-	DagID          string
-	Description    string
-	Owner          string
-	Tags           []string
-	Schedule       *string
-	ScheduleTZ     string
-	StartDate      *time.Time
-	IsPaused       bool
-	IsActive       bool
-	MaxActiveRuns  int
+	DagID         string
+	Description   string
+	Owner         string
+	Tags          []string
+	Schedule      *string
+	ScheduleTZ    string
+	StartDate     *time.Time
+	IsPaused      bool
+	IsActive      bool
+	MaxActiveRuns int
+	// MaxActiveTasks is the max_active_tasks of the DAG's current version, a
+	// cap per DAG run (#2427); zero when the DAG declares none (no cap).
+	MaxActiveTasks int
 	Catchup        bool
 	LastParsedTime *time.Time
 	// CurrentVersion is the LABEL of the DAG's current registered version, empty
 	// when it cannot be resolved. Paired with DagRun.Version by the UI's clear
 	// dialog, which offers "Run with latest bundle version" only when the two
-	// differ — see that field.
+	// differ; see that field.
 	CurrentVersion string
 }
 

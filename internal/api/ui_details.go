@@ -95,7 +95,7 @@ type dagDetailsDTO struct {
 	TimetableDescription        *string          `json:"timetable_description"`
 	TimetablePartitioned        bool             `json:"timetable_partitioned"`
 	Tags                        []dagTagDTO      `json:"tags"`
-	MaxActiveTasks              int              `json:"max_active_tasks"`
+	MaxActiveTasks              *int             `json:"max_active_tasks"`
 	MaxActiveRuns               *int             `json:"max_active_runs"`
 	MaxConsecutiveFailedDagRuns int              `json:"max_consecutive_failed_dag_runs"`
 	HasTaskConcurrencyLimits    bool             `json:"has_task_concurrency_limits"`
@@ -120,7 +120,7 @@ type dagDetailsDTO struct {
 	LastParsed                  *string          `json:"last_parsed"`
 	DefaultArgs                 *json.RawMessage `json:"default_args"`
 	FileToken                   string           `json:"file_token"`
-	Concurrency                 int              `json:"concurrency"`
+	Concurrency                 *int             `json:"concurrency"`
 	LatestDagVersion            *dagVersionDTO   `json:"latest_dag_version"`
 }
 
@@ -162,7 +162,7 @@ func toDagDetailsDTO(d domain.DAG) dagDetailsDTO {
 		TimetableDescription: timetableDescription(d.Schedule),
 		TimetablePartitioned: false,
 		Tags:                 tags,
-		MaxActiveTasks:       defaultMaxActiveTasks,
+		MaxActiveTasks:       maxActiveTasksOf(d),
 		MaxActiveRuns:        &maxRuns,
 		AllowedRunTypes:      []string{"manual", "scheduled"},
 		Owners:               []string{owner},
@@ -171,7 +171,7 @@ func toDagDetailsDTO(d domain.DAG) dagDetailsDTO {
 		Params:               &emptyObj,
 		DefaultArgs:          &emptyObj,
 		Timezone:             &tz,
-		Concurrency:          defaultMaxActiveTasks,
+		Concurrency:          maxActiveTasksOf(d),
 		Fileloc:              fileloc,
 		FileToken:            synthID(d.DagID, "fileloc"),
 	}

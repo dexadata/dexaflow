@@ -16,7 +16,9 @@ more than one slot
 ([ADR 0066](/project/adrs/0066-weighted-pool-slots-and-resource-unit/)).
 
 Pools add to the per-DAG limits, they do not replace them. A task is admitted
-only when its DAG is under `max_active_tasks` and its pool has room.
+only when its run is under the DAG's `max_active_tasks`, a cap per DAG run as
+in Airflow 3, and its pool has room. A pool is also how to cap tasks across all
+runs of one DAG.
 
 ## When pools are on
 

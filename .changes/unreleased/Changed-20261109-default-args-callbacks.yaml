@@ -1,0 +1,13 @@
+kind: Changed
+body: |-
+  **A callback in the DAG's `default_args` is honored or refused, no longer
+  dropped (#2441).** `on_failure_callback` in `default_args` now arms every task
+  that does not set its own, as in Airflow, and runs on the task's final failed
+  attempt; `on_failure_callback=None` on a task opts it out. Before, it was
+  dropped at compile and never ran. A bash task that inherits it fails the
+  compile, since bash leaves no Python to call it: pass
+  `on_failure_callback=None` on that task or use an `alerts:` block.
+  `on_success_callback` and `on_retry_callback` in `default_args` are refused,
+  as they already were on a task. A DAG that compiled before with one of these
+  needs the change the message names.
+time: 2026-11-09T14:20:00.000000000+00:00

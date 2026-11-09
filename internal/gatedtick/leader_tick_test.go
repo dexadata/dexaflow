@@ -67,3 +67,16 @@ func TestRunLeaderTickRunsCycleWhileLeading(t *testing.T) {
 		t.Fatal("cycle did not run with a live context")
 	}
 }
+
+// A nil leading means always leading: the cycle runs with no leadership watch.
+func TestRunLeaderTickNilGateRunsCycle(t *testing.T) {
+	ran := false
+	RunLeaderTick(context.Background(), "test", time.Second, time.Millisecond, nil, discardLog(),
+		func(ctx context.Context) error {
+			ran = ctx.Err() == nil
+			return nil
+		})
+	if !ran {
+		t.Fatal("cycle did not run with a live context under a nil gate")
+	}
+}

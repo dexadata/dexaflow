@@ -2,13 +2,16 @@ package serverapp
 
 import (
 	"context"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/dexadata/dexaflow/internal/executor"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/watch"
 	"k8s.io/client-go/kubernetes/fake"
+	ktesting "k8s.io/client-go/testing"
 )
 
 // TestBuildWarmPodInformerRecordsTerminationsOnTheReaperLister: the warm-pod
@@ -27,11 +30,29 @@ func TestBuildWarmPodInformerRecordsTerminationsOnTheReaperLister(t *testing.T) 
 		}}},
 	}
 	cs := fake.NewClientset(pod)
+	// The fake clientset drops an event that happens before a watcher is
+	// registered, so the delete below must wait for the informer's watch:
+	// deleting between its LIST and its WATCH loses the event for good.
+	watching := make(chan struct{})
+	var once sync.Once
+	cs.PrependWatchReactor("pods", func(action ktesting.Action) (bool, watch.Interface, error) {
+		w, err := cs.Tracker().Watch(action.GetResource(), action.GetNamespace())
+		if err != nil {
+			return false, nil, err
+		}
+		once.Do(func() { close(watching) })
+		return true, w, nil
+	})
 	warmPods := executor.NewKubernetesWarmPods(cs, "leoflow", nil)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	if wi := buildWarmPodInformer(ctx, cs, "leoflow", warmPods, discardLog()); wi == nil {
 		t.Fatal("buildWarmPodInformer returned nil")
+	}
+	select {
+	case <-watching:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the warm-pod informer never started its watch")
 	}
 	if err := cs.CoreV1().Pods("leoflow").Delete(ctx, "warm-oom", metav1.DeleteOptions{}); err != nil {
 		t.Fatalf("delete: %v", err)

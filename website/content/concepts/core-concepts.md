@@ -33,9 +33,12 @@ unpauses the DAG with the switch in the UI or
 `dexaflow admin dags unpause <dag_id>`. On the next scheduler tick after the
 unpause, the waiting runs start, as many as `max_active_runs` allows.
 
-**`max_active_runs` caps runs twice.** Neither the schedule nor a trigger
-creates a run while the DAG has `max_active_runs` runs queued or running. And,
-as in Airflow, the scheduler moves a queued run to `running` only while fewer
+**`max_active_runs` caps runs twice.** The schedule creates no run while the
+DAG has `max_active_runs` runs queued or running. A manual trigger is always
+accepted, as in Airflow: past the cap the run waits in `queued`, so
+`max_active_runs: 1` works as a serial queue for event driven triggers (one run
+per file or message). And, as in Airflow, the scheduler moves a queued run to
+`running` only while fewer
 than `max_active_runs` runs of the DAG are running, oldest logical date first
 (close to Airflow's `run_after` order); the others stay `queued`, with nothing
 dispatched, until a running run finishes. A clear can leave more queued runs
@@ -59,7 +62,9 @@ downstream or retried starts until the unpause.
 This is a deliberate, conservative difference from Airflow 3, whose scheduler
 also stops scheduling new tasks of a running run while its DAG is paused
 (the tasks already running finish, and the rest wait for the unpause). To stop
-a running run, mark it failed or delete it.
+a running run, mark it failed or delete it: marking it failed fails its running
+tasks and skips the ones not started, as in Airflow (see
+[Setting a run's state](/reference/api/#setting-a-runs-state)).
 
 If you want a real "no runs at all" switch, the supported pattern is the same as
 in Airflow: pause the DAG. Runs triggered while it is paused queue up instead of

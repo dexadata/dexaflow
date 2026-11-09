@@ -90,12 +90,20 @@ const LeaderTickPoll = time.Second
 // leader's own loop, and one database call hung on a dead connection could hold
 // it indefinitely. Both loops are level-triggered, so a cycle cut short is
 // finished by the next one. A nil leading means always leading. An error is
-// logged, except once the parent context is done (shutdown).
+// logged, except once the parent context is done (shutdown). The leadership
+// watch has stopped by the time it returns, so no goroutine outlives the cycle.
 func RunLeaderTick(ctx context.Context, name string, budget, poll time.Duration, leading func() bool, logger *slog.Logger, fn func(context.Context) error) {
 	tctx, cancel := context.WithTimeout(ctx, budget)
-	defer cancel()
-	if leading != nil {
+	watchDone := make(chan struct{})
+	defer func() {
+		cancel()
+		<-watchDone
+	}()
+	if leading == nil {
+		close(watchDone)
+	} else {
 		go func() {
+			defer close(watchDone)
 			t := time.NewTicker(poll)
 			defer t.Stop()
 			for {

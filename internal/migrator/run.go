@@ -117,6 +117,8 @@ type command struct {
 	name string
 	n    int  // the version of force and goto, the step count of up
 	hasN bool // up was given a step count
+	// action is the argument of rls: on, off or status.
+	action string
 }
 
 // execute runs the command on an opened migrator and prints its outcome.

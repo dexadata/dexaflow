@@ -89,14 +89,12 @@ tests:
           path: spec.template.spec.containers[0].livenessProbe.httpGet.port
           value: http
 
-  - it: the scheduler Deployment is a single leader — role=scheduler, grpc+metrics ports, health probed on the metrics port (no HTTP API)
+  - it: "the scheduler Deployment is a single leader by default: role=scheduler, grpc+metrics ports, health probed on the metrics port (no HTTP API)"
     template: deployment.yaml
     documentIndex: 1
     set:
       split.enabled: true
       logs.persistence.accessMode: ReadWriteMany
-      # Even if an operator bumps this, the scheduler stays a single leader (ADR 0009).
-      split.scheduler.replicaCount: 5
     asserts:
       - equal:
           path: metadata.name
@@ -228,3 +226,66 @@ tests:
     asserts:
       - failedTemplate:
           errorMessage: "more than one control-plane pod would mount the logs PVC (replicaCount > 1, autoscaling.maxReplicas > 1, or split.enabled), but logs.persistence.accessMode=ReadWriteOnce attaches the volume to a single node/pod: the extra pods hang in ContainerCreating with a Multi-Attach error while the install reports success. HA needs a log store every replica can write. Recommended: set logs.persistence.enabled=false and ship task logs to object storage (logs.sink.provider=s3|gcs with logs.sink.bucket). Alternative: logs.persistence.accessMode=ReadWriteMany on an RWX StorageClass (EFS, Filestore, Azure Files, NFS, CephFS, Longhorn-rwx). Or keep a single replica. See helm/dexaflow/examples/values-ha.yaml."
+
+  # --- ADR 0105 (#2316): a leader and a standby in split mode.
+  - it: runs a standby scheduler with split.scheduler.replicaCount 2
+    template: deployment.yaml
+    documentIndex: 1
+    set:
+      split.enabled: true
+      logs.persistence.accessMode: ReadWriteMany
+      split.scheduler.replicaCount: 2
+    asserts:
+      - equal:
+          path: metadata.name
+          value: leoflow-scheduler
+      - equal:
+          path: spec.replicas
+          value: 2
+      - equal:
+          path: spec.strategy.type
+          value: RollingUpdate
+
+  - it: accepts the replica count as a string, as Argo CD and --set-string pass it
+    template: deployment.yaml
+    documentIndex: 1
+    set:
+      split.enabled: true
+      logs.persistence.accessMode: ReadWriteMany
+      split.scheduler.replicaCount: "2"
+    asserts:
+      - equal:
+          path: spec.replicas
+          value: 2
+
+  # Charts before 0.5.10 ignored the value, so a leftover number must fail loudly
+  # rather than start that many schedulers on an upgrade.
+  - it: refuses a scheduler replica count other than 1 or 2
+    template: deployment.yaml
+    set:
+      split.enabled: true
+      logs.persistence.accessMode: ReadWriteMany
+      split.scheduler.replicaCount: 5
+    asserts:
+      - failedTemplate:
+          errorPattern: "split.scheduler.replicaCount must be 1 \\(a single leader\\) or 2"
+
+  - it: ignores the scheduler replica count when split is off
+    template: deployment.yaml
+    set:
+      split.scheduler.replicaCount: 5
+    asserts:
+      - hasDocuments:
+          count: 1
+
+  # Both scheduler replicas mount the logs volume, so a single-writer PVC is
+  # refused even with a single api replica.
+  - it: refuses a standby scheduler over a ReadWriteOnce logs PVC
+    template: deployment.yaml
+    set:
+      split.enabled: true
+      split.api.replicaCount: 1
+      split.scheduler.replicaCount: 2
+    asserts:
+      - failedTemplate:
+          errorPattern: "more than one control-plane pod would mount the logs PVC"

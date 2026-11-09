@@ -106,6 +106,14 @@ spec:
             summary: Dexaflow Redis commands keep failing
             description: '{{`Redis commands failed with reason {{ $labels.reason }} for 10 minutes; XCom reads and writes and the live log tail are affected.`}}'
             runbook_url: {{ $runbooks }}/redis-command-failures/
+        - alert: DexaflowRedisEvictingKeys
+          expr: max(delta(dexaflow_redis_evicted_keys{ {{- $ns -}} }[10m])) > 0
+          labels:
+            severity: critical
+          annotations:
+            summary: Redis is deleting keys to stay under maxmemory
+            description: Redis evicted keys in the last 10 minutes; XCom values of running DAGs may be gone and their downstream tasks fail with not found.
+            runbook_url: {{ $runbooks }}/redis-evicting-keys/
         - alert: DexaflowResilienceBackstopDisabled
           expr: max by (config_key) (dexaflow_resilience_backstop_disabled{ {{- $ns -}} }) > 0
           for: 5m
@@ -115,8 +123,25 @@ spec:
             summary: A Dexaflow resilience backstop is turned off
             description: '{{`The control plane booted with the backstop of {{ $labels.config_key }} disabled.`}}'
             runbook_url: {{ $runbooks }}/resilience-backstop-disabled/
+        - alert: DexaflowAgentLostReapingHeld
+          expr: sum(increase(dexaflow_scheduler_decisions_total{ {{- $ns -}} ,decision_type=~"agent_lost_mass_silence_hold|agent_lost_mass_silence_valve_open"}[10m])) > 0
+          labels:
+            severity: critical
+          annotations:
+            summary: Most Dexaflow running tasks stopped heartbeating at once
+            description: The agent-lost reaper held because most running attempts went silent together, which points at heartbeat writes failing on the control plane; after 10 minutes it reaps them anyway.
+            runbook_url: {{ $runbooks }}/agent-lost-reaping-held/
     - name: dexaflow-ticket
       rules:
+        - alert: DexaflowRedisEvictionPolicyUnsafe
+          expr: min(dexaflow_redis_eviction_policy_safe{ {{- $ns -}} }) == 0
+          for: 15m
+          labels:
+            severity: warning
+          annotations:
+            summary: Redis may evict XCom values under memory pressure
+            description: Redis runs a maxmemory-policy other than noeviction, so it may delete XCom values of running DAGs when memory fills.
+            runbook_url: {{ $runbooks }}/redis-eviction-policy-unsafe/
         - alert: DexaflowSchedulerStepDowns
           expr: sum(increase(dexaflow_scheduler_step_downs_total{ {{- $ns -}} ,reason!="shutdown"}[1h])) > {{ $t.stepDownsPerHour | default 3 }}
           labels:

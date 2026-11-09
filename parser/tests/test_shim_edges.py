@@ -257,6 +257,83 @@ def test_bash_task_on_failure_callback_is_loud_reject(monkeypatch, tmp_path):
         """)
 
 
+def test_default_args_on_failure_callback_marks_every_task(monkeypatch, tmp_path):
+    """Airflow applies default_args to every operator of the DAG, callbacks included.
+    A callback there used to be dropped without a word (#2441): dag.json carried
+    the inherited retries but no callback marker, so nothing ran on failure."""
+    spec = _compile(monkeypatch, tmp_path, """
+        from airflow.sdk import dag, task
+        from airflow.providers.snowflake.operators.snowflake import SQLExecuteQueryOperator
+        def notify(ctx): pass
+        @dag(schedule=None, default_args={"on_failure_callback": notify, "retries": 1})
+        def g():
+            @task
+            def a() -> None: ...
+            a() >> SQLExecuteQueryOperator(task_id="q", conn_id="sf", sql="SELECT 1")
+        g()
+    """)
+    a, q = _task(spec, "a"), _task(spec, "q")
+    assert a.get("on_failure_callback") is True
+    assert q.get("on_failure_callback") is True
+    # the operator's runtime imports dag.py to read the callback off the task
+    assert q.get("entrypoint") == "dag:q"
+
+
+def test_default_args_on_failure_callback_list_form_is_marked(monkeypatch, tmp_path):
+    """The list form Airflow normalises callbacks to counts in default_args too."""
+    spec = _compile(monkeypatch, tmp_path, """
+        from airflow.sdk import DAG, task
+        def notify(ctx): pass
+        @task
+        def a() -> None: ...
+        with DAG("g", default_args={"on_failure_callback": [notify]}):
+            a()
+    """)
+    assert _task(spec, "a").get("on_failure_callback") is True
+
+
+def test_task_none_opts_out_of_default_args_callback(monkeypatch, tmp_path):
+    """Airflow fills a kwarg from default_args only when the task does not pass it,
+    so on_failure_callback=None on a task opts it out."""
+    spec = _compile(monkeypatch, tmp_path, """
+        from airflow.sdk import DAG
+        from airflow.providers.standard.operators.bash import BashOperator
+        def notify(ctx): pass
+        with DAG("g", default_args={"on_failure_callback": notify}):
+            BashOperator(task_id="b", bash_command="true", on_failure_callback=None)
+    """)
+    assert "on_failure_callback" not in _task(spec, "b")
+
+
+def test_default_args_on_failure_callback_on_bash_is_loud_reject(monkeypatch, tmp_path):
+    """A bash task cannot run an inherited callback either; the error names the
+    task, says where the callback came from and how to opt the task out."""
+    with pytest.raises(ValueError, match=r"default_args.*'b'.*on_failure_callback=None"):
+        _compile(monkeypatch, tmp_path, """
+            from airflow.sdk import DAG
+            from airflow.providers.standard.operators.bash import BashOperator
+            def notify(ctx): pass
+            with DAG("g", default_args={"on_failure_callback": notify}):
+                BashOperator(task_id="b", bash_command="false")
+        """)
+
+
+@pytest.mark.parametrize("name", ["on_success_callback", "on_retry_callback"])
+def test_default_args_unsupported_callback_is_loud_reject(monkeypatch, tmp_path, name):
+    """on_success/on_retry callbacks in default_args were dropped like the failure
+    one; they are refused as they are on a task."""
+    expected = rf"{name} on task 'a' \(inherited from the DAG's default_args\)"
+    with pytest.raises(ValueError, match=expected):
+        _compile(monkeypatch, tmp_path, f"""
+            from airflow.sdk import DAG, task
+            def notify(ctx): pass
+            @task
+            def a() -> None: ...
+            with DAG("g", default_args={{"{name}": notify}}):
+                a()
+        """)
+
+
 def test_native_task_on_success_callback_is_loud_reject(monkeypatch, tmp_path):
     """on_success/on_retry callbacks are unsupported everywhere; on a native task
     they must fail loud too (not be silently dropped)."""

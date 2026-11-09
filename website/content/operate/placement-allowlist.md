@@ -117,6 +117,48 @@ DEXAFLOW_EXECUTOR_DEFAULTS_EXECUTION_ALLOWLIST_IMAGES=registry.example.com/team-
 
 Both are empty by default, which allows any service account and any image.
 
+## Forcing pod fields
+
+The allowlist only refuses. To set a field on every task pod, whatever the DAG
+says, give the server an executor policy ([ADR 0063](/project/adrs/0063-executor-policy/)).
+The usual case is a sandboxed runtime for every task, on a node pool kept for it:
+
+```yaml
+executor:
+  policy:
+    force:
+      runtime_class_name: gvisor
+      service_account: dexaflow-sandboxed
+      node_selector:
+        node.example.com/pool: sandbox
+      tolerations:
+        - key: sandbox
+          operator: Equal
+          value: "true"
+          effect: NoSchedule
+```
+
+- `runtime_class_name` and `service_account` replace the task's value.
+- `node_selector` is merged over the task's own; on a key both set, the
+  policy wins.
+- `tolerations` are added after the task's own. Each takes `key`, `operator`
+  (`Equal` or `Exists`), `value`, `effect` and, for `NoExecute`,
+  `toleration_seconds`.
+
+The policy runs after every [admission hook](/operate/admission-hooks/), so
+neither a DAG nor a hook can undo it. A field the policy sets is not the
+author's choice, so `fields: none` above still lets the policy set the runtime
+class. A forced service account must be in `serviceAccounts` when that list is
+set.
+
+The policy is read only from the server's YAML or JSON config file
+(`DEXAFLOW_CONFIG`), because node label keys carry dots and tolerations cannot
+travel as environment variables. The server refuses to boot on an unknown key,
+an invalid value, a policy in a config file of another format, or a policy
+together with [warm pools](/operate/warm-pools/): warm pods are not built at
+dispatch and would not carry the forced fields. Lite runs no pod and ignores
+the policy, with a warning at boot.
+
 ## What an author sees
 
 A DAG whose task sets a field outside the list is refused when it is pushed:

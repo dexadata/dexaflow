@@ -63,7 +63,7 @@ func (a *JWTAuthenticator) clock() time.Time {
 }
 
 // MintUserToken signs a user JWT directly, without checking credentials against
-// a store. It is for trusted in-process callers only — notably `dexaflow lite`,
+// a store. It is for trusted in-process callers only, notably `dexaflow lite`,
 // which runs its own control plane and must register DAGs without a login
 // round-trip. The token validates under Authenticate using the same secret.
 func MintUserToken(secret string, ttl time.Duration, user User) (string, error) {
@@ -90,13 +90,13 @@ func (a *JWTAuthenticator) IssueToken(ctx context.Context, creds Credentials) (s
 // Authenticate validates a bearer token and resolves the current principal.
 // After the signature and registered claims check out, it reloads the user's
 // roles, permissions, and active flag from the store keyed by the token subject
-// (the user id). The store — not the token — is the source of truth for
+// (the user id). The store, not the token, is the source of truth for
 // authorization: this is what makes non-admin role grants gate anything (the
 // token carries roles but never permissions) and lets deactivating a user
 // revoke their live tokens within the token TTL.
 //
 // Two cases fall back to the signed claims instead of the reload: a nil store
-// (no data plane bound — the trusted in-process minting context) and a subject
+// (no data plane bound, the trusted in-process minting context) and a subject
 // with no backing row (a directly-minted token, e.g. `dexaflow lite`). Any other
 // store failure fails closed, so a flaky database cannot silently disable
 // revocation.
@@ -221,8 +221,8 @@ func (a *JWTAuthenticator) mintUserToken(user *User, ttl time.Duration, origin t
 // (ErrInvalidToken) when the account is inactive or its row is gone. Issuing a
 // credential is not weaker than using one, so a deactivated user must stop
 // receiving fresh tokens, not merely stop being able to spend them. The same two
-// carve-outs Authenticate makes apply verbatim: a nil store (no data plane bound
-// — the trusted in-process minting context) and the dev-token subject, which has
+// carve-outs Authenticate makes apply verbatim: a nil store (no data plane bound,
+// the trusted in-process minting context) and the dev-token subject, which has
 // no backing row by design. Any other store failure fails closed; that adds no
 // failure mode, because a database blip that refuses this renewal would refuse
 // the following request anyway, and the client's refresh is best-effort. Roles on

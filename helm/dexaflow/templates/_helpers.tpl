@@ -234,11 +234,32 @@ drains and auto-upgrades stall), so it is only safe-by-default above one.
 {{- end -}}
 
 {{/*
+Replicas of the split scheduler Deployment (#2316, ADR 0105): 1, a single
+leader, or 2, a leader and a standby waiting on the same advisory lock, as the
+non-split replicaCount: 2 does. Before 0.5.10 the chart pinned it to 1 and
+ignored the value, so a value file may carry any number left over from then:
+refuse everything but 1 and 2 rather than start that many schedulers on an
+upgrade. A third replica adds nothing a second does not, since only one leads.
+*/}}
+{{- define "leoflow.splitSchedulerReplicas" -}}
+{{- $raw := ((.Values.split | default dict).scheduler | default dict).replicaCount -}}
+{{- if kindIs "invalid" $raw -}}
+1
+{{- else -}}
+{{- $n := toString $raw -}}
+{{- if not (has $n (list "1" "2")) -}}
+{{- fail (printf "split.scheduler.replicaCount must be 1 (a single leader) or 2 (a leader and a standby), got %q. Only one scheduler leads at a time, so a third replica adds a pod and no failover. Charts before 0.5.10 ignored this value and always ran one scheduler; set it to 1 to keep that, or 2 for dispatch failover in split mode. See ADR 0105." $n) -}}
+{{- end -}}
+{{- $n -}}
+{{- end -}}
+{{- end -}}
+
+{{/*
 Largest number of control-plane pods that may mount the logs volume at once:
 the ceiling, not the floor. Non-split: replicaCount, or autoscaling.maxReplicas
 when the HPA owns the count. Split (ADR 0049): the scheduler writes logs and
 every api replica reads them from the same volume, so the mounters are the api
-replicas (or their HPA ceiling) plus the one scheduler. Both the single-writer
+replicas (or their HPA ceiling) plus the scheduler replicas. Both the single-writer
 PVC render guard and the per-pod emptyDir warning key on this value, so a shape
 one of them misses is a shape both miss — there is one definition.
 */}}
@@ -252,7 +273,7 @@ one of them misses is a shape both miss — there is one definition.
 {{- if .Values.autoscaling.enabled -}}
 {{- $api = .Values.autoscaling.maxReplicas -}}
 {{- end -}}
-{{- $n = add (int $api) 1 -}}
+{{- $n = add (int $api) (include "leoflow.splitSchedulerReplicas" . | int) -}}
 {{- end -}}
 {{- int $n -}}
 {{- end -}}
@@ -868,7 +889,8 @@ app.kubernetes.io/managed-by: {{ .Release.Service }}
 {{/*
 Install profile (#2323). "cluster" turns on the defaults the scheduler design
 assumes (ADR 0031): buffered dispatch, raised Kubernetes client limits with a
-separate maintenance client, and GOMEMLIMIT. "legacy" keeps the defaults of the
+separate maintenance client, GOMEMLIMIT, and the live log tail published on
+demand (#2356). "legacy" keeps the defaults of the
 charts before it. Resolution order:
 
   1. profile, when set.

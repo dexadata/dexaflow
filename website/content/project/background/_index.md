@@ -1,11 +1,13 @@
 ---
-title: Background
-linkTitle: Background
+title: "Archive: background"
+linkTitle: Archive
 weight: 40
-description: Background analyses that shaped the MVP — the reverse analysis and the UI/frontend assessments.
+description: "Archived analyses from before v0.1 that shaped the MVP: the reverse analysis and the UI and frontend assessments. Kept for context; not maintained."
 ---
 
-Historical analyses that shaped the MVP.
+Archived analyses from before v0.1 that shaped the MVP. They are kept for
+context and are not maintained: for what is current, see the
+[roadmap](/project/roadmap/) and the [ADRs](/project/adrs/).
 
 - **[MVP reverse analysis](/project/background/reverse-analysis-mvp/)**
 - **[UI walk report](/project/background/ui-walk-report/)**

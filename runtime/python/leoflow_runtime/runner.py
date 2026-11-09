@@ -167,7 +167,7 @@ def run(entrypoint: str) -> None:
         # re-raise, so the task's own failed outcome is unchanged (#424 inc 4b).
         # Airflow hands the callback the error as context["exception"].
         context["exception"] = exc
-        _maybe_fire_on_failure_callback(context, on_failure_callback)
+        _maybe_fire_on_failure_callback(context, on_failure_callback, module_name)
         # Re-raise so Python's default handler emits the traceback to stderr —
         # the agent captures it.
         raise
@@ -659,15 +659,24 @@ def _run_on_failure_callback(on_failure_callback, context, try_number, max_tries
             _lifecycle(f"on_failure_callback raised {type(exc).__name__}: {exc} (ignored)")
 
 
-def _maybe_fire_on_failure_callback(context, on_failure_callback) -> None:
+def _maybe_fire_on_failure_callback(context, on_failure_callback, module_name: str = "") -> None:
     """Fire the task's on_failure_callback if the compiler marked one
     (LEOFLOW_ON_FAILURE_CALLBACK, set by the agent) and this attempt is terminal.
     ``on_failure_callback`` is the raw value read off the loaded task object (a
-    callable, a list, or None). Reads try_number/max_tries from the env; a missing
+    callable, a list, or None). When it is empty and ``module_name`` is given, the
+    callback is read off the task in the DAG that module declares, where Airflow
+    applied the DAG's default_args. Reads try_number/max_tries from the env; a missing
     max_tries defaults to try_number (treat as final). Fully guarded — never raises."""
     if os.environ.get("LEOFLOW_ON_FAILURE_CALLBACK") != "1":
         return
     try_number, max_tries = _attempt_numbers()
+    if try_number >= max_tries and not _normalize_callbacks(on_failure_callback) and module_name:
+        # The compiler marked a callback the decorator does not carry: it comes
+        # from the DAG's default_args (#2441), which Airflow applies to the task
+        # in the DAG, so read it off that task.
+        on_failure_callback = _callback_from_dag_module(
+            module_name, os.environ.get("LEOFLOW_DAG_ID", ""),
+            os.environ.get("LEOFLOW_TASK_ID", ""))
     _run_on_failure_callback(on_failure_callback, context, try_number, max_tries)
 
 

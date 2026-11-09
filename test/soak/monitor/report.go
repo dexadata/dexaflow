@@ -16,15 +16,18 @@ import (
 // current verdict on disk. That is the whole point: the interesting failure is
 // the one that takes the harness with it.
 type verdict struct {
-	Verdict      string         `json:"verdict"`
-	Label        string         `json:"label"`
-	StartedAt    time.Time      `json:"started_at"`
-	UpdatedAt    time.Time      `json:"updated_at"`
-	ElapsedS     float64        `json:"elapsed_s"`
-	Samples      int            `json:"samples"`
-	Violations   int            `json:"violations"`
-	ByCheck      map[string]int `json:"violations_by_check"`
-	StopReason   string         `json:"stop_reason"`
+	Verdict    string         `json:"verdict"`
+	Label      string         `json:"label"`
+	StartedAt  time.Time      `json:"started_at"`
+	UpdatedAt  time.Time      `json:"updated_at"`
+	ElapsedS   float64        `json:"elapsed_s"`
+	Samples    int            `json:"samples"`
+	Violations int            `json:"violations"`
+	ByCheck    map[string]int `json:"violations_by_check"`
+	StopReason string         `json:"stop_reason"`
+	// Aborted says why the run stopped without a product verdict, for example
+	// "datastore unreachable at 29.2h" (#1257). Empty for a run that ran.
+	Aborted      string         `json:"aborted,omitempty"`
 	StoppedEarly bool           `json:"stopped_early"`
 	Complete     bool           `json:"complete"`
 	Thresholds   map[string]any `json:"thresholds"`
@@ -48,7 +51,14 @@ type reporter struct {
 	// sample is fine for a 72h run at 10s (about 26k rows, a few MB in memory),
 	// but the summary only prints bucketed aggregates.
 	trend []trendPoint
+	// aborted is set by MarkAborted when the environment, not the product,
+	// ended the run.
+	aborted string
 }
+
+// MarkAborted records that the run stopped because its environment left
+// (#1257), so the verdict says ABORTED and why instead of PASS or FAIL.
+func (r *reporter) MarkAborted(reason string) { r.aborted = reason }
 
 type trendPoint struct {
 	elapsedS   float64
@@ -147,6 +157,17 @@ func (r *reporter) writeSummary(stopReason string, complete bool) verdict {
 	}
 	if r.n == 0 {
 		v.Verdict = "INCONCLUSIVE"
+	}
+	// An aborted run has no product verdict for the time after the loss. One
+	// that was clean until then says ABORTED and when; one that had already
+	// failed for real keeps its FAIL, with the abort beside it.
+	if r.aborted != "" {
+		v.Aborted = r.aborted
+		if r.totalViol == 0 {
+			v.Verdict = "ABORTED: " + r.aborted
+		} else {
+			v.Verdict = "FAIL (then ABORTED: " + r.aborted + ")"
+		}
 	}
 	// An early stop is not a violation, but it is also not the run that was
 	// asked for, so it is annotated identically for all three budgets and the

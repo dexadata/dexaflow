@@ -6,8 +6,8 @@ whether parallelism behaves: the eight siblings should all leave `scheduled` in
 the same tick and the reducer must not start until the last one is terminal.
 
 `max_active_tasks` is set to 4 on purpose, so the DAG also exercises the
-per-DAG concurrency cap: with 8 ready siblings and a cap of 4, the scheduler
-must dispatch exactly 4 and hold the rest. A soak that never pressures the cap
+concurrency cap, which is per DAG run as in Airflow 3: with 8 ready siblings
+and a cap of 4, the scheduler must dispatch exactly 4 and hold the rest. A soak that never pressures the cap
 would never notice the cap regressing.
 
 Task types exercised: `python` (native).

@@ -39,6 +39,16 @@ and retry the same call; do not sign in again. The spec models it as the shared
 `AuthUnavailable` response on every protected operation, so a generated client
 has a typed case for it rather than an unknown status.
 
+## Triggering a run at the max_active_runs cap
+
+`POST /api/v2/dags/{dag_id}/dagRuns` creates the run whatever the number of
+active runs of the DAG, as Airflow does: it answers 201 with the run in
+`queued`, and the scheduler starts it when fewer than `max_active_runs` runs of
+the DAG are running, oldest logical date first. Before 0.5.10 a trigger at the
+cap answered 409 (`dag "x" is at max_active_runs cap of N`). The tenant's own
+limits are still refusals: `max_runs_per_day` answers 403 and a suspended
+tenant answers 409.
+
 ## Setting a run's state
 
 `PATCH /api/v2/dags/{dag_id}/dagRuns/{dag_run_id}` with a `state` sets a run
@@ -50,6 +60,26 @@ starts a run, under the DAG's pause and `max_active_runs`: a PATCH to
 already `running`, a PATCH to `running` changes nothing and answers with the
 run as it is. Setting `queued` also clears the run's start date, so the
 scheduler stamps a new one when it starts the run.
+
+Setting `failed` or `success` settles the run's unfinished task instances in
+the same transaction, as Airflow 3's `set_dag_run_state_to_failed` and
+`set_dag_run_state_to_success` do (since 0.5.10,
+[#2425](https://github.com/dexadata/dexaflow/issues/2425)):
+
+| Task instance state | `failed` | `success` |
+|---|---|---|
+| `running`, `up_for_reschedule` | `failed` | `success` |
+| `none`, `scheduled`, `queued`, `up_for_retry` | `skipped` | `success` |
+| `success`, `failed`, `skipped`, `upstream_failed`, `removed` | unchanged | unchanged |
+
+A running attempt is stopped the way a task instance marked failed is: its next
+heartbeat, at most 15 seconds later, matches no live row, and the agent kills
+its task process group. The slots it held under `max_active_tasks` and its pool
+are free from the verdict on, as in Airflow, so for up to one heartbeat the old
+attempt and the next one can run side by side. An agent that cannot reach the
+control plane does not learn of the stop and its task runs to its end or its
+`execution_timeout`. Before 0.5.10 only the run changed: its tasks kept running
+outside every cap, and the tasks it had not started stayed `none`.
 
 ## Clearing on the latest version
 

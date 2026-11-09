@@ -22,19 +22,29 @@ The rules are in [`migrations/AGENTS.md`](https://github.com/dexadata/dexaflow/b
    binary expects the old shape. When targeting a patch, keep it additive and
    within the safety bar of
    [ADR 0068](/project/adrs/0068-patch-content-gated-by-safety/).
-4. **Regenerate and test:**
+4. **Keep large tables unlocked.** A statement that holds a strong lock on
+   `task_instances`, `dag_runs` or another table that grows with the work
+   stalls every scheduler tick while it runs. `go test ./migrations/` refuses
+   the blocking shapes on those tables (a non-concurrent index, a type
+   change, `SET NOT NULL`, a constraint validated in place, a volatile
+   default, a full-table `UPDATE`, an `ALTER TABLE` without
+   `SET LOCAL lock_timeout`) and names the safe pattern for each
+   ([#2312](https://github.com/dexadata/dexaflow/issues/2312)). When no safe
+   pattern exists, write the reason in `migrations/lock_exceptions.txt` for the
+   review to accept.
+5. **Regenerate and test:**
 
    ```sh
    make sqlc                 # queries, when the schema they read changed
-   go test ./migrations/     # numbering, pairs, index and role rules
+   go test ./migrations/     # numbering, pairs, lock, index and role rules
    make test-integration     # the storage layer against a real Postgres
    ```
 
-5. **Prove upgrade and rollback** on a database with data from the previous
+6. **Prove upgrade and rollback** on a database with data from the previous
    release: `make migrate-up`, check the server, then `make migrate-down` once
    per new migration and check again. Put the timings in the PR; the release
    candidate review needs them (AGENTS.md, review 7).
-6. **Document it.** A migration is user-facing: add a section to
+7. **Document it.** A migration is user-facing: add a section to
    [upgrades](/operate/upgrades/) when it takes noticeable time or needs an
    action, and a changelog fragment. Every migration also gets its row in
    the recovery table of
@@ -42,5 +52,5 @@ The rules are in [`migrations/AGENTS.md`](https://github.com/dexadata/dexaflow/b
    the version left dirty, what to do before `force`, and the version to
    force (the one whose schema the database holds once the file was cut
    short).
-7. **Before merging**, merge the latest `main` into your branch; if the number
-   is taken, rename both files to the next free number and rerun step 4.
+8. **Before merging**, merge the latest `main` into your branch; if the number
+   is taken, rename both files to the next free number and rerun step 5.

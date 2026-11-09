@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"net/http"
+	"strconv"
 
 	"github.com/gin-gonic/gin"
 
@@ -139,7 +140,7 @@ func getPoolHandler(store PoolStore, confine bool) gin.HandlerFunc {
 	}
 }
 
-func createPoolHandler(store PoolStore) gin.HandlerFunc {
+func createPoolHandler(store PoolStore, audit ResourceAuditWriter) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		var body poolBody
 		if err := c.ShouldBindJSON(&body); err != nil {
@@ -155,11 +156,12 @@ func createPoolHandler(store PoolStore) gin.HandlerFunc {
 			handleRepoError(c, err)
 			return
 		}
+		recordResourceAudit(c, audit, "pool.create", "pool", pool.Name, map[string]string{"slots": strconv.Itoa(pool.Slots)})
 		c.JSON(http.StatusCreated, toPoolDTO(pool, domain.PoolUsage{}))
 	}
 }
 
-func updatePoolHandler(store PoolStore) gin.HandlerFunc {
+func updatePoolHandler(store PoolStore, audit ResourceAuditWriter) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		name := c.Param("pool_name")
 		existing, err := store.GetPool(c.Request.Context(), tenantOf(c), name)
@@ -182,6 +184,11 @@ func updatePoolHandler(store PoolStore) gin.HandlerFunc {
 			handleRepoError(c, err)
 			return
 		}
+		recordResourceAudit(c, audit, "pool.update", "pool", name, map[string]string{
+			"fields":         setFields(map[string]bool{"slots": body.Slots != nil, "description": true}),
+			"slots":          strconv.Itoa(pool.Slots),
+			"previous_slots": strconv.Itoa(existing.Slots),
+		})
 		usage, uerr := store.PoolSlotUsage(c.Request.Context(), tenantOf(c))
 		if uerr != nil {
 			handleRepoError(c, uerr)
@@ -191,12 +198,13 @@ func updatePoolHandler(store PoolStore) gin.HandlerFunc {
 	}
 }
 
-func deletePoolHandler(store PoolStore) gin.HandlerFunc {
+func deletePoolHandler(store PoolStore, audit ResourceAuditWriter) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if err := store.DeletePool(c.Request.Context(), tenantOf(c), c.Param("pool_name")); err != nil {
 			handleRepoError(c, err)
 			return
 		}
+		recordResourceAudit(c, audit, "pool.delete", "pool", c.Param("pool_name"), nil)
 		c.Status(http.StatusNoContent)
 	}
 }
@@ -218,15 +226,16 @@ func poolsReadOnlyHandler(c *gin.Context) {
 // collection so the Airflow UI's Pools screen renders instead of 404ing.
 // Mutations are gated on write:pool. With readOnly (server.pools_read_only) the
 // write routes stay mounted but refuse every caller, tenant admin included, so
-// only the platform operator, out of band, sizes a tenant's pools.
-func registerUIPools(r gin.IRouter, store PoolStore, proEnabled, readOnly bool) {
+// only the platform operator, out of band, sizes a tenant's pools. audit, when
+// set, records every accepted write (#2228).
+func registerUIPools(r gin.IRouter, store PoolStore, proEnabled, readOnly bool, audit ResourceAuditWriter) {
 	if !proEnabled || store == nil {
 		r.GET("/api/v2/pools", apiEmptyCollection("pools"))
 		return
 	}
 	r.GET("/api/v2/pools", RequirePermission("read", "pool"), listPoolsHandler(store, readOnly))
 	r.GET("/api/v2/pools/:pool_name", RequirePermission("read", "pool"), getPoolHandler(store, readOnly))
-	create, update, remove := createPoolHandler(store), updatePoolHandler(store), deletePoolHandler(store)
+	create, update, remove := createPoolHandler(store, audit), updatePoolHandler(store, audit), deletePoolHandler(store, audit)
 	if readOnly {
 		create, update, remove = poolsReadOnlyHandler, poolsReadOnlyHandler, poolsReadOnlyHandler
 	}

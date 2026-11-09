@@ -121,6 +121,12 @@ jobs:
             echo "::error::proto/agent/v1 is out of sync with proto/agent.proto. Run 'buf generate' and commit." >&2
             exit 1
           fi
+      # #940: the committed CLI, Go and OpenAPI reference pages match what
+      # their generators write. The website build regenerates them before
+      # publishing, so without this they drifted silently in the repository.
+      # Shares this job because it needs the same Go toolchain.
+      - name: Reference pages are in sync
+        run: bash scripts/check-reference-drift.sh
 
   # ─────────────────────────────────────────────────────────────────────
   # pkg/client is generated from docs/api/openapi.yaml (ADR 0050 D8). A spec

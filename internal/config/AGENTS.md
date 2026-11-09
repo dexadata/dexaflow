@@ -15,6 +15,15 @@ applies too; the step by step is in the
   variables for the keys it has seen, so every key is registered in
   `serverDefaults`, even when its default is the zero value
   (`TestDocumentedEnvVarsBind`, #725).
+- **The chart and the server agree** (`chart_guard_test.go`, #1144). Every
+  `DEXAFLOW_*` or `LEOFLOW_*` variable a chart template renders binds to a
+  registered key (`TestChartEnvVarsBind`), every leaf of
+  `helm/dexaflow/values.yaml` is read by a template
+  (`TestChartValuesHaveAConsumer`), and every map or slice setting of
+  `ServerConfig` binds from an env var or is a config-file key the chart
+  renders (`TestMapAndSliceSettingsAreReachable`). A value kept on purpose with
+  no consumer, or a map that only a file can carry, is listed there with its
+  reason.
 - **A registered key is documented.** Each key in `serverDefaults` has a row in
   `website/content/reference/configuration.md`, under its `DEXAFLOW_` name or,
   for a file-only key, in dotted form (`TestRegisteredKeysAreDocumented`, with

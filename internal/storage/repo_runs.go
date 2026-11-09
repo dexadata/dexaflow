@@ -199,29 +199,18 @@ func (r *Repository) DeleteDagRun(ctx context.Context, tenant, dagID, runID stri
 	return nil
 }
 
-// CreateDagRun inserts a new run for a DAG at its current version. The
-// per-DAG max_active_runs cap (#200) is enforced here for any caller that
-// goes through the repository, manual triggers via the API, scripted
-// backfills, and any future programmatic trigger path, so the contract
-// is honored in one place. A cap of zero is treated as "unlimited" to
-// match the scheduler path (see `Scheduler.hasHeadroom`). The check
-// races with concurrent inserts, but the small overshoot window is
-// bounded by the number of concurrent writers and lets us avoid an
-// advisory lock on the hot path. The tenant's max_runs_per_day, when set, is
-// charged exactly (createRunWithinDailyLimit).
+// CreateDagRun inserts a new run for a DAG at its current version. It does not
+// count the DAG's max_active_runs (#2426): as in Airflow, a manual trigger,
+// a scripted backfill or any other caller of the repository is accepted
+// whatever the number of active runs, and a queued run waits until the
+// scheduler's start stage has a free slot under the cap (#1766). Only
+// scheduled creation stops at the cap (`Scheduler.hasHeadroom`). The
+// tenant's own limits stay refusals: max_runs_per_day, when set, is charged
+// exactly (createRunWithinDailyLimit), and a suspended tenant is refused.
 func (r *Repository) CreateDagRun(ctx context.Context, tenant, dagID string, run domain.DagRun) (domain.DagRun, error) {
 	dag, err := r.resolveDag(ctx, tenant, dagID)
 	if err != nil {
 		return domain.DagRun{}, err
-	}
-	if maxActive := int(dag.MaxActiveRuns); maxActive > 0 {
-		active, countErr := r.q.CountActiveDagRunsByDagID(ctx, queries.CountActiveDagRunsByDagIDParams{TenantID: dag.TenantID, DagID: dag.ID})
-		if countErr != nil {
-			return domain.DagRun{}, fmt.Errorf("counting active runs: %w", countErr)
-		}
-		if int(active) >= maxActive {
-			return domain.DagRun{}, domain.Safef(domain.ErrConflict, "dag %q is at max_active_runs cap of %d", dagID, maxActive)
-		}
 	}
 	// Persist an explicit empty object when the run carries no conf (or an
 	// explicit JSON null), so the column is never NULL and downstream params
@@ -571,7 +560,10 @@ func resetTaskInstances(ctx context.Context, q *queries.Queries, run queries.Dag
 
 // SetDagRunState sets a DAG run's state directly, backing the UI's mark run
 // success/failed actions. Terminal states stamp ended_at; re-opening to a
-// non-terminal state clears it. started_at is preserved.
+// non-terminal state clears it. started_at is preserved. A terminal state is a
+// verdict on the run's work too: in the same transaction its unfinished task
+// instances are settled as Airflow 3 does, so a running attempt is told to
+// stop and no task is left waiting forever (#2425).
 func (r *Repository) SetDagRunState(ctx context.Context, tenant, dagID, runID, state string) error {
 	dag, err := r.resolveDag(ctx, tenant, dagID)
 	if err != nil {
@@ -591,10 +583,26 @@ func (r *Repository) SetDagRunState(ctx context.Context, tenant, dagID, runID, s
 	if domain.DagRunState(state) == domain.DagRunStateQueued {
 		started = pgtype.Timestamptz{}
 	}
-	if _, err := r.q.UpdateDagRunState(ctx, queries.UpdateDagRunStateParams{
+	tx, err := r.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("beginning run state tx: %w", err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }() //nolint:errcheck // best-effort; the commit path returns the meaningful error
+	qtx := r.q.WithTx(tx)
+	if _, err := qtx.UpdateDagRunState(ctx, queries.UpdateDagRunStateParams{
 		ID: run.ID, State: queries.DagRunState(state), StartedAt: started, EndedAt: ended, TenantID: run.TenantID,
 	}); err != nil {
 		return fmt.Errorf("setting dag run state: %w", err)
+	}
+	if domain.DagRunState(state).IsTerminal() {
+		if _, err := qtx.SettleTaskInstancesForRunVerdict(ctx, queries.SettleTaskInstancesForRunVerdictParams{
+			Verdict: state, TenantID: run.TenantID, DagRunID: run.ID,
+		}); err != nil {
+			return fmt.Errorf("settling the task instances of the run: %w", err)
+		}
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("committing run state tx: %w", err)
 	}
 	return nil
 }

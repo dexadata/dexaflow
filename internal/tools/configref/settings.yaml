@@ -187,6 +187,17 @@ settings:
       traffic that holds every main pool connection cannot stall a scheduler tick.
       It is opened in addition to the main pool, only by a process that runs the
       scheduler (`DEXAFLOW_SCHEDULER_ENABLED`). `0` keeps them on the main pool.
+  database.agent_max_conns:
+    edition: both
+    description: >-
+      Size of a dedicated pool for the writes that prove a running task alive:
+      heartbeats, state reports and reschedules (`database.agent_max_conns`; Helm
+      `database.agentMaxConns`), so API traffic that holds every main pool connection
+      cannot block a heartbeat while the reapers, on the scheduler pool, judge agents
+      silent ([#1624](https://github.com/dexadata/dexaflow/issues/1624)). Set it
+      together with `DEXAFLOW_DATABASE_SCHEDULER_MAX_CONNS`; `4` serves a few hundred
+      running tasks. It is opened in addition to the main pool, only by a process that
+      runs the scheduler. `0` keeps them on the main pool.
   database.statement_timeout_ms:
     edition: both
     description: >-
@@ -223,6 +234,16 @@ settings:
       or no schema is reported as `database replaced`, boot waits not ready on
       it, and a running server exits with code 3 when its database changes
       under it. Empty checks nothing.
+  database.row_level_security:
+    edition: both
+    description: >-
+      Binds each main pool connection an API request uses to the request's
+      tenant, so the row level security policies hide every other tenant's
+      rows from it ([ADR 0104](/project/adrs/0104-row-level-security/)). Turn the
+      policies on first with `dexaflow-migrate rls on`: boot fails unless every
+      tenant table enforces its policy, and when the server connects as a
+      superuser or a `BYPASSRLS` role. Not with PgBouncer in transaction mode.
+      See [Row level security](/operate/multitenancy/#row-level-security).
   database.migrate_on_boot:
     edition: '**Cluster only**'
     description: >-
@@ -280,6 +301,15 @@ settings:
       encryption, Azure Cache) whose server cert is signed by a provider/per-instance
       CA not in the container's system roots. Empty falls back to system roots only.
       The Helm chart sets it when `redis.caConfigMap` is configured.
+  redis.require_noeviction:
+    edition: Cluster
+    description: >-
+      Refuse to boot unless Redis runs `maxmemory-policy noeviction`, or when the
+      policy cannot be read from `INFO memory` (#2354). XCom values carry a TTL,
+      so a `volatile-*` policy (the default of several managed services) evicts
+      them first under memory pressure and the downstream task fails with "not
+      found". Off (the default), an unsafe policy logs a warning at boot and sets
+      `dexaflow_redis_eviction_policy_safe` to 0. Helm: `redis.requireNoEviction`.
   auth.provider:
     edition: both
     description: >-
@@ -316,7 +346,12 @@ settings:
     description: >-
       Cap on **failed** `/auth/token` attempts per client IP per minute (anti-brute-force).
       A successful login consumes no budget. `dexaflow lite` raises this well above
-      the default (local single-user tool).
+      the default (local single-user tool). With Redis configured, the count is shared by every
+      API replica through Redis, so the cap holds for the whole install and not
+      once per replica; the other sign-in routes' limits (renewal, SSO, CLI device
+      sign-in, CI token exchange) are shared the same way. If Redis fails, each
+      replica falls back to counting on its own. Without Redis (Lite) the count
+      is per process.
   secret_key:
     edition: both
     description: >-
@@ -432,8 +467,8 @@ settings:
       token. An attempt still running past it fails as a task failure with `credential_ceiling`
       (subject to its retries) instead of being re-placed as `agent_lost` ([#1461](https://github.com/dexadata/dexaflow/issues/1461));
       in Lite the reaper also stops its task at the ceiling ([#1511](https://github.com/dexadata/dexaflow/issues/1511)).
-      A non-positive value disables the ceiling. No Helm value yet; `extraEnv` only
-      ([#955](https://github.com/dexadata/dexaflow/issues/955)).
+      A non-positive value disables the ceiling.
+      Helm: `auth.maxAttemptCredentialLifetime`.
   auth.service_token:
     edition: both
     description: >-
@@ -822,6 +857,20 @@ settings:
       CIDRs or single addresses exempted from that block (`scheduler.alerts.allowed_cidrs`,
       a list; comma-separated via the env var). Applied only while the block is
       on, but validated at startup either way: an invalid entry fails startup.
+  executor.policy:
+    edition: Cluster
+    description: >-
+      **Pod fields forced on every task pod**, whatever the DAG or an
+      [admission hook](/operate/admission-hooks/) set ([ADR 0063](/project/adrs/0063-executor-policy/)):
+      `force.runtime_class_name` and `force.service_account` replace the task's value,
+      `force.node_selector` is merged over the task's (the policy's keys win) and
+      `force.tolerations` are appended. Read only from a YAML or JSON config file,
+      because node label keys carry dots; a policy in a file of another format, an
+      unknown key or an invalid value fails boot, and so does a policy together with
+      `execution.warm_pools_enabled`. A forced service account must be in
+      `execution_allowlist.service_accounts` when that list is set. Ignored by Lite.
+      What a DAG may set at all is the execution allowlist below. See
+      [Forcing pod fields](/operate/placement-allowlist/#forcing-pod-fields).
   executor.type:
     edition: both
     description: >-
@@ -1518,7 +1567,7 @@ settings:
     edition: both
     description: >-
       SPA polling cadence for DAG / DagRun / task-instance state. `0` falls back
-      to the 5s default (30s before v0.6.0); `dexaflow lite` sets 1s for a snappy
+      to the 5s default (30s before v0.5.9); `dexaflow lite` sets 1s for a snappy
       inner loop. Helm: `ui.autoRefreshIntervalSeconds`, which the chart omits entirely
       when unset so the server default decides.
   ui.edition:

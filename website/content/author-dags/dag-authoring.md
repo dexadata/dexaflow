@@ -186,6 +186,26 @@ config, for example), with three limits:
   (see below). Return the list from one task and process it inside the next
   one instead.
 
+### Task concurrency per run (`max_active_tasks`)
+
+`max_active_tasks` on `DAG(...)` or `@dag(...)` caps how many task instances of
+**each run** of the DAG may be queued or running at once, as in Airflow 3. The
+other ready tasks of the run wait in `scheduled` until one of its tasks
+finishes. Two runs of the DAG each get the full cap, so the DAG as a whole can
+have up to `max_active_runs` times `max_active_tasks` tasks active:
+
+```python
+with DAG("fan_out", schedule="@daily", max_active_runs=2, max_active_tasks=4):
+    ...  # at most 4 tasks of each run at once, 8 for the DAG
+```
+
+Unset means no cap. The value must be a positive integer; anything else is
+refused at compile. `concurrency`, the Airflow 2 name that Airflow 3 removed,
+is refused with a message naming `max_active_tasks`. To cap tasks across all
+runs of a DAG, or across DAGs, use a [pool](/operate/pools/). Before 0.5.10
+the compiler dropped `max_active_tasks`, so a DAG that set it ran without a
+cap ([#2427](https://github.com/dexadata/dexaflow/issues/2427)).
+
 ### Supported task types
 
 Dexaflow runs the common types on a **native fast path** and everything else — any
@@ -417,6 +437,19 @@ issue.
   they were not set. Their default values (`False`, `False`, `1`) still
   compile. `depends_on_past` and `wait_for_downstream` are planned in
   [#2350](https://github.com/dexadata/dexaflow/issues/2350).
+- **`max_active_tis_per_dag` and `max_active_tis_per_dagrun`**: refused at
+  compile from 0.5.10, on a task or in `default_args`, for the same reason:
+  the cap was dropped and the task ran without it. Unset (`None`) still
+  compiles. Planned in
+  [#2428](https://github.com/dexadata/dexaflow/issues/2428).
+- **`dagrun_timeout` and `max_consecutive_failed_dag_runs`** on the DAG:
+  refused at compile from 0.5.10. A run never timed out and the DAG never
+  paused after failed runs, so the DAG behaved as if they were unset. Their
+  defaults (`None`, `0`) still compile. Use `execution_timeout` on the tasks
+  to bound a run.
+- **`concurrency=` on the DAG**: refused at compile; Airflow 3 removed it. Use
+  [`max_active_tasks`](#task-concurrency-per-run-max_active_tasks), a cap per
+  DAG run.
 
 **Operators and sensors**
 
@@ -459,9 +492,12 @@ issue.
   rendered in the pod
   ([ADR 0084](/project/adrs/0084-template-render-errors-fail-the-task/)).
 - **`default_args` in `dag.py`**: only `retries`, `retry_delay`,
-  `execution_timeout`, `pool` and `pool_slots` are read from it. Set everything else per task, or in
-  `dexaflow.yaml`'s `tasks.<id>:` override block, which is checked at compile
-  time.
+  `execution_timeout`, `pool`, `pool_slots` and `on_failure_callback` are read
+  from it ([the callback](/author-dags/alerting/#the-airflow-on_failure_callback)
+  arms every task that does not set its own; before 0.5.10 it was dropped).
+  `on_success_callback` and `on_retry_callback` are refused there. Set
+  everything else per task, or in `dexaflow.yaml`'s `tasks.<id>:` override
+  block, which is checked at compile time.
 
 ### Run parameters and their schemas
 

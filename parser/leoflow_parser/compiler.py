@@ -39,6 +39,7 @@ def compile_dag(
     """Compile the DAG in ``source`` into a dag.json dictionary."""
     config = _load_config(config_path)
     dag = _load_dag(source, config.get("dag_id"))
+    _reject_unhonored_dag_args(dag)
 
     spec: dict[str, Any] = {
         "schema_version": "1.0",
@@ -84,6 +85,9 @@ def compile_dag(
     mar = getattr(dag, "max_active_runs", None)
     if isinstance(mar, int) and not isinstance(mar, bool) and mar > 0:
         spec["max_active_runs"] = mar
+    mat = _max_active_tasks(dag)
+    if mat is not None:
+        spec["max_active_tasks"] = mat
     if getattr(dag, "catchup", None) is True:
         spec["catchup"] = True
     # Both values are kept: False makes a DAG start active on a server that
@@ -93,6 +97,39 @@ def compile_dag(
     if isinstance(paused, bool):
         spec["is_paused_upon_creation"] = paused
     return spec
+
+
+_MAX_ACTIVE_TASKS_DOCS = (
+    "https://dexaflow.dexadata.ai/author-dags/dag-authoring/"
+    "#task-concurrency-per-run-max_active_tasks"
+)
+
+
+def _max_active_tasks(dag) -> int | None:
+    """The DAG's max_active_tasks, a cap per DAG run as in Airflow 3 (#2427).
+
+    None when unset, so a DAG that sets none keeps its compiled shape. A value
+    that is not a positive integer is refused rather than dropped: the author
+    asked for a cap, and running without one would be a silent change. The
+    Airflow 2 name ``concurrency``, removed in Airflow 3, is refused by name.
+    """
+    if hasattr(dag, "concurrency"):
+        raise ValueError(
+            f"DAG {dag.dag_id!r} sets concurrency={dag.concurrency!r}, which Airflow 3 "
+            "removed. Use max_active_tasks instead: it caps the task instances active "
+            f"at once in each run of the DAG (see {_MAX_ACTIVE_TASKS_DOCS})."
+        )
+    value = getattr(dag, "max_active_tasks", None)
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+        raise ValueError(
+            f"DAG {dag.dag_id!r} sets max_active_tasks={value!r}; it must be a "
+            "positive integer, the number of task instances that may be queued or "
+            "running at once in each run of the DAG. Remove it for no cap "
+            f"(see {_MAX_ACTIVE_TASKS_DOCS})."
+        )
+    return value
 
 
 def _load_config(path: str) -> dict[str, Any]:
@@ -450,7 +487,29 @@ _UNHONORED_TASK_ARGS = {
     "depends_on_past": (False, "#2350"),
     "wait_for_downstream": (False, "#2350"),
     "priority_weight": (1, None),
+    "max_active_tis_per_dag": (None, "#2428"),
+    "max_active_tis_per_dagrun": (None, "#2428"),
 }
+
+# DAG arguments the scheduler does not honor, refused for the same reason
+# (#2336): a run timeout that never fires and an auto-pause after failed runs
+# that never pauses. Each maps to its Airflow default, which stays accepted.
+_UNHONORED_DAG_ARGS = {
+    "dagrun_timeout": None,
+    "max_consecutive_failed_dag_runs": 0,
+}
+
+
+def _reject_unhonored_dag_args(dag) -> None:
+    for name, default in _UNHONORED_DAG_ARGS.items():
+        value = getattr(dag, name, default)
+        if value == default:
+            continue
+        raise ValueError(
+            f"{name}={value!r} on DAG {dag.dag_id!r} is not honored by the Dexaflow "
+            "scheduler, which would ignore it and run the DAG with different "
+            f"semantics than Airflow. Remove it, or set it to {default!r}."
+        )
 
 
 def _reject_unhonored_args(task, dag) -> None:
@@ -514,7 +573,7 @@ def _map_task(task, source: str, dag=None) -> dict[str, Any]:
         if operator_args:
             _check_literal_payload_size(task.task_id, "operator_args", operator_args)
             entry["operator_args"] = operator_args
-    _check_callbacks(task, task_type, entry)
+    _check_callbacks(task, task_type, entry, dag)
     if task_type == "airflow_operator" and entry.get(_ON_FAILURE_CALLBACK):
         # The callable cannot travel in operator_args, so the runtime imports
         # this module on the final failed attempt and reads it off the task (#484).
@@ -562,6 +621,25 @@ def _is_callback(value) -> bool:
     return False
 
 
+def _sets_own(task, name: str) -> bool:
+    """Report whether the task passes ``name`` itself, even as None. Airflow fills
+    an operator kwarg from the DAG's default_args only when the operator does not
+    pass it, so an explicit ``on_failure_callback=None`` opts a task out."""
+    if name in vars(task):
+        return True
+    return name in (getattr(task, "__leoflow_args__", {}) or {})
+
+
+def _inherited_callback(task, dag, name: str) -> bool:
+    """Report whether the task gets callback ``name`` from the DAG's default_args.
+    Airflow applies default_args to every operator of the DAG, callbacks included,
+    so ``default_args={"on_failure_callback": notify}`` arms every task that does
+    not pass its own."""
+    if dag is None or _sets_own(task, name):
+        return False
+    return _is_callback((getattr(dag, "default_args", None) or {}).get(name))
+
+
 def _has_callback(task, name: str) -> bool:
     """Report whether the task declares ``name``. Native tasks store it as an
     attribute (the shim setattrs every kwarg); a generically-captured operator
@@ -577,19 +655,25 @@ def _has_callback(task, name: str) -> bool:
     return _is_callback((getattr(task, "__leoflow_args__", {}) or {}).get(name))
 
 
-def _check_callbacks(task, task_type: str, entry: dict) -> None:
+def _check_callbacks(task, task_type: str, entry: dict, dag=None) -> None:
     """Resolve Airflow lifecycle callbacks (#424). ``on_failure_callback`` is marked
     on a Python-path task (operator or @task) so the runtime runs it; on a bash task
     it is a loud reject (no Python is left to run it). ``on_success_callback`` /
     ``on_retry_callback`` are unsupported everywhere and always a loud reject —
-    never a silent drop, which would leave the author thinking their callback runs."""
+    never a silent drop, which would leave the author thinking their callback runs.
+
+    A callback in the DAG's default_args counts as the task's own, as in Airflow
+    (#2441): it used to be dropped without a word."""
     for name in ("on_success_callback", "on_retry_callback"):
-        if _has_callback(task, name):
+        inherited = _inherited_callback(task, dag, name)
+        if _has_callback(task, name) or inherited:
+            origin = " (inherited from the DAG's default_args)" if inherited else ""
             raise ValueError(
-                f"{name} on task {task.task_id!r} is not supported by Dexaflow yet — "
-                "refusing to silently drop it. Use an alerts: block in dexaflow.yaml, "
-                "or a downstream @task with a trigger_rule.")
-    if not _has_callback(task, _ON_FAILURE_CALLBACK):
+                f"{name} on task {task.task_id!r}{origin} is not supported by Dexaflow "
+                "yet, refusing to silently drop it. Use an alerts: block in "
+                "dexaflow.yaml, or a downstream @task with a trigger_rule.")
+    inherited = _inherited_callback(task, dag, _ON_FAILURE_CALLBACK)
+    if not (_has_callback(task, _ON_FAILURE_CALLBACK) or inherited):
         return
     if _is_task_bash(task):
         # The runtime replaces its process with bash once the function returns
@@ -603,6 +687,13 @@ def _check_callbacks(task, task_type: str, entry: dict) -> None:
         entry[_ON_FAILURE_CALLBACK] = True
         return
     # bash execs bash in place (no Python left), so it cannot run a Python callback.
+    if inherited:
+        raise ValueError(
+            f"on_failure_callback from the DAG's default_args applies to task "
+            f"{task.task_id!r} (type {task_type}), which cannot run it: a bash task "
+            "leaves no Python to call it. Pass on_failure_callback=None on that task "
+            "to opt it out, or use an alerts: block in dexaflow.yaml, or a downstream "
+            "@task with trigger_rule='one_failed'.")
     raise ValueError(
         f"on_failure_callback on task {task.task_id!r} (type {task_type}) cannot run: "
         "only a Python-executed task runs it in-process (a provider operator or a "

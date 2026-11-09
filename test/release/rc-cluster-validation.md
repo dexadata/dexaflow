@@ -15,7 +15,10 @@ says otherwise. It is the configuration the project recommends for production,
 and a row run on anything else proves that other configuration only (#2297).
 
 **How to use:** fill in the run header, follow §0→§6, record PASS/FAIL in §6, and
-open one issue per FAIL (root-caused, file:line if known — same bar as the
+commit the run header and the §6 table as `test/release/results/<rc tag>.md`
+(copy [`results/TEMPLATE.md`](results/TEMPLATE.md)): `scripts/cut-release.sh`
+refuses the GA of a version whose rcs have no complete record (#1026). Open one
+issue per FAIL (root-caused, file:line if known: same bar as the
 #722–#729 batch). For the **next** RC, keep §0/§2/§4/§5 as-is and refresh only
 **§3a** (the "features this RC shipped") from that release's CHANGELOG
 `[Unreleased]` / release notes. **§3b carries forward** — those rows stand until
@@ -28,11 +31,13 @@ the issue they name closes.
 | Field | Value |
 |---|---|
 | RC under test | `<tag>` |
+| Image under test | `ghcr.io/dexadata/dexaflow-server:<tag>@sha256:<digest>`, and whether it is the `published rc` (the tag's own image) **or** `local build` (an image built from a commit, because the rc predates a fix this run validates) |
+| Commit under test | `<full SHA>`: for a published rc, `git rev-list -n1 <tag>`; for a local build, the commit it was built from |
+| Version check (§1b) | `git_version` reported by the running control plane: `<sha>`, matches the commit above (yes / no) |
 | Cloud / cluster | `<AWS EKS / GCP GKE>` (context: `<kubectl-context>`) |
 | CNI | `<AWS VPC CNI / GKE Dataplane V2 / Calico>` — note it, §5 depends on it |
 | Node provisioning | (managed node group / Karpenter / GKE node pool?) |
 | GKE mode | `<Standard / Autopilot>` — Autopilot mutates pod specs; see §5 |
-| Server image | `ghcr.io/dexadata/dexaflow-server:<tag>` |
 | Date / operator | `<date>` / `<who>` |
 
 Links: release <https://github.com/dexadata/dexaflow/releases/tag/TAG> ·
@@ -165,6 +170,33 @@ helm install leoflow oci-or-repo/leoflow \
 
 Record: does the control plane reach `Ready`? Is `/api/v2/` + the UI reachable
 (via `kubectl -n leoflow port-forward svc/leoflow 8080:8080`, or the ingress)? Can you `dexaflow auth login` and get a JWT?
+
+### §1b Check that the control plane runs the commit under test (#1019)
+
+Tags are immutable (ADR 0033), so a fix that merged after an rc is not in that
+rc's image. Installing the published rc and validating a row whose fix merged
+later fails the row for the wrong reason, and a row that passes for a reason
+unrelated to its fix reads as proof the fix works. Right after the install
+above, before §2, and again after any image change:
+
+```bash
+kubectl -n <ns> port-forward svc/<release> 8080:8080 &
+curl -fsS -H "Authorization: Bearer $TOKEN" http://localhost:8080/api/v2/version   # {"version":"<ui>","git_version":"<sha>"}
+git rev-list -n1 <tag>                           # the commit the rc was cut from
+```
+
+- `$TOKEN` is the JWT from `dexaflow auth login` (§1); the route needs the
+  `read` scope.
+- `git_version` must equal the **Commit under test** of the header (a prefix
+  match is enough when the build stamped a short SHA). If it does not, stop:
+  the cluster runs something else.
+- For each §3a row, check that the fix it validates is in the commit under
+  test: `git merge-base --is-ancestor <fix commit> <commit under test>`. A fix
+  that is not there is recorded **NOT IN BUILD**, never FAIL or PASS.
+- When the fixes this run must validate merged after the rc, either cut a new
+  rc, or build the server image from the commit that will become the GA, set
+  **Image under test** to `local build`, and say so in the §6 summary: the
+  result then proves that commit, not the published rc.
 
 ---
 
@@ -524,9 +556,10 @@ LEOFLOW_CHAOS_ONLY=CD test/e2e/chaos-runtime.sh
 **PASS:** scenarios C and D both pass. Two caveats worth stating, because they
 bound what a green here means:
 
-- The script is **not in any workflow** — only `make chaos-runtime`, which
-  nothing invokes. An RC is the moment it actually gets run, which is why it is
-  named here at all.
+- The [Chaos weekly](https://github.com/dexadata/dexaflow/actions/workflows/chaos-weekly.yaml)
+  workflow runs it every week against main (#2306). When the rc is cut from
+  main, a green run on the rc's commit or a later one answers this row; cite
+  it. Otherwise run it here.
 - It runs the control plane as **host processes** from `bin/leoflow-server` on a
   k3d cluster it creates and deletes. So it validates **the tree at the RC tag**,
   not `ghcr.io/dexadata/dexaflow-server:<rc>`. Check out the tag and build
@@ -662,6 +695,12 @@ Then drop the forward, or it will outlive the pod it points at and quietly
 mislead the next step: `kill $PF`.
 
 #### §4.6b — a rolling upgrade never drops the Service to zero endpoints
+
+The [E2E Helm rolling upgrade](https://github.com/dexadata/dexaflow/actions/workflows/e2e-helm-upgrade.yaml)
+workflow runs the endpoint part of this check on kind for every rc tag, from the
+previous GA chart and images to the rc, with tasks in flight (#2305, checklist
+row E10). Cite its run for the rc. The steps below remain for a real cluster
+and for the dirty schema case, which that workflow does not drive.
 
 The reason §4.6a is not the whole check. The migrate Job is a
 `pre-install,pre-upgrade` hook, so on **upgrade** it runs while the OLD pods are
@@ -826,6 +865,7 @@ cloud reads as proof, and that is the failure §5 exists to prevent.
 
 | # | Check | PASS/FAIL | Notes / evidence |
 |---|---|---|---|
+| §1b | the control plane's `git_version` is the commit under test; rows whose fix is not in it are NOT IN BUILD | | |
 | §2 | smoke: task→success | | |
 | #17 | hybrid: python tasks succeed (§3a) | | |
 | #20 | dbt_groups project present in the image, both shapes (§3a) | | |

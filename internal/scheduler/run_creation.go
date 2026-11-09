@@ -18,8 +18,8 @@ import (
 // may fall behind on that run, but it stays alive and keeps the rest moving. It
 // returns how many tasks it admitted to queued (zero on a panic or error), the
 // per-pool breakdown of those admissions (nil unless the pool gate is on),
-// which the caller folds into the per-DAG max_active_tasks and per-pool budgets
-// for sibling runs, and the tasks held only by their pool (ADR 0066 §4).
+// which the caller folds into the per-pool budgets for the other runs, and the
+// tasks held only by their pool (ADR 0066 §4).
 func (s *Scheduler) advanceSafely(ctx context.Context, run RunState) (res advanced) {
 	defer func() {
 		if r := recover(); r != nil {

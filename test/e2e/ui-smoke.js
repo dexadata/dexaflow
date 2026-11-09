@@ -417,9 +417,9 @@ async function resolveUser() {
   });
 
   // Run list pagination (#1932): the runs table pages with a cursor, 50 rows
-  // a page. Fill hello past one page (the API refuses more than its 16 active
-  // runs, so trigger as runs finish), then walk next, the disabled next on the
-  // last page, and back.
+  // a page. Fill hello past one page (a trigger past the DAG's active-runs cap
+  // is queued, #2426), then walk next, the disabled next on the last page, and
+  // back.
   await step('runs list: next, last page, previous', async () => {
     const PAGE = 50;
     const tok = await mintToken();
@@ -431,8 +431,7 @@ async function resolveUser() {
       const res = await page.request.post(`${URL}/api/v2/dags/hello/dagRuns`, {
         headers, data: { dag_run_id: `pagination_${i}`, logical_date: at },
       });
-      if (res.status() === 409) await page.waitForTimeout(500); // at the active-runs cap
-      else if (!res.ok()) throw new Error(`trigger answered ${res.status()}`);
+      if (!res.ok()) throw new Error(`trigger answered ${res.status()}`);
     }
     const want = await total();
     await page.goto(`${URL}/dags/hello/runs`, { waitUntil: 'networkidle' });

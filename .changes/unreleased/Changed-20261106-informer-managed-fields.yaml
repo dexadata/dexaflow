@@ -1,0 +1,7 @@
+kind: Changed
+body: |-
+  **Smaller pod informer caches.** The task pod and warm pod informers now
+  store pods without `metadata.managedFields`, which nothing in the control
+  plane reads and which is often the largest part of a cached pod, so the
+  control plane's memory per task pod drops (#2326).
+time: 2026-11-06T19:20:00.000000000+00:00
