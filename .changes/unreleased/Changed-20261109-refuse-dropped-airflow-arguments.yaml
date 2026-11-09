@@ -1,0 +1,22 @@
+kind: Changed
+body: |-
+  **Airflow arguments and operators Dexaflow cannot honor are refused at
+  compile, no longer dropped (#2448, #2449, #2450).** Refused when set to
+  anything but their default, on a task or in `default_args`: `email`,
+  `executor_config`, `resources`, `queue`, `executor`, `run_as_user`,
+  `weight_rule`, `retry_exponential_backoff`, `max_retry_delay`,
+  `retry_policy`, `sla`, `end_date`, `pre_execute`, `post_execute`, `inlets`,
+  `outlets`, `on_execute_callback` and `on_skipped_callback`. On the DAG:
+  `schedule=timedelta(...)`, `schedule="@continuous"`, `end_date`,
+  `on_failure_callback`, `on_success_callback`, `sla_miss_callback`,
+  `fail_fast`, `deadline`, `access_control`, `allowed_run_types` and the
+  template options (`render_template_as_native_obj`, `user_defined_macros`,
+  `user_defined_filters`, `template_searchpath`, `template_undefined`,
+  `jinja_environment_kwargs`). Operators: `KubernetesPodOperator` and the
+  other pod operators, `DockerOperator`, the human in the loop operators,
+  `@task.docker` and `@task.kubernetes`, and a subclass of a provider operator,
+  which ran as its parent. Upgrade note: a DAG that compiled before with one
+  of these now fails `dexaflow compile` with a message naming the argument and
+  what to do instead; it was running without it. A test now walks every
+  argument of the pinned Task SDK, so a new one cannot be dropped again.
+time: 2026-11-09T21:00:00.000000000+00:00

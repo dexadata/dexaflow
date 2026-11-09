@@ -190,10 +190,10 @@ lack, such as `dag_run.start_date` or `ti.hostname`, raises an
 of a bare error deep inside a provider. These Task SDK keys are not provided,
 because the task pod has no data for them: `prev_data_interval_start_success`,
 `prev_data_interval_end_success`, `prev_start_date_success`,
-`prev_end_date_success` (the previous successful run), `templates_dict` (not
-captured by the compiler), `task_reschedule_count`, the asset keys (`inlets`,
-`outlets`, `inlet_events`, `outlet_events`, `triggering_asset_events`,
-`asset_state_store`), `task_state_store`, `expanded_ti_count`,
+`prev_end_date_success` (the previous successful run),
+`task_reschedule_count`, the asset keys (`inlets`, `outlets`, `inlet_events`,
+`outlet_events`, `triggering_asset_events`, `asset_state_store`),
+`task_state_store`, `expanded_ti_count`,
 `map_index_template`, `partition_key`, `partition_date`, `reason` and
 `test_mode`. A template that names one renders it as an empty string (an
 empty quoted argument in a bash command). The

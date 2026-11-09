@@ -30,6 +30,20 @@ SETUP_TEARDOWN_REFUSAL = (
 )
 
 
+# MAPPING_REFUSAL is the message for dynamic task mapping in any of its forms
+# (.expand, .partial, .expand_kwargs, .map, .zip). The compiler adds its
+# not-supported suffix.
+MAPPING_REFUSAL = "dynamic task mapping (.expand/.partial/.expand_kwargs/.map/.zip)"
+
+# XCOM_INDEX_REFUSAL is the message for result["key"] on a task's output, the
+# multiple_outputs pattern (#2451).
+XCOM_INDEX_REFUSAL = (
+    "indexing a task's output (result['key'], as with multiple_outputs=True) is not "
+    "supported by Dexaflow yet: pass the whole result to the downstream task and read "
+    "the key there, or return each value from its own task"
+)
+
+
 def _refuse_setup_teardown(*_args, **_kwargs):
     raise NotImplementedError(SETUP_TEARDOWN_REFUSAL)
 
@@ -99,6 +113,20 @@ class XComArg(_DependencyMixin):
 
     def __init__(self, operator):
         self.operator = operator
+
+    def __getitem__(self, key):
+        raise NotImplementedError(XCOM_INDEX_REFUSAL)
+
+    def map(self, *_args, **_kwargs):
+        raise NotImplementedError(MAPPING_REFUSAL)
+
+    def zip(self, *_args, **_kwargs):
+        raise NotImplementedError(MAPPING_REFUSAL)
+
+    def resolve(self, *_args, **_kwargs):
+        raise NotImplementedError(
+            "XComArg.resolve() while the DAG file is parsed: the value only exists "
+            "when the task runs")
 
 
 def _as_operator(node):
@@ -227,6 +255,9 @@ class BaseOperator(_DependencyMixin):
     def __init__(self, task_id, **kwargs):
         self.upstream_task_ids: set[str] = set()
         self.downstream_task_ids: set[str] = set()
+        # The kwargs the task passed itself, so the compiler can tell them from
+        # the DAG's default_args (Airflow fills only what the task leaves out).
+        self.__leoflow_own__ = frozenset(kwargs)
         self.trigger_rule = kwargs.get("trigger_rule", "all_success")
         for key, value in kwargs.items():
             setattr(self, key, value)
@@ -239,6 +270,16 @@ class BaseOperator(_DependencyMixin):
             target.add_task(self)
         else:
             self.task_id = task_id
+
+    @property
+    def output(self):
+        """The task's return value as an XComArg, as on Airflow
+        (``process(extract_op.output)``)."""
+        return XComArg(self)
+
+    @classmethod
+    def partial(cls, *_args, **_kwargs):
+        raise NotImplementedError(MAPPING_REFUSAL)
 
     def _link(self, others, downstream: bool):
         for other in _as_list(others):
@@ -253,6 +294,27 @@ class BaseOperator(_DependencyMixin):
             downs.upstream_task_ids.add(ups.task_id)
             ups.downstream_task_ids.add(downs.task_id)
         return others
+
+
+# DAG arguments the shim records only so the compiler can refuse a value other
+# than Airflow's default (#2449), with that default.
+_REFUSED_DAG_KWARGS = {
+    "end_date": None,
+    "on_failure_callback": None,
+    "on_success_callback": None,
+    "sla_miss_callback": None,
+    "fail_fast": False,
+    "fail_stop": False,
+    "render_template_as_native_obj": False,
+    "user_defined_macros": None,
+    "user_defined_filters": None,
+    "template_searchpath": None,
+    "template_undefined": None,
+    "jinja_environment_kwargs": None,
+    "deadline": None,
+    "access_control": None,
+    "allowed_run_types": None,
+}
 
 
 class DAG:
@@ -295,6 +357,10 @@ class DAG:
         # (#2336). Airflow's defaults when unset.
         self.dagrun_timeout = kwargs.get("dagrun_timeout")
         self.max_consecutive_failed_dag_runs = kwargs.get("max_consecutive_failed_dag_runs", 0)
+        # More arguments that were dropped without a word (#2449), kept for the
+        # same refusal. Airflow's defaults when unset.
+        for name, default in _REFUSED_DAG_KWARGS.items():
+            setattr(self, name, kwargs.get(name, default))
         # Collect on construction too, so DAGs defined without `with` (e.g.
         # module-level `dag = DAG(...)` with operators attached via dag=) are seen.
         COLLECTED[dag_id] = self

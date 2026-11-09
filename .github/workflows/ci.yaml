@@ -1952,3 +1952,9 @@ jobs:
       # dag.py (#484): the Airflow-free runtime job cannot import one.
       - name: Operator callback contract
         run: python -m pytest runtime/python/tests/test_task_sdk_operator_callback.py -q
+      # Every BaseOperator and DAG argument of the pinned Task SDK is mapped,
+      # refused or ignored on purpose by the parser (#2449): a pin bump that adds
+      # one fails here instead of compiling DAGs that silently drop it.
+      - name: Parser argument guard
+        working-directory: parser
+        run: python -m pytest tests/test_task_sdk_argument_guard.py -q
