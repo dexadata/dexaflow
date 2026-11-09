@@ -236,7 +236,7 @@ drains and auto-upgrades stall), so it is only safe-by-default above one.
 {{/*
 Replicas of the split scheduler Deployment (#2316, ADR 0105): 1, a single
 leader, or 2, a leader and a standby waiting on the same advisory lock, as the
-non-split replicaCount: 2 does. Before 0.5.11 the chart pinned it to 1 and
+non-split replicaCount: 2 does. Before 0.5.10 the chart pinned it to 1 and
 ignored the value, so a value file may carry any number left over from then:
 refuse everything but 1 and 2 rather than start that many schedulers on an
 upgrade. A third replica adds nothing a second does not, since only one leads.
@@ -248,7 +248,7 @@ upgrade. A third replica adds nothing a second does not, since only one leads.
 {{- else -}}
 {{- $n := toString $raw -}}
 {{- if not (has $n (list "1" "2")) -}}
-{{- fail (printf "split.scheduler.replicaCount must be 1 (a single leader) or 2 (a leader and a standby), got %q. Only one scheduler leads at a time, so a third replica adds a pod and no failover. Charts before 0.5.11 ignored this value and always ran one scheduler; set it to 1 to keep that, or 2 for dispatch failover in split mode. See ADR 0105." $n) -}}
+{{- fail (printf "split.scheduler.replicaCount must be 1 (a single leader) or 2 (a leader and a standby), got %q. Only one scheduler leads at a time, so a third replica adds a pod and no failover. Charts before 0.5.10 ignored this value and always ran one scheduler; set it to 1 to keep that, or 2 for dispatch failover in split mode. See ADR 0105." $n) -}}
 {{- end -}}
 {{- $n -}}
 {{- end -}}

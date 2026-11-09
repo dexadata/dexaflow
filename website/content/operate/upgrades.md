@@ -1307,6 +1307,26 @@ migrate -path migrations -database "$DATABASE_URL" goto 56
 That restores `gen_random_uuid()` as the default and drops the function. Ids
 already made as UUIDv7 stay as they are and keep working.
 
+### Upgrading to 0.5.9: the UI refreshes every 5 seconds
+
+The bundled UI now polls DAG, run and task-instance state every 5 seconds
+instead of 30 when `ui.autoRefreshIntervalSeconds` is unset
+([#1196](https://github.com/dexadata/dexaflow/issues/1196),
+[#2245](https://github.com/dexadata/dexaflow/pull/2245)). An open DAG or run
+page with a run in progress costs about 27 database transactions per refresh,
+so the same number of open tabs puts about six times the UI load on the
+metadata database; one api process serves about 1,400 such tabs at 5 seconds
+([Experiment 4](https://github.com/dexadata/dexaflow/blob/main/test/load/BASELINE.md#ui-refresh-cycle)).
+An install that already sets the value keeps it. To keep the old cadence, set
+it before upgrading:
+
+```yaml
+ui:
+  autoRefreshIntervalSeconds: 30
+```
+
+Rolling back to 0.5.8 or earlier restores 30 seconds unless the value is set.
+
 ### Upgrading to 0.5.10: the install profile
 
 0.5.10 adds a chart value, `profile`
@@ -1342,9 +1362,9 @@ heartbeats could stall while the reapers kept running on their own pool; the
 agent pool and the heartbeat reaper's mass-silence hold close that
 ([#1624](https://github.com/dexadata/dexaflow/issues/1624)).
 
-### Upgrading to 0.5.11: row level security policies
+### Upgrading to 0.5.10: row level security policies
 
-0.5.11 applies one migration, 059.
+0.5.10 applies one migration, 059.
 
 - **`059_tenant_row_security`** creates the function `dexaflow_bound_tenant()`
   and a policy `dexaflow_tenant_barrier` on each of the sixteen tables with a
@@ -1355,7 +1375,7 @@ agent pool and the heartbeat reaper's mass-silence hold close that
   Creating a policy locks its table for an instant; the transaction waits at
   most 5 seconds for each lock.
 
-**Rolling back 0.5.11.** The previous control plane boots against schema 059
+**Rolling back 0.5.10.** The previous control plane boots against schema 059
 with the warning `database schema is ahead of this binary; proceeding`. It
 never binds a connection, so it passes every policy even with row level
 security on. The down migration turns row level security off on every tenant
@@ -1366,12 +1386,12 @@ policy:
 migrate -path migrations -database "$DATABASE_URL" goto 58
 ```
 
-### Upgrading to 0.5.11: a trigger at max_active_runs is queued
+### Upgrading to 0.5.10: a trigger at max_active_runs is queued
 
 A manual trigger of a DAG that already has `max_active_runs` runs queued or
 running is now accepted with the run in `queued`, as Airflow does
 ([#2426](https://github.com/dexadata/dexaflow/issues/2426)); the scheduler
-starts it when a slot frees, oldest logical date first. Until 0.5.11 it
+starts it when a slot frees, oldest logical date first. Until 0.5.10 it
 answered 409 (`dag "x" is at max_active_runs cap of N`). The same holds for
 `dexaflow runs trigger`, `dexaflow deploy --trigger` and any script that calls
 `POST /api/v2/dags/{dag_id}/dagRuns`.
@@ -1382,10 +1402,10 @@ before triggering (`GET /api/v2/dags/{dag_id}/dagRuns?state=queued&state=running
 Scheduled runs are unchanged: the schedule still creates none while the DAG is
 at the cap. The tenant's `max_runs_per_day` still refuses a trigger with 403.
 
-### Upgrading to 0.5.11: max_active_tasks is compiled, per DAG run
+### Upgrading to 0.5.10: max_active_tasks is compiled, per DAG run
 
 `max_active_tasks` on `DAG(...)` or `@dag(...)` now reaches the scheduler
-([#2427](https://github.com/dexadata/dexaflow/issues/2427)). Until 0.5.11 the
+([#2427](https://github.com/dexadata/dexaflow/issues/2427)). Until 0.5.10 the
 compiler dropped it, so a DAG that set it ran without a cap. It is a cap per
 DAG run, as in Airflow 3: each run may have that many task instances queued or
 running at once.
@@ -1401,7 +1421,7 @@ running at once.
 The UI and `GET /api/v2/dags/{dag_id}/details` show the DAG's own value, or
 nothing when it sets none, instead of a constant 16.
 
-### Upgrading to 0.5.12: the live log tail is published on demand
+### Upgrading to 0.5.10: the live log tail is published on demand
 
 Under the `cluster` profile, `logs.tail.publish` now renders `on_demand` when
 it is unset ([#2356](https://github.com/dexadata/dexaflow/issues/2356)): a
@@ -1413,32 +1433,13 @@ since the last check are replayed when it is noticed, at most a second later.
 
 | Your install | What the upgrade does |
 |---|---|
-| A release installed with 0.5.10 or later (`cluster`) | Switches to `on_demand`. Safe during the rolling upgrade: every version since 0.5.1 skips the replayed lines it already served. |
+| A fresh install, or a release you move to `profile=cluster` | Publishes `on_demand`. Safe during the rolling upgrade: every version since 0.5.1 skips the replayed lines it already served. |
 | A release from before 0.5.10 (`legacy`) | Nothing changes. |
 | You want to keep publishing every line | Set `logs.tail.publish: always`. |
 
 Every log stream also publishes from its own queue now, in batches of up to
 256 lines per Redis round trip, so a follower costs a chatty task far less
 receive rate than before, under either mode.
-
-### Upgrading to 0.6.0: the UI refreshes every 5 seconds
-
-The bundled UI now polls DAG, run and task-instance state every 5 seconds
-instead of 30 when `ui.autoRefreshIntervalSeconds` is unset
-([#1196](https://github.com/dexadata/dexaflow/issues/1196)). An open DAG or run
-page with a run in progress costs about 27 database transactions per refresh,
-so the same number of open tabs puts about six times the UI load on the
-metadata database; one api process serves about 1,400 such tabs at 5 seconds
-([Experiment 4](https://github.com/dexadata/dexaflow/blob/main/test/load/BASELINE.md#ui-refresh-cycle)).
-An install that already sets the value keeps it. To keep the old cadence, set
-it before upgrading:
-
-```yaml
-ui:
-  autoRefreshIntervalSeconds: 30
-```
-
-Rolling back to 0.5.x restores 30 seconds unless the value is set.
 
 ## Ephemeral database loss (emptyDir Postgres)
 

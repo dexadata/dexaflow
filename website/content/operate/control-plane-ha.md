@@ -120,7 +120,7 @@ in steady state. Nothing is lost, only detected later.
 A fresh install renders the chart's `cluster` profile: buffered dispatch,
 raised Kubernetes client limits with a separate maintenance client,
 `GOMEMLIMIT` from the memory limit, and the live log tail published only while
-someone follows an attempt (`logs.tail.publish: on_demand`, from 0.5.12). An upgrade keeps the profile the release
+someone follows an attempt (`logs.tail.publish: on_demand`, from 0.5.10). An upgrade keeps the profile the release
 was installed with, so releases from before 0.5.10 stay on `legacy` until you
 set `profile: cluster`. The HA overlay below is independent of it. See
 [Upgrading to 0.5.10](/operate/upgrades/#upgrading-to-0510-the-install-profile).
@@ -222,7 +222,7 @@ split:
 - Both mount the logs volume, so the logs go to object storage or a
   ReadWriteMany PVC.
 - Only `1` and `2` are accepted: one replica leads at a time, so a third adds
-  nothing. Charts before 0.5.11 ignored the value and always ran one scheduler,
+  nothing. Charts before 0.5.10 ignored the value and always ran one scheduler,
   and a leftover value other than `1` or `2` now fails the render instead of
   starting that many.
 

@@ -9,4 +9,4 @@ body: |-
   (1,024 lines and 1 MiB per stream) and never drops a line. The chart's
   `cluster` profile now also renders `logs.tail.publish: on_demand` when the
   value is unset, so lines are published only while someone follows the
-  attempt; `legacy` keeps `always`. See the upgrade notes for 0.5.12. (#2356)
+  attempt; `legacy` keeps `always`. See the upgrade notes for 0.5.10. (#2356)

@@ -44,7 +44,7 @@ has a typed case for it rather than an unknown status.
 `POST /api/v2/dags/{dag_id}/dagRuns` creates the run whatever the number of
 active runs of the DAG, as Airflow does: it answers 201 with the run in
 `queued`, and the scheduler starts it when fewer than `max_active_runs` runs of
-the DAG are running, oldest logical date first. Before 0.5.11 a trigger at the
+the DAG are running, oldest logical date first. Before 0.5.10 a trigger at the
 cap answered 409 (`dag "x" is at max_active_runs cap of N`). The tenant's own
 limits are still refusals: `max_runs_per_day` answers 403 and a suspended
 tenant answers 409.

@@ -46,7 +46,7 @@ split:
     # -- Mount the ServiceAccount token into the api pods. Off: the api role never calls the Kubernetes API and its ServiceAccount is bound to no Role, so the token is unused. Turn it on only for a sidecar that reads the default token mount. The scheduler (and the single `all` Deployment when split is off) always keeps its token, because it creates the task pods. Ignored unless split.enabled.
     automountServiceAccountToken: false
   scheduler:
-    # -- Scheduler Deployment replicas: `1` (a single leader, the default) or `2` (a leader and a standby that waits on the same advisory lock, as the non-split `replicaCount: 2` does, ADR 0105). With `2` the chart adds a PodDisruptionBudget for the scheduler, so a drain evicts the leader only while the standby is up, and the standby takes the lock within seconds after the leader goes. Both replicas mount the logs volume, so `2` needs object storage or a ReadWriteMany logs PVC. Any other value fails the render; charts before 0.5.11 ignored this value and always ran one. Ignored unless split.enabled.
+    # -- Scheduler Deployment replicas: `1` (a single leader, the default) or `2` (a leader and a standby that waits on the same advisory lock, as the non-split `replicaCount: 2` does, ADR 0105). With `2` the chart adds a PodDisruptionBudget for the scheduler, so a drain evicts the leader only while the standby is up, and the standby takes the lock within seconds after the leader goes. Both replicas mount the logs volume, so `2` needs object storage or a ReadWriteMany logs PVC. Any other value fails the render; charts before 0.5.10 ignored this value and always ran one. Ignored unless split.enabled.
     replicaCount: 1
 
 # -- Namespace where the control plane creates task pods + per-run staging PVCs.
