@@ -160,6 +160,19 @@ def alert(context):
 def transform(): ...
 ```
 
+Set it in the DAG's `default_args` to arm every task of the DAG, as in Airflow.
+A task that passes its own callback keeps it, and `on_failure_callback=None` on a
+task opts that task out. A bash task cannot run a Python callback (bash replaces
+the task's process), so a callback inherited by one fails the compile with the
+task named: opt it out with `on_failure_callback=None`, or alert through the
+`alerts:` block. `on_success_callback` and `on_retry_callback` are refused at
+compile, on a task or in `default_args`.
+
+```python
+@dag(schedule="@daily", default_args={"on_failure_callback": alert, "retries": 2})
+def sales(): ...
+```
+
 How it differs from the `alerts:` block:
 
 | | `alerts:` block | `on_failure_callback` |

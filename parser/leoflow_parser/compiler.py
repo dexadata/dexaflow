@@ -564,7 +564,7 @@ def _map_task(task, source: str, dag=None) -> dict[str, Any]:
         if operator_args:
             _check_literal_payload_size(task.task_id, "operator_args", operator_args)
             entry["operator_args"] = operator_args
-    _check_callbacks(task, task_type, entry)
+    _check_callbacks(task, task_type, entry, dag)
     if task_type == "airflow_operator" and entry.get(_ON_FAILURE_CALLBACK):
         # The callable cannot travel in operator_args, so the runtime imports
         # this module on the final failed attempt and reads it off the task (#484).
@@ -612,6 +612,25 @@ def _is_callback(value) -> bool:
     return False
 
 
+def _sets_own(task, name: str) -> bool:
+    """Report whether the task passes ``name`` itself, even as None. Airflow fills
+    an operator kwarg from the DAG's default_args only when the operator does not
+    pass it, so an explicit ``on_failure_callback=None`` opts a task out."""
+    if name in vars(task):
+        return True
+    return name in (getattr(task, "__leoflow_args__", {}) or {})
+
+
+def _inherited_callback(task, dag, name: str) -> bool:
+    """Report whether the task gets callback ``name`` from the DAG's default_args.
+    Airflow applies default_args to every operator of the DAG, callbacks included,
+    so ``default_args={"on_failure_callback": notify}`` arms every task that does
+    not pass its own."""
+    if dag is None or _sets_own(task, name):
+        return False
+    return _is_callback((getattr(dag, "default_args", None) or {}).get(name))
+
+
 def _has_callback(task, name: str) -> bool:
     """Report whether the task declares ``name``. Native tasks store it as an
     attribute (the shim setattrs every kwarg); a generically-captured operator
@@ -627,24 +646,37 @@ def _has_callback(task, name: str) -> bool:
     return _is_callback((getattr(task, "__leoflow_args__", {}) or {}).get(name))
 
 
-def _check_callbacks(task, task_type: str, entry: dict) -> None:
+def _check_callbacks(task, task_type: str, entry: dict, dag=None) -> None:
     """Resolve Airflow lifecycle callbacks (#424). ``on_failure_callback`` is marked
     on a Python-path task (operator or @task) so the runtime runs it; on a bash task
     it is a loud reject (no Python is left to run it). ``on_success_callback`` /
     ``on_retry_callback`` are unsupported everywhere and always a loud reject —
-    never a silent drop, which would leave the author thinking their callback runs."""
+    never a silent drop, which would leave the author thinking their callback runs.
+
+    A callback in the DAG's default_args counts as the task's own, as in Airflow
+    (#2441): it used to be dropped without a word."""
     for name in ("on_success_callback", "on_retry_callback"):
-        if _has_callback(task, name):
+        inherited = _inherited_callback(task, dag, name)
+        if _has_callback(task, name) or inherited:
+            origin = " (inherited from the DAG's default_args)" if inherited else ""
             raise ValueError(
-                f"{name} on task {task.task_id!r} is not supported by Dexaflow yet — "
-                "refusing to silently drop it. Use an alerts: block in dexaflow.yaml, "
-                "or a downstream @task with a trigger_rule.")
-    if not _has_callback(task, _ON_FAILURE_CALLBACK):
+                f"{name} on task {task.task_id!r}{origin} is not supported by Dexaflow "
+                "yet, refusing to silently drop it. Use an alerts: block in "
+                "dexaflow.yaml, or a downstream @task with a trigger_rule.")
+    inherited = _inherited_callback(task, dag, _ON_FAILURE_CALLBACK)
+    if not (_has_callback(task, _ON_FAILURE_CALLBACK) or inherited):
         return
     if task_type in _CALLBACK_CAPABLE_TYPES:
         entry[_ON_FAILURE_CALLBACK] = True
         return
     # bash execs bash in place (no Python left), so it cannot run a Python callback.
+    if inherited:
+        raise ValueError(
+            f"on_failure_callback from the DAG's default_args applies to task "
+            f"{task.task_id!r} (type {task_type}), which cannot run it: a bash task "
+            "leaves no Python to call it. Pass on_failure_callback=None on that task "
+            "to opt it out, or use an alerts: block in dexaflow.yaml, or a downstream "
+            "@task with trigger_rule='one_failed'.")
     raise ValueError(
         f"on_failure_callback on task {task.task_id!r} (type {task_type}) cannot run: "
         "only a Python-executed task runs it in-process (a provider operator or a "

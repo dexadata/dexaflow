@@ -428,9 +428,12 @@ issue.
   rendered in the pod
   ([ADR 0084](/project/adrs/0084-template-render-errors-fail-the-task/)).
 - **`default_args` in `dag.py`**: only `retries`, `retry_delay`,
-  `execution_timeout`, `pool` and `pool_slots` are read from it. Set everything else per task, or in
-  `dexaflow.yaml`'s `tasks.<id>:` override block, which is checked at compile
-  time.
+  `execution_timeout`, `pool`, `pool_slots` and `on_failure_callback` are read
+  from it ([the callback](/author-dags/alerting/#the-airflow-on_failure_callback)
+  arms every task that does not set its own; before 0.5.10 it was dropped).
+  `on_success_callback` and `on_retry_callback` are refused there. Set
+  everything else per task, or in `dexaflow.yaml`'s `tasks.<id>:` override
+  block, which is checked at compile time.
 
 ### Run parameters and their schemas
 
