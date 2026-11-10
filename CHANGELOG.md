@@ -8,6 +8,19 @@ adhere to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 
+- **`dexaflow compile` accepts `EmptyOperator`, `chain`, `cross_downstream`,
+  `Label`, a top-level `Variable` import and `@task.bash`.** These failed with
+  an opaque error, so a typical start and end style DAG did not compile.
+  `EmptyOperator` compiles to a bash task that runs `true`. `chain` and
+  `cross_downstream` wire edges as on Airflow, and an edge `Label` wires its
+  edge and drops the text. `from airflow.sdk import Variable` compiles; calling
+  `Variable.get` at module level is refused with a message that says to call it
+  inside the task. A `@task.bash` function runs in the pod and the command it
+  returns runs with bash, rendered with the run context. A list on the left of
+  `>>` (`[a, b] >> c`), which raised a `TypeError`, now wires both edges.
+  `from airflow.sdk import EmptyOperator` is refused with the right module,
+  since Airflow has no such name and the task image could not import it (#2337).
+
 - **Build and queue wait metrics.** `dexaflow_build_info` carries the version,
   commit, Go version and role of every process, so a rollout that left a
   replica on another version shows (#2299). `dexaflow_task_queue_wait_seconds`
@@ -86,6 +99,52 @@ adhere to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   any 0.5.x or 0.6.x (#2311).
 
 ### Changed
+
+- **A Python task's arguments are rendered as Jinja templates, as on Airflow.**
+  The literal arguments of a `@task` call and a `PythonOperator`'s `op_args`
+  and `op_kwargs` reached the function as written, so
+  `op_kwargs={"day": "{{ ds }}"}` passed the text `{{ ds }}`. They are now
+  rendered with the run context before the call, inside lists and dicts too,
+  and a value that cannot render fails the attempt with the argument named
+  (#2447). A literal string that contains `{{` or `{%` and was meant as plain
+  text needs a `{% raw %}` block.
+- **`ti.xcom_pull` raises for a value Dexaflow does not deliver, and works in
+  Python tasks.** A `PythonOperator` or `@task` callable that pulled an
+  upstream with `ti.xcom_pull` always got `None`; it now gets the upstream's
+  return value, as a provider operator did. A pull of a task that is not an
+  upstream, of a custom key, of another DAG, or of an upstream value too large
+  for the environment raised nothing and returned `None`; it now raises
+  `XComNotDeliveredError` naming the fix (#2452).
+- **Common Airflow 3 imports compile, and the rest say what to do (#2451).**
+  `import pendulum`, the exceptions in `airflow.exceptions` and
+  `airflow.sdk.exceptions`, `TriggerRule`, `BaseSensorOperator`, `BaseHook`,
+  `Context`, `ObjectStoragePath` and the other names a DAG file imports for its
+  structure or its type hints now compile, as do `op.output` and the pre-3
+  modules `airflow.models.dag` and `airflow.hooks.base`. Decorators and
+  operators Dexaflow does not run (`@task.virtualenv`, `@task.short_circuit`,
+  `@task.sensor`, `ShortCircuitOperator`, `.expand_kwargs` and others), assets,
+  timetables, Cosmos and custom operator classes are refused with a message
+  that names the construct, the workaround and the tracking issue. A module
+  missing from the Python that compiles the DAG is reported as such.
+- **Airflow arguments and operators Dexaflow cannot honor are refused at
+  compile, no longer dropped (#2448, #2449, #2450).** Refused when set to
+  anything but their default, on a task or in `default_args`: `email`,
+  `executor_config`, `resources`, `queue`, `executor`, `run_as_user`,
+  `weight_rule`, `retry_exponential_backoff`, `max_retry_delay`,
+  `retry_policy`, `sla`, `end_date`, `pre_execute`, `post_execute`, `inlets`,
+  `outlets`, `on_execute_callback` and `on_skipped_callback`. On the DAG:
+  `schedule=timedelta(...)`, `schedule="@continuous"`, `end_date`,
+  `on_failure_callback`, `on_success_callback`, `sla_miss_callback`,
+  `fail_fast`, `deadline`, `access_control`, `allowed_run_types` and the
+  template options (`render_template_as_native_obj`, `user_defined_macros`,
+  `user_defined_filters`, `template_searchpath`, `template_undefined`,
+  `jinja_environment_kwargs`). Operators: `KubernetesPodOperator` and the
+  other pod operators, `DockerOperator`, the human in the loop operators,
+  `@task.docker` and `@task.kubernetes`, and a subclass of a provider operator,
+  which ran as its parent. Upgrade note: a DAG that compiled before with one
+  of these now fails `dexaflow compile` with a message naming the argument and
+  what to do instead; it was running without it. A test now walks every
+  argument of the pinned Task SDK, so a new one cannot be dropped again.
 
 - **A followed task's log stream no longer waits for Redis on every line.**
   Each log stream now publishes its live-tail lines from a queue of its own,
@@ -188,6 +247,20 @@ adhere to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   needs the change the message names.
 
 ### Fixed
+
+- **A task receives the run's data interval.** No run stored
+  `data_interval_start` or `data_interval_end`, so every task saw `None` for
+  both, and a template such as `WHERE ts >= '{{ data_interval_start }}'`
+  rendered the text `None`, while the REST API showed the logical date. A run
+  now stores the logical date at both ends, Airflow 3's default for a cron
+  schedule, and a run created before the upgrade gets the same values when its
+  tasks start (#2446).
+- **`trigger_rule` in the DAG's `default_args` is applied (#2448).** A task that
+  does not set its own trigger rule now takes the one in `default_args`, as in
+  Airflow. Before, it was dropped and every task ran as `all_success`. A
+  `start_date` in `default_args` is now the DAG's start date when the DAG sets
+  none, and a PythonOperator's or `@task`'s `templates_dict` is carried to the
+  task (#2447).
 
 - **Grid duration axis label.** The DAG grid labelled its duration axis with a
   floating point remainder, such as `00:00:08.2.0000000000009095`, whenever the
