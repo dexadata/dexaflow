@@ -5,6 +5,7 @@ import functools
 
 from airflow._core import (
     DAG,
+    MAPPING_REFUSAL,
     BaseOperator,
     Label,
     Param,
@@ -12,6 +13,22 @@ from airflow._core import (
     XComArg,
     chain,
     cross_downstream,
+)
+from airflow._names import (
+    BaseHook,
+    BaseNotifier,
+    BaseSensorOperator,
+    Connection,
+    Context,
+    Metadata,
+    ObjectStoragePath,
+    ParamsDict,
+    PokeReturnValue,
+    TriggerRule,
+    WeightRule,
+    get_current_context,
+    get_parsing_context,
+    literal,
 )
 
 # EmptyOperator is not exported: Airflow's airflow.sdk has no such name, so a DAG
@@ -29,6 +46,20 @@ __all__ = [
     "task",
     "dag",
     "PythonOperator",
+    "BaseHook",
+    "BaseNotifier",
+    "BaseSensorOperator",
+    "Connection",
+    "Context",
+    "Metadata",
+    "ObjectStoragePath",
+    "ParamsDict",
+    "PokeReturnValue",
+    "TriggerRule",
+    "WeightRule",
+    "get_current_context",
+    "get_parsing_context",
+    "literal",
 ]
 
 
@@ -110,9 +141,10 @@ def _task_factory(func, op_class, dec_kwargs, *, mappable):
     maker.override = override
     if mappable:
         def _no_dynamic_mapping(*_a, **_k):
-            raise NotImplementedError("dynamic task mapping (.expand/.partial)")
+            raise NotImplementedError(MAPPING_REFUSAL)
 
         maker.expand = _no_dynamic_mapping
+        maker.expand_kwargs = _no_dynamic_mapping
         maker.partial = _no_dynamic_mapping
     return maker
 
@@ -150,10 +182,57 @@ def _task_bash(fn=None, **dec_kwargs):
     return wrap(fn) if callable(fn) else wrap
 
 
+_DEPENDENCIES_ADVICE = (
+    "declare the packages in dexaflow.yaml dependencies: and use @task, which runs "
+    "in the DAG's image")
+_IMAGE_TASK_ADVICE = (
+    "run the work as a task of the DAG's own image (a @task, or a BashOperator "
+    "calling the tool), with its dependencies declared in dexaflow.yaml")
+
+# TaskFlow decorators Dexaflow cannot run (#2450, #2451), each with why and
+# what to do instead. Using one raises at decoration, which the compiler reports
+# with the message as given.
+_REFUSED_DECORATORS = {
+    "docker": ("needs a Docker daemon, which a task pod does not have",
+               _IMAGE_TASK_ADVICE),
+    "kubernetes": ("starts a pod of its own, outside the admission, pools, secret "
+                   "scoping and log capture Dexaflow applies to every task",
+                   _IMAGE_TASK_ADVICE),
+    "virtualenv": ("builds a virtualenv per task", _DEPENDENCIES_ADVICE),
+    "external_python": ("runs another interpreter", _DEPENDENCIES_ADVICE),
+    "pyspark": ("needs a Spark session from a Spark connection",
+                "create the session inside a @task"),
+    "short_circuit": ("skips downstream tasks, which needs skip support Dexaflow "
+                      "does not have yet (#787)",
+                      "fail fast in a @task, or split the DAG"),
+    "sensor": ("needs the sensor poke loop around a function (#2339)",
+               "use a provider sensor in reschedule mode, or a @task that polls "
+               "with a bounded loop"),
+    "run_if": ("skips the task on a condition, which needs skip support Dexaflow "
+               "does not have yet (#2347)",
+               "check the condition at the start of the @task and return early"),
+    "skip_if": ("skips the task on a condition, which needs skip support Dexaflow "
+                "does not have yet (#2347)",
+                "check the condition at the start of the @task and return early"),
+}
+
+
+def _refused_decorator(name):
+    why, advice = _REFUSED_DECORATORS[name]
+
+    def refuse(*_args, **_kwargs):
+        raise NotImplementedError(
+            f"@task.{name} {why}, so it is not supported by Dexaflow: {advice}")
+
+    return refuse
+
+
 # @task.branch and @task.bash are attributes of the @task decorator in the
-# TaskFlow API.
+# TaskFlow API; so are the decorators refused above.
 task.branch = _task_branch
 task.bash = _task_bash
+for _name in _REFUSED_DECORATORS:
+    setattr(task, _name, _refused_decorator(_name))
 
 
 def dag(dag_id=None, **dag_kwargs):

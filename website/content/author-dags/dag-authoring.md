@@ -120,6 +120,24 @@ objects, so a migrated DAG compiles unchanged:
 - `from airflow.decorators import task, dag` → the `airflow.sdk` decorators.
 - `from airflow import DAG` → `airflow.sdk.DAG`.
 
+The names a DAG file usually imports only for its structure or its type hints
+also compile from 0.5.11: the exceptions in `airflow.exceptions` and
+`airflow.sdk.exceptions`, `TriggerRule`, `WeightRule`, `BaseSensorOperator`,
+`PokeReturnValue`, `BaseHook`, `Connection`, `Context`, `ParamsDict`,
+`Metadata`, `ObjectStoragePath`, `get_parsing_context`, `literal`, and the
+pre-3 modules `airflow.models.dag`, `airflow.models.baseoperator`,
+`airflow.hooks.base` and `airflow.utils.trigger_rule`. `import pendulum` works
+for `pendulum.datetime(..., tz=...)`, `pendulum.duration(...)` and
+`pendulum.timezone(...)`, so `start_date` can be written as in the Airflow
+docs. `get_current_context()`, `BaseHook.get_connection()` and
+`Connection.get()` work inside a task body; called at module level they are
+refused, because no run exists while the file is compiled. `op.output` is the
+task's return value, as in Airflow.
+
+A module the compile cannot import is reported as missing from the Python that
+compiles the DAG, not as a Dexaflow limitation: import it inside the task body,
+which runs only in the task image, or install it where `dexaflow compile` runs.
+
 The core `airflow.operators.*` operators, however, were **removed** from Airflow
 in 3.0 and relocated to `apache-airflow-providers-standard`. Importing one (e.g.
 `from airflow.operators.bash import BashOperator`) fails the compile with a
@@ -424,9 +442,17 @@ issue.
   ([ADR 0103](/project/adrs/0103-cross-dag-dependencies-in-the-scheduler/),
   [#2340](https://github.com/dexadata/dexaflow/issues/2340),
   [#2348](https://github.com/dexadata/dexaflow/issues/2348)).
-- **Assets** (`schedule=[Asset(...)]`, `outlets=`): not implemented; the
-  import fails at compile. A design is tracked in
-  [#2352](https://github.com/dexadata/dexaflow/issues/2352).
+- **Assets** (`schedule=[Asset(...)]`, `@asset`, `inlets=`, `outlets=`): not
+  implemented; the import, or the argument, is refused at compile with a
+  pointer to [#2352](https://github.com/dexadata/dexaflow/issues/2352), where a
+  design is tracked.
+- **`schedule=timedelta(...)` and `schedule="@continuous"`**: refused at
+  compile from 0.5.11. Before, the DAG compiled with no schedule and only ran
+  when triggered. Use a cron string or a preset, for example `"*/30 * * * *"`
+  for every 30 minutes.
+- **`end_date`**, on the DAG, on a task or in `default_args`: refused at
+  compile from 0.5.11; it was dropped and the DAG kept running. Pause the DAG
+  when it should stop.
 - **Timetables** (`CronTriggerTimetable`, `EventsTimetable`, custom ones):
   refused. Use a cron string or a preset such as `@daily`.
   `CronTriggerTimetable` is planned in
@@ -447,6 +473,15 @@ issue.
   paused after failed runs, so the DAG behaved as if they were unset. Their
   defaults (`None`, `0`) still compile. Use `execution_timeout` on the tasks
   to bound a run.
+- **More DAG arguments Dexaflow does not honor**, refused at compile from
+  0.5.11 when set to anything but their default: `on_failure_callback` and
+  `on_success_callback` on the DAG (put `on_failure_callback` in
+  `default_args` so every task runs it, or use an `alerts:` block),
+  `sla_miss_callback`, `fail_fast`, `deadline`, `access_control` (access
+  follows Dexaflow's roles), `allowed_run_types`, and the template options
+  `render_template_as_native_obj`, `user_defined_macros`,
+  `user_defined_filters`, `template_searchpath`, `template_undefined` and
+  `jinja_environment_kwargs`. Each was dropped without a word before.
 - **`concurrency=` on the DAG**: refused at compile; Airflow 3 removed it. Use
   [`max_active_tasks`](#task-concurrency-per-run-max_active_tasks), a cap per
   DAG run.
@@ -472,12 +507,32 @@ issue.
   Python process, so nothing is left to run the callback; use a `@task` that
   runs the command with `subprocess`, or a downstream task with
   `trigger_rule="one_failed"`.
-- **Virtualenv operators** (`PythonVirtualenvOperator`, `@task.virtualenv`,
-  `@task.external_python`): refused, by design. Each DAG already ships as its
-  own image with its own dependencies.
-- **KubernetesPodOperator**: refused, by design. Every Dexaflow task already
-  runs in its own pod, and an author-controlled pod spec is the escalation
-  surface the pod-per-task model exists to contain.
+- **Virtualenv operators** (`PythonVirtualenvOperator`,
+  `ExternalPythonOperator`, `@task.virtualenv`, `@task.external_python`):
+  refused, by design. Each DAG already ships as its own image with its own
+  dependencies; declare them in `dexaflow.yaml` and use `@task`.
+- **KubernetesPodOperator** (and `KubernetesJobOperator`,
+  `GKEStartPodOperator`, `EksPodOperator`, `@task.kubernetes`, subclasses
+  included): refused, by design. Every Dexaflow task already runs in its own
+  pod, and an author-controlled pod spec is the escalation surface the
+  pod-per-task model exists to contain. Before 0.5.11 it compiled once the
+  provider was declared, and then failed in the pod or ran outside admission.
+- **`DockerOperator`, `DockerSwarmOperator` and `@task.docker`**: refused from
+  0.5.11; a task pod has no Docker daemon. Run the work as a task of the DAG
+  image.
+- **Human in the loop operators** (`HITLOperator`, `ApprovalOperator`,
+  `HITLBranchOperator`, `HITLEntryOperator`): refused from 0.5.11. They need
+  the Airflow API server and a triggerer.
+- **A subclass of a provider operator** (`class AuditedSQL(SQLExecuteQueryOperator)`):
+  refused from 0.5.11. The pod ran the parent class by its class path, so
+  every override was lost. Call the provider operator from a `@task`, or put
+  the extra logic in a task before or after it.
+- **A custom operator class** written in the project (a `BaseOperator` or
+  `BaseSensorOperator` subclass): refused. Move the logic of its `execute` into
+  a `@task`.
+- **`@task.pyspark`, `@task.run_if` and `@task.skip_if`**: refused, each with
+  its own message. Create the Spark session inside a `@task`; check a condition
+  at the start of the task and return early.
 
 **Python authoring**
 
@@ -486,18 +541,27 @@ issue.
   `dag.json`. Importing `Variable` at the top of the file is fine; call
   `Variable.get` inside the task, or use `{{ var.value.<key> }}` in a templated
   field.
-- **`templates_dict=` on `@task`/`PythonOperator`**: not captured. Build the
-  values inside the task from the `airflow.sdk` context. Jinja in an
-  operator's `template_fields` (for example `bash_command="echo {{ ds }}"`) is
-  rendered in the pod
-  ([ADR 0084](/project/adrs/0084-template-render-errors-fail-the-task/)).
-- **`default_args` in `dag.py`**: only `retries`, `retry_delay`,
-  `execution_timeout`, `pool`, `pool_slots` and `on_failure_callback` are read
-  from it ([the callback](/author-dags/alerting/#the-airflow-on_failure_callback)
-  arms every task that does not set its own; before 0.5.10 it was dropped).
-  `on_success_callback` and `on_retry_callback` are refused there. Set
-  everything else per task, or in `dexaflow.yaml`'s `tasks.<id>:` override
-  block, which is checked at compile time.
+- **Indexing a task's output** (`result["key"]`, the `multiple_outputs=True`
+  pattern): refused. Pass the whole result to the downstream task and read the
+  key there.
+- **Task arguments Dexaflow does not honor**, refused at compile from 0.5.11
+  when set on a task or in `default_args` to anything but their default:
+  `email` (use an `alerts:` block; `email_on_failure` and `email_on_retry` do
+  nothing without it and still compile), `retry_exponential_backoff` and
+  `max_retry_delay` (planned in
+  [#2454](https://github.com/dexadata/dexaflow/issues/2454)), `retry_policy`,
+  `sla` (removed in Airflow 3), `executor_config`, `resources` and `queue`
+  (set `size:` or `resources:` in `dexaflow.yaml`), `executor`,
+  `run_as_user`, `weight_rule`, `pre_execute`, `post_execute`,
+  `on_execute_callback` and `on_skipped_callback`. Each was dropped without a
+  word before.
+- **`default_args` in `dag.py`**: `retries`, `retry_delay`,
+  `execution_timeout`, `pool`, `pool_slots`, `trigger_rule` (from 0.5.11) and
+  `on_failure_callback` are applied to every task that does not set its own
+  ([the callback](/author-dags/alerting/#the-airflow-on_failure_callback) was
+  dropped before 0.5.10). `start_date` there is the DAG's start date when the
+  DAG sets none. Every argument above that Dexaflow refuses is refused there
+  too, and `owner` and the `doc*` arguments are accepted and ignored.
 
 ### Run parameters and their schemas
 

@@ -34,11 +34,17 @@ class _CaptureModule(types.ModuleType):
     def __getattr__(self, name: str):
         if name.startswith("__"):
             raise AttributeError(name)
-        from airflow._core import BaseOperator
+        if ".notifications" in self.__name__:
+            # A Notifier (SlackNotifier, SmtpNotifier) is a callback, not a task:
+            # built inside a `with DAG` block it must not register as one (#2449).
+            bases: tuple = (CapturedNotifier,)
+        else:
+            from airflow._core import BaseOperator
 
+            bases = (_GenericCaptured, BaseOperator)
         cls = type(
             name,
-            (_GenericCaptured, BaseOperator),
+            bases,
             {
                 "__leoflow_operator_class__": f"{self.__name__}.{name}",
                 "__module__": self.__name__,
@@ -46,6 +52,20 @@ class _CaptureModule(types.ModuleType):
         )
         setattr(self, name, cls)
         return cls
+
+
+class CapturedNotifier:
+    """Stand-in for an Airflow Notifier: callable like the real one, so a
+    callback check sees it, and marked so the compiler can name it (#2449)."""
+
+    __leoflow_notifier__ = True
+
+    def __init__(self, *args, **kwargs):
+        self.args = args
+        self.kwargs = kwargs
+
+    def __call__(self, *_args, **_kwargs):
+        return None
 
 
 class _GenericCaptured:

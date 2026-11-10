@@ -1,0 +1,9 @@
+kind: Fixed
+body: |-
+  **`trigger_rule` in the DAG's `default_args` is applied (#2448).** A task that
+  does not set its own trigger rule now takes the one in `default_args`, as in
+  Airflow. Before, it was dropped and every task ran as `all_success`. A
+  `start_date` in `default_args` is now the DAG's start date when the DAG sets
+  none, and a PythonOperator's or `@task`'s `templates_dict` is carried to the
+  task (#2447).
+time: 2026-11-09T21:00:00.000000000+00:00

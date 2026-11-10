@@ -1,0 +1,14 @@
+kind: Changed
+body: |-
+  **Common Airflow 3 imports compile, and the rest say what to do (#2451).**
+  `import pendulum`, the exceptions in `airflow.exceptions` and
+  `airflow.sdk.exceptions`, `TriggerRule`, `BaseSensorOperator`, `BaseHook`,
+  `Context`, `ObjectStoragePath` and the other names a DAG file imports for its
+  structure or its type hints now compile, as do `op.output` and the pre-3
+  modules `airflow.models.dag` and `airflow.hooks.base`. Decorators and
+  operators Dexaflow does not run (`@task.virtualenv`, `@task.short_circuit`,
+  `@task.sensor`, `ShortCircuitOperator`, `.expand_kwargs` and others), assets,
+  timetables, Cosmos and custom operator classes are refused with a message
+  that names the construct, the workaround and the tracking issue. A module
+  missing from the Python that compiles the DAG is reported as such.
+time: 2026-11-09T21:00:00.000000000+00:00

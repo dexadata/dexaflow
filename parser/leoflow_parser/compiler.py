@@ -236,7 +236,7 @@ def _load_dags_shim(source: str):
             return {}, _removed_core_operator_hint(exc.name)
         if _is_provider_module(exc.name):
             return {}, _provider_import_hint(exc.name)
-        return {}, _unsupported(f"module {exc.name!r}")
+        return {}, _missing_module_hint(exc.name)
     except ImportError as exc:
         # A missing name the shim does not provide (e.g. `chain`, a Branch operator).
         return {}, _import_error_hint(exc)
@@ -292,11 +292,62 @@ def _import_error_hint(exc: ImportError) -> str:
         return _TASK_GROUP_REFUSAL
     if missing == "EmptyOperator" and "airflow.sdk" in str(exc):
         return _EMPTY_OPERATOR_IMPORT
+    if missing in _ASSET_NAMES:
+        return _ASSET_REFUSAL.format(what=missing)
     if missing in _SETUP_TEARDOWN_NAMES:
         from airflow._core import SETUP_TEARDOWN_REFUSAL
 
         return SETUP_TEARDOWN_REFUSAL
     return _unsupported(str(exc))
+
+
+# Assets (#2352) and timetables (#2351): named, with the issue that tracks them,
+# instead of the generic wording (#2451).
+_ASSET_NAMES = frozenset({
+    "Asset", "AssetAlias", "AssetAll", "AssetAny", "AssetWatcher", "asset", "Dataset",
+    "DatasetAlias",
+})
+_ASSET_MODULES = ("airflow.datasets", "airflow.sdk.definitions.asset", "airflow.assets")
+_ASSET_REFUSAL = (
+    "{what}: assets and asset driven schedules are not supported by Dexaflow yet "
+    "(https://github.com/dexadata/dexaflow/issues/2352, #2352). Schedule the DAG "
+    "with a cron string, or wait on the upstream data with a reschedule-mode sensor."
+)
+_TIMETABLE_REFUSAL = (
+    "{what}: timetables are not supported by Dexaflow yet "
+    "(https://github.com/dexadata/dexaflow/issues/2351, #2351). Use a cron string "
+    "or a preset such as @daily."
+)
+_COSMOS_REFUSAL = (
+    "{what}: Astronomer Cosmos (DbtDag, DbtTaskGroup) is not supported by Dexaflow, "
+    "which runs dbt projects itself: use dbt_group() from dexaflow "
+    "(https://dexaflow.dexadata.ai/author-dags/dbt/)."
+)
+
+
+def _missing_module_hint(name: str | None) -> str:
+    """The message for a module the DAG imports that cannot be found while it is
+    compiled: an Airflow module the shim does not provide is a Dexaflow
+    limitation, any other module is missing from the interpreter that runs the
+    compile (#2451)."""
+    what = f"module {name!r}"
+    if not name:
+        return _unsupported(what)
+    if any(name == m or name.startswith(m + ".") for m in _ASSET_MODULES):
+        return _ASSET_REFUSAL.format(what=what)
+    if name == "airflow.timetables" or name.startswith("airflow.timetables."):
+        return _TIMETABLE_REFUSAL.format(what=what)
+    if name == "cosmos" or name.startswith("cosmos."):
+        return _COSMOS_REFUSAL.format(what=what)
+    if name == "airflow" or name.startswith("airflow."):
+        return _unsupported(what)
+    return (
+        f"{what} is not installed in the Python that compiles the DAG: the compile "
+        "runs dag.py to read its structure, so every module it imports at the top "
+        "must import there. Install it in that environment, or import it inside the "
+        "task body, which only runs in the task image (declare it in dexaflow.yaml "
+        "dependencies:)."
+    )
 
 
 def _missing_import_name(message: str) -> str | None:
@@ -479,66 +530,260 @@ def _reject_metadata_db_operator(task) -> None:
         )
 
 
-# Task arguments the scheduler does not honor (#2336). A DAG that sets one ran
-# with other semantics than on Airflow, with no word; the parser refuses them
-# instead. Each maps to its default, which stays accepted, and the issue that
-# tracks support.
+# Operators that cannot work in a Dexaflow task pod (#2449, #2450), matched on
+# every class name of the task's MRO and on the captured class path, so a
+# subclass is caught too. Each maps to why, and what to do instead.
+_IMAGE_TASK_ADVICE = (
+    "Run the work as a task of the DAG's own image: a @task, or a BashOperator "
+    "calling the tool, with its dependencies declared in dexaflow.yaml")
+_POD_OPERATOR_WHY = (
+    "starts a pod of its own, outside the admission, pools, secret scoping and log "
+    "capture Dexaflow applies to every task")
+_UNRUNNABLE_OPERATORS = {
+    "KubernetesPodOperator": (_POD_OPERATOR_WHY, _IMAGE_TASK_ADVICE),
+    "KubernetesJobOperator": (_POD_OPERATOR_WHY, _IMAGE_TASK_ADVICE),
+    "GKEStartPodOperator": (_POD_OPERATOR_WHY, _IMAGE_TASK_ADVICE),
+    "GKEStartJobOperator": (_POD_OPERATOR_WHY, _IMAGE_TASK_ADVICE),
+    "EksPodOperator": (_POD_OPERATOR_WHY, _IMAGE_TASK_ADVICE),
+    "DockerOperator": ("needs a Docker daemon, which a task pod does not have",
+                       _IMAGE_TASK_ADVICE),
+    "DockerSwarmOperator": ("needs a Docker daemon, which a task pod does not have",
+                            _IMAGE_TASK_ADVICE),
+}
+_UNRUNNABLE_MODULES = {
+    "airflow.providers.cncf.kubernetes.operators.pod.": "KubernetesPodOperator",
+    "airflow.providers.cncf.kubernetes.operators.job.": "KubernetesJobOperator",
+    "airflow.providers.docker.operators.": "DockerOperator",
+}
+_HITL_MODULE = "airflow.providers.standard.operators.hitl."
+_HITL_OPERATORS = frozenset({
+    "HITLOperator", "ApprovalOperator", "HITLBranchOperator", "HITLEntryOperator",
+})
+
+
+def _reject_unrunnable_operator(task) -> None:
+    """Refuse an operator that compiles but cannot do its work in a task pod:
+    human in the loop operators, and the operators that start a pod or a
+    container of their own, subclasses included."""
+    names = _class_names(task)
+    path = getattr(type(task), "__leoflow_operator_class__", "") or ""
+    shown = names[0]
+    if _HITL_OPERATORS.intersection(names) or path.startswith(_HITL_MODULE):
+        raise ValueError(
+            f"operator {shown} on task {task.task_id!r} waits for a person to answer in "
+            "the Airflow UI, which needs the Airflow API server and a triggerer: "
+            "not supported by Dexaflow, which has neither. Wait on the answer with a "
+            "reschedule-mode sensor on your own approval store instead.")
+    base = next((n for n in names if n in _UNRUNNABLE_OPERATORS), None)
+    if base is None:
+        base = next((cls for prefix, cls in _UNRUNNABLE_MODULES.items()
+                     if path.startswith(prefix)), None)
+    if base is not None:
+        why, advice = _UNRUNNABLE_OPERATORS[base]
+        label = shown if shown == base else f"{shown} (a {base})"
+        raise ValueError(
+            f"operator {label} on task {task.task_id!r} {why}, so it is not supported "
+            f"by Dexaflow. {advice}.")
+
+
+def _reject_provider_subclass(task) -> None:
+    """Refuse a subclass of a captured provider operator (#2450): dag.json would
+    name the parent's class path and the pod would run the parent. Checked after
+    the branch and short-circuit refusals, which name the real problem first."""
+    path = getattr(type(task), "__leoflow_operator_class__", "") or ""
+    shown = type(task).__name__
+    if path and "__leoflow_operator_class__" not in vars(type(task)):
+        parent = next(klass for klass in type(task).__mro__
+                      if "__leoflow_operator_class__" in vars(klass))
+        raise ValueError(
+            f"operator {shown} on task {task.task_id!r} subclasses the provider operator "
+            f"{parent.__name__} ({path}). Dexaflow runs a provider operator by its own "
+            f"class path, so it would run {parent.__name__} and drop every override of "
+            f"{shown}: not supported yet. Call {parent.__name__} from a @task with the "
+            "changed arguments, or move the extra logic into a @task before or after it.")
+
+
+# Task arguments Dexaflow does not honor (#2336, #2448, #2449). A DAG that set
+# one ran with other semantics than on Airflow, with no word; the parser refuses
+# them instead. One table serves a task's own kwargs and the DAG's default_args,
+# so the two cannot diverge. Each entry gives the values that stay accepted
+# (Airflow's defaults), the issue that tracks support (or None), and what to do
+# instead (or None).
+_ALERTS_ADVICE = "Use an alerts: block in dexaflow.yaml."
+_SIZE_ADVICE = "Set size: or resources: for the task in dexaflow.yaml."
+_ASSETS_ADVICE = ("Assets are not supported yet "
+                  "(https://github.com/dexadata/dexaflow/issues/2352).")
 _UNHONORED_TASK_ARGS = {
-    "depends_on_past": (False, "#2350"),
-    "wait_for_downstream": (False, "#2350"),
-    "priority_weight": (1, None),
-    "max_active_tis_per_dag": (None, "#2428"),
-    "max_active_tis_per_dagrun": (None, "#2428"),
+    "depends_on_past": ((False,), "#2350", None),
+    "ignore_first_depends_on_past": ((False, True), "#2350", None),
+    "wait_for_downstream": ((False,), "#2350", None),
+    "wait_for_past_depends_before_skipping": ((False,), "#2350", None),
+    "priority_weight": ((1,), None, None),
+    "weight_rule": ((None, "downstream"), None, None),
+    "max_active_tis_per_dag": ((None,), "#2428", None),
+    "max_active_tis_per_dagrun": ((None,), "#2428", None),
+    "retry_exponential_backoff": ((False, 0), "#2454",
+                                  "Retries wait retry_delay each time."),
+    "max_retry_delay": ((None,), "#2454", None),
+    "retry_policy": ((None,), None, "Retries follow retries and retry_delay."),
+    "email": ((None, "", ()), None, _ALERTS_ADVICE),
+    "sla": ((None,), None, "Airflow 3 removed it; use execution_timeout or an "
+            "alerts: block in dexaflow.yaml."),
+    "end_date": ((None,), None, "Pause the DAG, or check the date in the task."),
+    "executor_config": ((None, {}), None, _SIZE_ADVICE),
+    "resources": ((None,), None, _SIZE_ADVICE),
+    "queue": ((None, "default"), None, _SIZE_ADVICE),
+    "executor": ((None,), None, "Every task runs in its own pod."),
+    "run_as_user": ((None,), None, "The pod runs as the image's user."),
+    "pre_execute": ((None,), None, "Call the code at the start of a @task."),
+    "post_execute": ((None,), None, "Call the code at the end of a @task."),
+    "map_index_template": ((None,), "#376", None),
+    "render_template_as_native_obj": ((False, None), None, None),
+    "inlets": ((None, ()), None, _ASSETS_ADVICE),
+    "outlets": ((None, ()), None, _ASSETS_ADVICE),
 }
 
-# DAG arguments the scheduler does not honor, refused for the same reason
-# (#2336): a run timeout that never fires and an auto-pause after failed runs
-# that never pauses. Each maps to its Airflow default, which stays accepted.
+# Task arguments Dexaflow maps into dag.json (or reads to place the task), and
+# arguments it accepts and ignores because they change nothing at run time:
+# documentation, display names, the owner (dexaflow.yaml carries it) and
+# email_on_failure / email_on_retry, which do nothing without email. The guard
+# test walks the Task SDK's BaseOperator and fails on an argument in none of the
+# tables, so a new one cannot be dropped without a word (#2449).
+_MAPPED_TASK_ARGS = frozenset({
+    "task_id", "dag", "default_args", "trigger_rule", "retries", "retry_delay",
+    "execution_timeout", "pool", "pool_slots", "params", "on_failure_callback",
+    "start_date", "multiple_outputs", "do_xcom_push",
+})
+_COSMETIC_TASK_ARGS = frozenset({
+    "owner", "doc", "doc_md", "doc_json", "doc_rst", "doc_yaml", "task_display_name",
+    "logger_name", "email_on_failure", "email_on_retry", "allow_nested_operators",
+    "task_group",
+})
+
+# Callbacks refused on a task, own or from default_args (#424, #2449);
+# on_failure_callback is the one Dexaflow runs.
+_REFUSED_TASK_CALLBACKS = (
+    "on_success_callback", "on_retry_callback", "on_execute_callback",
+    "on_skipped_callback",
+)
+
+# DAG arguments Dexaflow does not honor, refused for the same reason (#2336,
+# #2449). Same shape as the task table.
+_DAG_CALLBACK_ADVICE = (
+    "Use an alerts: block in dexaflow.yaml, or put on_failure_callback in the DAG's "
+    "default_args so every task runs it on its final failure.")
+_TEMPLATE_ADVICE = "Templates render with Airflow's default Jinja environment."
 _UNHONORED_DAG_ARGS = {
-    "dagrun_timeout": None,
-    "max_consecutive_failed_dag_runs": 0,
+    "dagrun_timeout": ((None,), None, None),
+    "max_consecutive_failed_dag_runs": ((0,), None, None),
+    "end_date": ((None,), None, "Pause the DAG when it should stop."),
+    "on_failure_callback": ((None, ()), None, _DAG_CALLBACK_ADVICE),
+    "on_success_callback": ((None, ()), None, _DAG_CALLBACK_ADVICE),
+    "sla_miss_callback": ((None,), None, "Airflow 3 removed SLAs; use an alerts: "
+                          "block in dexaflow.yaml."),
+    "fail_fast": ((False,), None, "Every task runs to its own end state."),
+    "fail_stop": ((False,), None, "Every task runs to its own end state."),
+    "deadline": ((None,), None, _ALERTS_ADVICE),
+    "render_template_as_native_obj": ((False,), None, _TEMPLATE_ADVICE),
+    "user_defined_macros": ((None,), None, _TEMPLATE_ADVICE),
+    "user_defined_filters": ((None,), None, _TEMPLATE_ADVICE),
+    "template_searchpath": ((None,), None, _TEMPLATE_ADVICE),
+    "template_undefined": ((None,), None, _TEMPLATE_ADVICE),
+    "jinja_environment_kwargs": ((None,), None, _TEMPLATE_ADVICE),
+    "access_control": ((None,), None, "Access follows Dexaflow's roles."),
+    "allowed_run_types": ((None,), None, None),
 }
+
+# DAG arguments Dexaflow maps into dag.json, and the ones it accepts and ignores.
+_MAPPED_DAG_ARGS = frozenset({
+    "dag_id", "schedule", "tags", "default_args", "params", "description",
+    "start_date", "max_active_runs", "max_active_tasks", "catchup",
+    "is_paused_upon_creation",
+})
+_COSMETIC_DAG_ARGS = frozenset({
+    "doc_md", "dag_display_name", "owner_links", "auto_register",
+    "disable_bundle_versioning", "rerun_with_latest_version", "task_group",
+})
+
+
+def _plain(value):
+    """The value to compare against an accepted default: an enum's value, a
+    priority weight strategy's rule, an empty list as an empty tuple."""
+    if isinstance(value, list):
+        return tuple(value)
+    inner = getattr(value, "value", None)
+    if isinstance(inner, str):
+        return inner
+    strategy = type(value).__name__
+    if strategy.endswith("PriorityWeightStrategy"):
+        return strategy.strip("_").removesuffix("PriorityWeightStrategy").lower()
+    return value
+
+
+def _accepted(value, defaults: tuple) -> bool:
+    """Whether value is one of the accepted defaults. A bool never matches a
+    number (True is not priority_weight=1), and None matches only None."""
+    plain = _plain(value)
+    for default in defaults:
+        if plain is None or default is None:
+            if plain is default:
+                return True
+            continue
+        if isinstance(plain, bool) != isinstance(default, bool):
+            continue
+        if plain == default:
+            return True
+    return False
+
+
+def _unhonored_message(what: str, origin: str, defaults: tuple, issue, advice) -> str:
+    accepted = " or ".join(repr(d) for d in defaults if d != ())
+    tail = f" {advice}" if advice else ""
+    tracked = (f" Support is planned in https://github.com/dexadata/dexaflow/issues/"
+               f"{issue[1:]} ({issue})." if issue else "")
+    return (f"{what}{origin} is not honored by Dexaflow, which would ignore it and run "
+            f"with different semantics than Airflow. Remove it, or set it to "
+            f"{accepted}.{tail}{tracked}")
 
 
 def _reject_unhonored_dag_args(dag) -> None:
-    for name, default in _UNHONORED_DAG_ARGS.items():
-        value = getattr(dag, name, default)
-        if value == default:
+    for name, (defaults, issue, advice) in _UNHONORED_DAG_ARGS.items():
+        value = getattr(dag, name, None)
+        if _accepted(value, defaults):
             continue
-        raise ValueError(
-            f"{name}={value!r} on DAG {dag.dag_id!r} is not honored by the Dexaflow "
-            "scheduler, which would ignore it and run the DAG with different "
-            f"semantics than Airflow. Remove it, or set it to {default!r}."
-        )
+        if getattr(value, "__leoflow_notifier__", False) and advice is _DAG_CALLBACK_ADVICE:
+            advice = f"A Notifier is a callback too. {advice}"
+        raise ValueError(_unhonored_message(
+            f"{name}={value!r} on DAG {dag.dag_id!r}", "", defaults, issue, advice))
 
 
 def _reject_unhonored_args(task, dag) -> None:
     own = getattr(task, "__leoflow_args__", None) or {}
     default_args = (getattr(dag, "default_args", None) or {}) if dag is not None else {}
-    for name, (default, issue) in _UNHONORED_TASK_ARGS.items():
+    for name, (defaults, issue, advice) in _UNHONORED_TASK_ARGS.items():
+        # A captured operator records its kwargs; a native task keeps each one as
+        # an instance attribute (a method such as pre_execute is not one unless
+        # the task passed it).
         if name in own:
             value, origin = own[name], "set on the task"
-        elif hasattr(task, name) and not callable(getattr(task, name)):
-            value, origin = getattr(task, name), "set on the task"
+        elif name in vars(task):
+            value, origin = vars(task)[name], "set on the task"
         elif name in default_args:
             value, origin = default_args[name], "inherited from the DAG's default_args"
         else:
             continue
-        if value == default:
+        if _accepted(value, defaults):
             continue
-        tracked = (f" Support is planned in https://github.com/dexadata/dexaflow/issues/"
-                   f"{issue[1:]} ({issue})." if issue else "")
-        raise ValueError(
-            f"{name}={value!r} on task {task.task_id!r} ({origin}) is not honored by "
-            "the Dexaflow scheduler, which would ignore it and run the task with "
-            f"different semantics than Airflow. Remove it, or set it to {default!r}."
-            f"{tracked}"
-        )
+        raise ValueError(_unhonored_message(
+            f"{name}={value!r} on task {task.task_id!r}", f" ({origin})", defaults,
+            issue, advice))
 
 
 def _map_task(task, source: str, dag=None) -> dict[str, Any]:
     _reject_metadata_db_operator(task)
+    _reject_unrunnable_operator(task)
     task_type = _operator_type(task)
+    _reject_provider_subclass(task)
     _reject_deferrable(task)
     _reject_unhonored_args(task, dag)
     entry: dict[str, Any] = {"task_id": task.task_id, "type": task_type}
@@ -547,7 +792,7 @@ def _map_task(task, source: str, dag=None) -> dict[str, Any]:
     if upstream:
         entry["depends_on"] = upstream
 
-    rule = _trigger_rule(task)
+    rule = _trigger_rule(task, dag)
     if rule != "all_success":
         entry["trigger_rule"] = rule
 
@@ -556,6 +801,7 @@ def _map_task(task, source: str, dag=None) -> dict[str, Any]:
     if task_type == "python":
         entry["entrypoint"] = _python_entrypoint(task, source)
         xcom_input, call_args = _bind_call_arguments(task)
+        _capture_templates_dict(task, call_args)
         if xcom_input:
             entry["xcom_input"] = xcom_input
         if call_args:
@@ -664,7 +910,7 @@ def _check_callbacks(task, task_type: str, entry: dict, dag=None) -> None:
 
     A callback in the DAG's default_args counts as the task's own, as in Airflow
     (#2441): it used to be dropped without a word."""
-    for name in ("on_success_callback", "on_retry_callback"):
+    for name in _REFUSED_TASK_CALLBACKS:
         inherited = _inherited_callback(task, dag, name)
         if _has_callback(task, name) or inherited:
             origin = " (inherited from the DAG's default_args)" if inherited else ""
@@ -793,6 +1039,12 @@ def _operator_type(task) -> str:
     for marker, feature in (
         ("Branch", "branching (@task.branch / BranchPythonOperator)"),
         ("ShortCircuit", "short-circuit (@task.short_circuit / ShortCircuitOperator)"),
+        ("Virtualenv", "a per-task virtualenv (@task.virtualenv / "
+                       "PythonVirtualenvOperator); declare the packages in dexaflow.yaml "
+                       "dependencies: and use @task"),
+        ("ExternalPython", "an external interpreter (@task.external_python / "
+                           "ExternalPythonOperator); declare the packages in "
+                           "dexaflow.yaml dependencies: and use @task"),
     ):
         if marker in name:
             raise ValueError(
@@ -825,11 +1077,24 @@ def _operator_type(task) -> str:
         # a pod. The native inline path was the control-plane SSRF surface (H5).
         if "Python" in name:
             return "python"
-    raise ValueError(f"unsupported operator {name!r} on task {task.task_id}")
+    raise ValueError(
+        f"unsupported operator {name!r} on task {task.task_id!r}: a custom operator "
+        "class is not supported by Dexaflow, which runs @task functions, BashOperator, "
+        "EmptyOperator and provider operators by their class path. Move the logic of "
+        f"{name}.execute into a @task; the task body can import the class and call "
+        "it there.")
 
 
-def _trigger_rule(task) -> str:
-    value = getattr(task.trigger_rule, "value", str(task.trigger_rule))
+def _trigger_rule(task, dag=None) -> str:
+    """The task's trigger rule. A rule the task does not pass itself comes from
+    the DAG's default_args, as in Airflow (#2448): it used to be dropped, so a
+    DAG-wide all_done ran every task as all_success. Under the real Airflow
+    backend the operator has already applied default_args."""
+    rule = task.trigger_rule
+    own = getattr(task, "__leoflow_own__", None)
+    if own is not None and "trigger_rule" not in own and dag is not None:
+        rule = (getattr(dag, "default_args", None) or {}).get("trigger_rule", rule)
+    value = getattr(rule, "value", str(rule))
     if value not in _SUPPORTED_TRIGGER_RULES:
         raise ValueError(f"unsupported trigger rule {value!r} on task {task.task_id}")
     return value
@@ -942,6 +1207,21 @@ def _bind_call_arguments(task) -> tuple[dict[str, list[str]], dict[str, Any]]:
     return xcom, call_args
 
 
+def _capture_templates_dict(task, call_args: dict[str, Any]) -> None:
+    """Carry a Python task's templates_dict in its call_args (#2447): the runtime
+    renders it like the other call args and hands it to the function as the
+    templates_dict context key, as Airflow does. It used to be dropped."""
+    value = getattr(task, "templates_dict", None)
+    if value is None:
+        return
+    if not isinstance(value, dict) or not _is_json_literal(value):
+        raise ValueError(
+            f"templates_dict on task {task.task_id!r} is a {type(value).__name__} "
+            "Dexaflow cannot carry in dag.json; pass a dict of strings and other JSON "
+            "values")
+    call_args["templates_dict"] = value
+
+
 def _is_json_literal(value: Any) -> bool:
     """Reports whether value is safely round-trippable through JSON.
 
@@ -1032,7 +1312,24 @@ def _schedule(dag) -> str | None:
     if isinstance(summary, str) and summary:
         return summary
     schedule = getattr(dag, "schedule", None)
-    return schedule if isinstance(schedule, str) else None
+    if schedule is None or isinstance(schedule, str) and schedule != "@continuous":
+        return schedule
+    # A schedule Dexaflow cannot run used to compile to no schedule, a DAG
+    # that only runs when triggered (#2449).
+    if schedule == "@continuous":
+        what = "schedule='@continuous' (a new run as soon as the last one ends)"
+        advice = "Use a cron string or preset such as @hourly."
+    elif hasattr(schedule, "total_seconds"):
+        what = f"schedule={schedule!r} (a timedelta)"
+        advice = ("Use a cron string or preset instead, for example '*/30 * * * *' "
+                  "for every 30 minutes or '@daily'.")
+    else:
+        what = f"schedule={schedule!r} (a {type(schedule).__name__})"
+        advice = ("Use a cron string or preset. Asset schedules are tracked in "
+                  "https://github.com/dexadata/dexaflow/issues/2352 (#2352), "
+                  "timetables in https://github.com/dexadata/dexaflow/issues/2351 (#2351).")
+    raise ValueError(f"{what} on DAG {dag.dag_id!r} is not supported by Dexaflow, "
+                     f"which would run it only when triggered. {advice}")
 
 
 def _start_date(dag) -> str | None:
@@ -1040,6 +1337,9 @@ def _start_date(dag) -> str | None:
     a string; the schema wants date-time). Airflow's start_date is a datetime;
     accept anything with isoformat() and fall back to str()."""
     value = getattr(dag, "start_date", None)
+    if value is None:
+        # Airflow's tutorials set it in default_args; the DAG takes it from there.
+        value = (getattr(dag, "default_args", None) or {}).get("start_date")
     if value is None:
         return None
     iso = getattr(value, "isoformat", None)
