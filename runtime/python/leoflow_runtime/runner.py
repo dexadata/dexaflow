@@ -139,6 +139,7 @@ def run(entrypoint: str) -> None:
     # it in .kwargs) BEFORE unwrapping to the raw function — resolving from the
     # object we already hold works even for an unbound `with DAG():` (#424 inc 4b).
     on_failure_callback = _on_failure_from_task_object(fn)
+    bash_task = _is_task_bash(fn)
     # Airflow TaskFlow @task decorators are not executed when called directly —
     # calling them returns an XComArg (a task reference), not the function's
     # result. Unwrap to the underlying Python function so we run the user's code
@@ -171,10 +172,38 @@ def run(entrypoint: str) -> None:
         # the agent captures it.
         raise
 
+    if bash_task:
+        # @task.bash (#2337): the function returned the command; run it like a
+        # bash task. exec replaces this process; the return only matters when a
+        # test stubs exec out.
+        _exec_task_bash(fn_name, result)
+        return
     _write_return(result)
     # A @task can push custom-keyed XComs via context["ti"].xcom_push — ship them the
     # same way operators do (multi-key XCom parity for native tasks, ADR 0040).
     _write_xcom_pushes(context["ti"].pushed)
+
+
+def _is_task_bash(obj) -> bool:
+    """Report whether ``obj`` is a function decorated with ``@task.bash``. The
+    Task SDK's decorator keeps the operator class it builds, which names itself
+    ``@task.bash``; a plain ``@task`` builds another one."""
+    operator_class = getattr(obj, "operator_class", None)
+    return getattr(operator_class, "custom_operator_name", None) == "@task.bash"
+
+
+def _exec_task_bash(fn_name: str, command) -> None:
+    """Run the command a ``@task.bash`` function returned, as Airflow does: it
+    must be a non-empty string, its templates are rendered with the run
+    context, and bash replaces this process (see :func:`run_bash`)."""
+    if not isinstance(command, str) or not command.strip():
+        raise TypeError(
+            f"@task.bash function {fn_name} must return a non-empty string, the "
+            f"command to run; it returned {type(command).__name__}")
+    _lifecycle(f"running the command @task.bash function {fn_name} returned")
+    sys.stdout.flush()
+    sys.stderr.flush()
+    run_bash(command)
 
 
 def _write_return(result) -> None:

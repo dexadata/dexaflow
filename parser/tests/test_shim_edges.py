@@ -90,11 +90,11 @@ def test_sibling_modules_are_isolated_between_compiles(monkeypatch, tmp_path_fac
 
 
 def test_missing_sdk_helper_gives_clear_unsupported_error(monkeypatch, tmp_path):
-    """`from airflow.sdk import chain` (a name the shim lacks) is a clear error,
-    not a raw ImportError."""
+    """`from airflow.sdk import chain_linear` (a name the shim lacks) is a clear
+    error, not a raw ImportError."""
     with pytest.raises(ValueError) as ei:
         _compile(monkeypatch, tmp_path, """
-            from airflow.sdk import DAG, task, chain
+            from airflow.sdk import DAG, task, chain_linear
             @task
             def a() -> None: ...
             with DAG("g"):

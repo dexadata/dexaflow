@@ -260,7 +260,8 @@ def _unsupported(detail: str) -> str:
     if "not supported by Dexaflow" in detail:
         return detail
     return (f"{detail}: not supported by Dexaflow "
-            f"(supported: Bash, Http, Python/@task; no dynamic task mapping or task groups)")
+            f"(supported: Bash, Empty, Http, Python/@task; no dynamic task mapping or "
+            f"task groups)")
 
 
 # Task groups (#2336): the import of TaskGroup or @task_group used to fail with
@@ -274,6 +275,12 @@ _TASK_GROUP_REFUSAL = (
     "https://github.com/dexadata/dexaflow/issues/2338 (#2338)."
 )
 _SETUP_TEARDOWN_NAMES = frozenset({"setup", "teardown"})
+# Airflow's airflow.sdk has no EmptyOperator, so the task image cannot import it
+# from there either (#2337); the message names the module that has it.
+_EMPTY_OPERATOR_IMPORT = (
+    "EmptyOperator is not in airflow.sdk, in Airflow or in Dexaflow: import it with "
+    "`from airflow.providers.standard.operators.empty import EmptyOperator`"
+)
 
 
 def _import_error_hint(exc: ImportError) -> str:
@@ -283,6 +290,8 @@ def _import_error_hint(exc: ImportError) -> str:
     missing = _missing_import_name(str(exc))
     if missing in _TASK_GROUP_NAMES:
         return _TASK_GROUP_REFUSAL
+    if missing == "EmptyOperator" and "airflow.sdk" in str(exc):
+        return _EMPTY_OPERATOR_IMPORT
     if missing in _SETUP_TEARDOWN_NAMES:
         from airflow._core import SETUP_TEARDOWN_REFUSAL
 
@@ -666,6 +675,14 @@ def _check_callbacks(task, task_type: str, entry: dict, dag=None) -> None:
     inherited = _inherited_callback(task, dag, _ON_FAILURE_CALLBACK)
     if not (_has_callback(task, _ON_FAILURE_CALLBACK) or inherited):
         return
+    if _is_task_bash(task):
+        # The runtime replaces its process with bash once the function returns
+        # the command, so no Python is left to run the callback on failure.
+        raise ValueError(
+            f"on_failure_callback on @task.bash task {task.task_id!r} cannot run: the "
+            "command replaces the Python process. Use a @task that runs the command "
+            "with subprocess, an alerts: block in dexaflow.yaml, or a downstream "
+            "@task with trigger_rule='one_failed'.")
     if task_type in _CALLBACK_CAPABLE_TYPES:
         entry[_ON_FAILURE_CALLBACK] = True
         return
@@ -751,6 +768,15 @@ def _operator_type(task) -> str:
     # per dbt node after parsing. It carries no operator semantics here.
     if getattr(type(task), "__leoflow_dbt_group__", False):
         return "dbt_group"
+    # EmptyOperator (#2337) does nothing, so it compiles to a bash task that runs
+    # `true`: one short pod, and no new task type for the scheduler to learn.
+    if _is_empty_operator(task):
+        return "bash"
+    # @task.bash (#2337) is a python task: the runtime calls the function in the
+    # pod and runs the command it returns. Checked here because the class name
+    # carries "Bash", which the fast path below would read as a BashOperator.
+    if _is_task_bash(task):
+        return "python"
     # Reject silent-wrong-execution shapes BEFORE the substring catch-alls below
     # (issue #225). BranchPythonOperator / ShortCircuitOperator / @task.branch
     # all carry "Python" in their class name, so the legacy substring match used
@@ -975,7 +1001,28 @@ def _task_param_value(params, name: str) -> tuple[bool, Any]:
     return True, value
 
 
+# _EMPTY_COMMAND is what an EmptyOperator runs (#2337): bash's no-op builtin.
+_EMPTY_COMMAND = "true"
+
+
+def _is_empty_operator(task) -> bool:
+    """An EmptyOperator or a subclass, from the shim or from real Airflow (the
+    golden backend). A captured provider class is never one."""
+    if getattr(type(task), "__leoflow_operator_class__", None):
+        return False
+    return "EmptyOperator" in _class_names(task)
+
+
+def _is_task_bash(task) -> bool:
+    """A @task.bash task: the shim's marker, or real Airflow's decorated
+    operator, which names itself "@task.bash"."""
+    return bool(getattr(type(task), "__leoflow_task_bash__", False)) or \
+        getattr(task, "custom_operator_name", None) == "@task.bash"
+
+
 def _bash_command(task) -> str:
+    if _is_empty_operator(task):
+        return _EMPTY_COMMAND
     return getattr(task, "bash_command", "") or ""
 
 
