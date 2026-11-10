@@ -1,9 +1,0 @@
-kind: Fixed
-body: |-
-  **Sign-in rate limits hold across API replicas.** With Redis configured, the
-  failed login limit (`auth.login_rate_limit_per_minute`) and the limits of
-  token renewal, SSO, CLI device sign-in and the CI token exchange now count
-  in Redis, so N API replicas, or the HPA, allow the configured limit and not
-  N times it. If Redis fails, each replica falls back to its own count; Lite
-  keeps counting in process (#2357).
-time: 2026-11-06T19:40:00.000000000+00:00

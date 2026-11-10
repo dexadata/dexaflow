@@ -34,7 +34,62 @@ def _refuse_setup_teardown(*_args, **_kwargs):
     raise NotImplementedError(SETUP_TEARDOWN_REFUSAL)
 
 
-class XComArg:
+# VARIABLE_AT_PARSE is the message for a Variable read while the DAG file is
+# parsed (#2337). The parser has no Variable store, and a value read there would
+# be frozen into dag.json instead of read on each run.
+VARIABLE_AT_PARSE = (
+    "Variable.{method}() called while the DAG file is parsed is not supported by "
+    "Dexaflow: the compiler has no Variable store. Call Variable.get inside the "
+    "task body, or use {{{{ var.value.<key> }}}} in a templated field"
+)
+
+
+def _variable_refusal(method):
+    def refuse(*_args, **_kwargs):
+        raise NotImplementedError(VARIABLE_AT_PARSE.format(method=method))
+
+    return staticmethod(refuse)
+
+
+class Variable:
+    """Stand-in for Airflow's ``Variable`` so ``from airflow.sdk import Variable``
+    at the top of a DAG file compiles (#2337). Task bodies never run here, so a
+    call inside a task is never reached; a call at module level is refused."""
+
+    get = _variable_refusal("get")
+    set = _variable_refusal("set")
+    update = _variable_refusal("update")
+    delete = _variable_refusal("delete")
+
+
+class _DependencyMixin:
+    """Edge operators shared by operators and XComArgs: ``>>`` and ``<<`` with a
+    task, an XComArg, a Label or a list of them on either side, and Airflow's
+    ``set_downstream`` and ``set_upstream``."""
+
+    def __rshift__(self, other):
+        return _as_operator(self)._link(other, downstream=True)
+
+    def __lshift__(self, other):
+        return _as_operator(self)._link(other, downstream=False)
+
+    # `[a, b] >> c` calls c.__rrshift__([a, b]): the list is upstream of c.
+    def __rrshift__(self, other):
+        _as_operator(self)._link(other, downstream=False)
+        return self
+
+    def __rlshift__(self, other):
+        _as_operator(self)._link(other, downstream=True)
+        return self
+
+    def set_downstream(self, other):
+        _as_operator(self)._link(other, downstream=True)
+
+    def set_upstream(self, other):
+        _as_operator(self)._link(other, downstream=False)
+
+
+class XComArg(_DependencyMixin):
     """Duck-typed stand-in for Airflow's XComArg: carries the producing operator
     and proxies dependency operators (``>>`` / ``<<``) to it, so TaskFlow chains
     like ``a() >> b()`` and ``x >> [y(), z()]`` wire edges correctly."""
@@ -45,16 +100,88 @@ class XComArg:
     def __init__(self, operator):
         self.operator = operator
 
-    def __rshift__(self, other):
-        return self.operator.__rshift__(other)
-
-    def __lshift__(self, other):
-        return self.operator.__lshift__(other)
-
 
 def _as_operator(node):
     """Unwrap an XComArg to its operator; pass operators through unchanged."""
     return node.operator if isinstance(node, XComArg) else node
+
+
+def _as_list(nodes):
+    return list(nodes) if isinstance(nodes, (list, tuple, set)) else [nodes]
+
+
+class Label:
+    """Airflow's edge label (``a >> Label("x") >> b``), accepted and dropped
+    (#2337): the edge it sits on is wired, the label text is not kept. It
+    records the tasks on each side and links every upstream to every downstream,
+    whichever side is attached first."""
+
+    def __init__(self, label):
+        self.label = label
+        self._upstream: list = []
+        self._downstream: list = []
+
+    def _add_upstream(self, node):
+        op = _as_operator(node)
+        self._upstream.append(op)
+        for down in self._downstream:
+            op._link(down, downstream=True)
+
+    def _add_downstream(self, node):
+        op = _as_operator(node)
+        self._downstream.append(op)
+        for up in self._upstream:
+            up._link(op, downstream=True)
+
+    def set_downstream(self, other):
+        for node in _as_list(other):
+            self._add_downstream(node)
+
+    def set_upstream(self, other):
+        for node in _as_list(other):
+            self._add_upstream(node)
+
+    def __rshift__(self, other):
+        self.set_downstream(other)
+        return other
+
+    def __lshift__(self, other):
+        self.set_upstream(other)
+        return other
+
+    def __rrshift__(self, other):
+        self.set_upstream(other)
+        return self
+
+    def __rlshift__(self, other):
+        self.set_downstream(other)
+        return self
+
+
+def chain(*tasks):
+    """Airflow's ``chain``: link each element to the next. A task (or Label)
+    next to a list links to every task in it; two adjacent lists must have the
+    same length and are linked pairwise, as in Airflow."""
+    for up, down in zip(tasks, tasks[1:], strict=False):
+        if not isinstance(up, (list, tuple)):
+            up.set_downstream(down)
+            continue
+        if not isinstance(down, (list, tuple)):
+            down.set_upstream(up)
+            continue
+        if len(up) != len(down):
+            raise ValueError(
+                f"chain() got adjacent lists of different lengths ({len(up)} and "
+                f"{len(down)}); Airflow links two lists pairwise, so they must match")
+        for up_node, down_node in zip(up, down, strict=True):
+            up_node.set_downstream(down_node)
+
+
+def cross_downstream(from_tasks, to_tasks):
+    """Airflow's ``cross_downstream``: every task in ``from_tasks`` becomes
+    upstream of every task in ``to_tasks``."""
+    for node in from_tasks:
+        node.set_downstream(to_tasks)
 
 
 # JSON-Schema validation keywords a Param's kwargs may carry. Airflow's real Param
@@ -91,7 +218,7 @@ class Param:
         self.schema = schema
 
 
-class BaseOperator:
+class BaseOperator(_DependencyMixin):
     """Minimal operator base: registers into the active DAG and tracks edges."""
 
     as_setup = _refuse_setup_teardown
@@ -114,19 +241,18 @@ class BaseOperator:
             self.task_id = task_id
 
     def _link(self, others, downstream: bool):
-        targets = others if isinstance(others, (list, tuple)) else [others]
-        for other in targets:
+        for other in _as_list(others):
+            if isinstance(other, Label):
+                if downstream:
+                    other._add_upstream(self)
+                else:
+                    other._add_downstream(self)
+                continue
             other_op = _as_operator(other)
             ups, downs = (self, other_op) if downstream else (other_op, self)
             downs.upstream_task_ids.add(ups.task_id)
             ups.downstream_task_ids.add(downs.task_id)
         return others
-
-    def __rshift__(self, other):
-        return self._link(other, downstream=True)
-
-    def __lshift__(self, other):
-        return self._link(other, downstream=False)
 
 
 class DAG:

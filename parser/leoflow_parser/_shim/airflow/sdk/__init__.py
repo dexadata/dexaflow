@@ -3,16 +3,31 @@ from __future__ import annotations
 
 import functools
 
-from airflow._core import DAG, BaseOperator, Param, XComArg
+from airflow._core import (
+    DAG,
+    BaseOperator,
+    Label,
+    Param,
+    Variable,
+    XComArg,
+    chain,
+    cross_downstream,
+)
 
+# EmptyOperator is not exported: Airflow's airflow.sdk has no such name, so a DAG
+# importing it from here would compile and then fail to import in the task pod.
+# It lives in airflow.providers.standard.operators.empty, as in Airflow.
 __all__ = [
     "DAG",
     "BaseOperator",
+    "Label",
     "Param",
+    "Variable",
     "XComArg",
+    "chain",
+    "cross_downstream",
     "task",
     "dag",
-    "EmptyOperator",
     "PythonOperator",
 ]
 
@@ -28,8 +43,12 @@ class _TaskBranchOperator(PythonOperator):
     import time."""
 
 
-class EmptyOperator(BaseOperator):
-    """No-op operator."""
+class _TaskBashOperator(PythonOperator):
+    """The @task.bash shape (#2337): the decorated function runs in the task pod
+    and returns the command, which the runtime then runs with bash. It compiles
+    to a python task; the marker tells the compiler which one it is."""
+
+    __leoflow_task_bash__ = True
 
 
 def _iter_xcomargs(value):
@@ -121,8 +140,20 @@ def _task_branch(fn=None, **dec_kwargs):
     return wrap(fn) if callable(fn) else wrap
 
 
-# @task.branch is an attribute of the @task decorator in the TaskFlow API.
+def _task_bash(fn=None, **dec_kwargs):
+    """@task.bash: the function returns the bash command to run. The parser
+    never calls it; the runtime does, in the pod, and runs the result."""
+
+    def wrap(func):
+        return _task_factory(func, _TaskBashOperator, dec_kwargs, mappable=False)
+
+    return wrap(fn) if callable(fn) else wrap
+
+
+# @task.branch and @task.bash are attributes of the @task decorator in the
+# TaskFlow API.
 task.branch = _task_branch
+task.bash = _task_bash
 
 
 def dag(dag_id=None, **dag_kwargs):

@@ -1,9 +1,0 @@
-kind: Fixed
-body: |-
-  **A dag.json cannot register a count the database cannot read back.**
-  Registration now refuses `max_active_tasks` above 2147483647 and
-  `min_idle_workers` above 100, the bound `dexaflow.yaml` already had. A
-  larger value, sent as a dag.json instead of through the compiler, made the
-  tenant's DAG list fail, and for `min_idle_workers` the warm pool reconcile
-  of every tenant, with "out of range for type integer".
-time: 2026-11-09T13:30:00.000000000+00:00

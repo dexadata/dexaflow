@@ -162,9 +162,9 @@ def test_dbt_group_mixed_with_operators(monkeypatch, tmp_path, package):
         with TaskGroup("grp"):
             pass
     """,
-    # chain helper
+    # chain_linear helper (chain itself is supported since #2337)
     """
-    from airflow.sdk import DAG, task, chain
+    from airflow.sdk import DAG, task, chain_linear
     @task
     def a(): ...
     with DAG("g"):
