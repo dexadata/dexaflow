@@ -1,9 +1,0 @@
-kind: Changed
-body: |-
-  **Rolling upgrade gate.** Every release candidate now upgrades the previous
-  GA chart and images to the candidate on kind with two replicas, a
-  PodDisruptionBudget and tasks in flight, and fails when the Service loses
-  every ready endpoint, a task fails, a cron run is created twice or the schema
-  is not ready on the new version. Pull requests that change the chart, the
-  migrations or the server boot path run it too (#2305).
-time: 2026-11-06T21:00:00.000000000+00:00
