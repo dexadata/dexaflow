@@ -119,7 +119,8 @@ func blackholedLeader(t *testing.T) (*scheduler.Leader, *freezeProxy) {
 		defer pg.Close()
 		_, _ = pg.Exec(rctx, `SELECT pg_terminate_backend(pid) FROM pg_locks
 			WHERE locktype = 'advisory' AND objsubid = 1
-			  AND classid::bigint = $1 AND objid::bigint = $2 AND pid <> pg_backend_pid()`,
+			  AND classid::bigint = $1 AND objid::bigint = $2 AND pid <> pg_backend_pid()
+			  AND database = (SELECT oid FROM pg_database WHERE datname = current_database())`,
 			scheduler.LockID>>32, scheduler.LockID&0xFFFFFFFF)
 	})
 	return leader, p

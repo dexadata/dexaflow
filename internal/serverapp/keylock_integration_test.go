@@ -54,8 +54,13 @@ func TestServerKeyLockAgainstPostgres(t *testing.T) {
 	}
 
 	classid, objid := storage.KeyMigrationLockID>>32, storage.KeyMigrationLockID&0xFFFFFFFF
+	// Only this test's database: advisory locks are per database, and the
+	// integration packages run in parallel against one Postgres. Without the
+	// filter this also killed internal/cli's migrate-key crash test child,
+	// which holds the same lock id in a database of its own.
 	if _, terr := migration.Exec(ctx, `SELECT pg_terminate_backend(pid) FROM pg_locks
-		WHERE locktype = 'advisory' AND classid::bigint = $1 AND objid::bigint = $2 AND pid <> pg_backend_pid()`,
+		WHERE locktype = 'advisory' AND classid::bigint = $1 AND objid::bigint = $2 AND pid <> pg_backend_pid()
+		  AND database = (SELECT oid FROM pg_database WHERE datname = current_database())`,
 		classid, objid); terr != nil {
 		t.Fatal(terr)
 	}
