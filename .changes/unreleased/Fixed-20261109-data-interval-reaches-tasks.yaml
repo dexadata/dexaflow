@@ -1,0 +1,10 @@
+kind: Fixed
+body: |-
+  **A task receives the run's data interval.** No run stored
+  `data_interval_start` or `data_interval_end`, so every task saw `None` for
+  both, and a template such as `WHERE ts >= '{{ data_interval_start }}'`
+  rendered the text `None`, while the REST API showed the logical date. A run
+  now stores the logical date at both ends, Airflow 3's default for a cron
+  schedule, and a run created before the upgrade gets the same values when its
+  tasks start (#2446).
+time: 2026-11-09T18:00:00.000000000+00:00

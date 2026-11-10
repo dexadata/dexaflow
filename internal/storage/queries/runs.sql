@@ -1,6 +1,9 @@
 -- name: CreateDagRun :one
-INSERT INTO dag_runs (tenant_id, dag_id, dag_version_id, run_id, logical_date, state, trigger, note, conf)
-VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+-- The data interval is the logical date at both ends, Airflow 3's default
+-- (CronTriggerTimetable) for every run type; a run without a logical date has
+-- none (#2446).
+INSERT INTO dag_runs (tenant_id, dag_id, dag_version_id, run_id, logical_date, data_interval_start, data_interval_end, state, trigger, note, conf)
+VALUES ($1, $2, $3, $4, $5, $5, $5, $6, $7, $8, $9)
 RETURNING *;
 
 -- name: GetDagRun :one
@@ -595,8 +598,9 @@ WHERE d.id = (
 -- Zero rows means the slot's run already exists (or the DAG has no current
 -- version): the caller then rolls back the charge it took from the tenant's
 -- daily run cap.
-INSERT INTO dag_runs (tenant_id, dag_id, dag_version_id, run_id, logical_date, state, trigger)
-SELECT d.tenant_id, d.id, d.current_version_id, sqlc.arg(run_id), sqlc.arg(logical_date), 'queued', 'scheduled'
+-- The data interval is the slot at both ends, as CreateDagRun (#2446).
+INSERT INTO dag_runs (tenant_id, dag_id, dag_version_id, run_id, logical_date, data_interval_start, data_interval_end, state, trigger)
+SELECT d.tenant_id, d.id, d.current_version_id, sqlc.arg(run_id), sqlc.arg(logical_date), sqlc.arg(logical_date), sqlc.arg(logical_date), 'queued', 'scheduled'
 FROM dags d
 WHERE d.tenant_id = sqlc.arg(tenant_id) AND d.dag_id = sqlc.arg(dag_id) AND d.current_version_id IS NOT NULL
 ON CONFLICT (dag_id, run_id) DO NOTHING;
