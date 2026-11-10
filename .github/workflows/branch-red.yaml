@@ -96,5 +96,13 @@ jobs:
           BRANCH_RED_REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
-          mapfile -t branches < <(gh api "repos/$BRANCH_RED_REPO/branches?per_page=100" --jq '.[].name | select(. == "main" or test("^release-[0-9]+\\.[0-9]+$"))')
+          # One page of /branches held 100 feature branches and neither main
+          # nor release-0.5 once the repository passed 100 branches, so the
+          # list came back empty and the sweep exited with its usage error.
+          # Ask for main by name and the release branches by prefix instead.
+          mapfile -t branches < <(
+            echo main
+            gh api "repos/$BRANCH_RED_REPO/git/matching-refs/heads/release-" \
+              --jq '.[].ref | ltrimstr("refs/heads/") | select(test("^release-[0-9]+\\.[0-9]+$"))'
+          )
           bash scripts/branch-red-watch.sh reconcile "${branches[@]}"
