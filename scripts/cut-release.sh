@@ -1623,7 +1623,13 @@ main() {
       for rid in $failed; do gh run rerun "$rid" --failed >/dev/null 2>&1; done
       sleep 60; continue
     fi
-    warn "release workflows red (non-flake) — inspect the run + gate"; break
+    # A real failure leaves the release drafted, as the gate's runbook says. The
+    # un-draft above is only for the flake path: without this, a release whose
+    # gate retracted it (v0.5.10-rc.1, a data image scan finding) stayed public
+    # as a prerelease without the image that failed.
+    gh release edit "$tag" --repo "$REPO" --draft=true >/dev/null 2>&1 \
+      || warn "could not put $tag back to draft; run: gh release edit $tag --repo $REPO --draft=true"
+    warn "release workflows red (non-flake): $tag left as a draft; inspect the run + gate, fix, and cut the next tag"; break
   done
   # PUBLISHED means the release run's promote job moved the pointers, not only
   # that every run is green (ADR 0071): read that job's own conclusion.
