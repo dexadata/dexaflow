@@ -174,17 +174,52 @@ func attemptHomeEnv(home string) ([]string, error) {
 // by_task= kwarg (a collision the live GCP chain test caught).
 const upstreamXComEnv = "LEOFLOW_UPSTREAM_XCOM"
 
+// upstreamTaskIDsEnv lists the task's declared upstreams, as a JSON array, so the
+// runtime's ti.xcom_pull can tell an upstream with no value (None, as on Airflow)
+// from a task it was never given (an error, #2452).
+const upstreamTaskIDsEnv = "LEOFLOW_UPSTREAM_TASK_IDS"
+
+// upstreamXComOmittedEnv lists, as a JSON array, the upstreams whose value was
+// left out of upstreamXComEnv because the map would not fit in one environment
+// variable; the runtime's ti.xcom_pull raises for them instead of returning None.
+const upstreamXComOmittedEnv = "LEOFLOW_UPSTREAM_XCOM_OMITTED"
+
+// maxUpstreamXComMapBytes bounds the encoded upstreamXComEnv value. Linux caps a
+// single environment string at 128 KiB (MAX_ARG_STRLEN) and fails the exec with
+// E2BIG past it; 96 KiB leaves room for the name and the rest of the process.
+const maxUpstreamXComMapBytes = 96 * 1024
+
+// pullsUpstreamXCom reports whether the task's code may call ti.xcom_pull: a
+// captured operator, and a Python task (a classic PythonOperator callable reads its
+// upstreams that way, #2452). A bash task cannot.
+func pullsUpstreamXCom(spec *agentv1.TaskSpec) bool {
+	switch spec.GetOperator() {
+	case "airflow_operator", "python":
+		return true
+	}
+	return false
+}
+
 // xcomByTaskEnv fetches each upstream's return_value and renders the upstreamXComEnv
-// map the runtime's ti.xcom_pull reads, so a captured operator can pull a chained
-// upstream's output like in Airflow (ADR 0040). Only captured operators use
-// ti.xcom_pull, a python @task gets its inputs via the param-keyed xcom_input_mapping,
-// so the map is built for airflow_operator tasks only, avoiding wasted fetches. An
-// upstream with no return_value is omitted (pulls as None). nil when nothing to deliver.
+// map the runtime's ti.xcom_pull reads, so a captured operator or a Python callable
+// can pull a chained upstream's output like in Airflow (ADR 0040, #2452). The values
+// come from the batched prefetch, so a Python task's bound inputs are not read
+// twice. An upstream with no return_value is omitted (pulls as None); one that would
+// push the map past maxUpstreamXComMapBytes is listed in upstreamXComOmittedEnv.
+// The declared upstreams always ride in upstreamTaskIDsEnv. nil when the task has
+// no upstream or cannot pull.
 func xcomByTaskEnv(ctx context.Context, fetcher xcomFetcher, spec *agentv1.TaskSpec) ([]string, error) {
-	if spec.GetOperator() != "airflow_operator" {
+	if !pullsUpstreamXCom(spec) || len(spec.GetDependsOn()) == 0 {
 		return nil, nil
 	}
+	ids, err := json.Marshal(spec.GetDependsOn())
+	if err != nil {
+		return nil, fmt.Errorf("encoding upstream task ids: %w", err)
+	}
+	env := []string{upstreamTaskIDsEnv + "=" + string(ids)}
 	byTask := map[string]json.RawMessage{}
+	var omitted []string
+	size := 2 // the braces of the encoded map
 	for _, taskID := range spec.GetDependsOn() {
 		resp, err := fetcher.FetchXCom(ctx, &agentv1.FetchXComRequest{
 			UpstreamTaskId: taskID,
@@ -196,16 +231,30 @@ func xcomByTaskEnv(ctx context.Context, fetcher xcomFetcher, spec *agentv1.TaskS
 		if err != nil {
 			return nil, fmt.Errorf("fetching xcom for upstream %q: %w", taskID, err)
 		}
+		// key, quotes, colon, comma: an upper bound on what the entry adds.
+		entry := len(taskID) + len(resp.GetValue()) + 4
+		if size+entry > maxUpstreamXComMapBytes {
+			omitted = append(omitted, taskID)
+			continue
+		}
+		size += entry
 		byTask[taskID] = resp.GetValue()
 	}
-	if len(byTask) == 0 {
-		return nil, nil
+	if len(byTask) > 0 {
+		encoded, err := json.Marshal(byTask)
+		if err != nil {
+			return nil, fmt.Errorf("encoding xcom-by-task map: %w", err)
+		}
+		env = append(env, upstreamXComEnv+"="+string(encoded))
 	}
-	encoded, err := json.Marshal(byTask)
-	if err != nil {
-		return nil, fmt.Errorf("encoding xcom-by-task map: %w", err)
+	if len(omitted) > 0 {
+		encoded, err := json.Marshal(omitted)
+		if err != nil {
+			return nil, fmt.Errorf("encoding omitted upstreams: %w", err)
+		}
+		env = append(env, upstreamXComOmittedEnv+"="+string(encoded))
 	}
-	return []string{upstreamXComEnv + "=" + string(encoded)}, nil
+	return env, nil
 }
 
 // runContextEnv renders the DagRun/task identity the runtime's standalone operator

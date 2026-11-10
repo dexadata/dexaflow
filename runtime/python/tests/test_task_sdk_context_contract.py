@@ -45,9 +45,6 @@ CONTEXT_KEYS_NOT_PROVIDED = {
     "reason": "no Dexaflow path sets it",
     "task_reschedule_count": "the agent delivers the first reschedule time, not the count",
     "task_state_store": "Dexaflow has no task state store",
-    "templates_dict": (
-        "the compiler does not capture a task's templates_dict, and None would hide one "
-        "the author set"),
     "test_mode": "the Task SDK itself does not set it",
 }
 

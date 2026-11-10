@@ -826,6 +826,69 @@ def test_render_bash_quotes_metachars_as_single_token(tmp_path):
         f"';' in conf started a new command: rendered={rendered!r} created {sentinel}")
 
 
+# Jinja in a Python task's call args (#2447): Airflow renders op_args, op_kwargs,
+# templates_dict and @task arguments before the call; the runtime passed the raw
+# "{{ ds }}" text.
+
+
+def test_run_renders_a_templated_call_arg(tmp_path, monkeypatch):
+    out = tmp_path / "rv.json"
+    monkeypatch.setenv("LEOFLOW_RETURN_VALUE_PATH", str(out))
+    monkeypatch.setenv("LEOFLOW_DS", "2026-01-02")
+    monkeypatch.setenv("LEOFLOW_PARAMS", json.dumps({"n": 3}))
+    monkeypatch.setenv("LEOFLOW_CALL_ARGS_JSON", json.dumps(
+        {"day": "{{ ds }}", "n": "{{ params.n }}", "plain": "no template", "k": 5}))
+    mod = _write_module(tmp_path, monkeypatch,
+                        "def task(day, n, plain, k):\n    return [day, n, plain, k]\n")
+
+    runner.run(f"{mod}:task")
+
+    # Rendered values are strings, as with Airflow's default (non-native) rendering.
+    assert json.loads(out.read_text()) == ["2026-01-02", "3", "no template", 5]
+
+
+def test_run_renders_templates_nested_in_call_args(tmp_path, monkeypatch):
+    out = tmp_path / "rv.json"
+    monkeypatch.setenv("LEOFLOW_RETURN_VALUE_PATH", str(out))
+    monkeypatch.setenv("LEOFLOW_DS", "2026-01-02")
+    monkeypatch.setenv("LEOFLOW_CALL_ARGS_JSON", json.dumps(
+        {"opts": {"days": ["{{ ds }}", "x"], "n": 1}}))
+    mod = _write_module(tmp_path, monkeypatch, "def task(opts):\n    return opts\n")
+
+    runner.run(f"{mod}:task")
+
+    assert json.loads(out.read_text()) == {"days": ["2026-01-02", "x"], "n": 1}
+
+
+def test_run_fails_on_a_call_arg_that_cannot_render(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("LEOFLOW_RETURN_VALUE_PATH", str(tmp_path / "rv.json"))
+    monkeypatch.setenv("LEOFLOW_CALL_ARGS_JSON", json.dumps({"day": "{{ nope.x }}"}))
+    mod = _write_module(tmp_path, monkeypatch,
+                        "CALLED = []\ndef task(day):\n    CALLED.append(day)\n")
+
+    with pytest.raises(runner.TemplateRenderError, match="'day'"):
+        runner.run(f"{mod}:task")
+
+    assert sys.modules[mod].CALLED == []  # the raw template never reached the function
+
+
+def test_run_delivers_a_rendered_templates_dict(tmp_path, monkeypatch):
+    out = tmp_path / "rv.json"
+    monkeypatch.setenv("LEOFLOW_RETURN_VALUE_PATH", str(out))
+    monkeypatch.setenv("LEOFLOW_DS", "2026-01-02")
+    monkeypatch.setenv("LEOFLOW_CALL_ARGS_JSON", json.dumps(
+        {"templates_dict": {"day": "{{ ds }}"}}))
+    mod = _write_module(
+        tmp_path, monkeypatch,
+        "def task(**context):\n    return context['templates_dict']\n"
+        "def named(templates_dict=None):\n    return templates_dict\n")
+
+    runner.run(f"{mod}:task")
+    assert json.loads(out.read_text()) == {"day": "2026-01-02"}
+    runner.run(f"{mod}:named")
+    assert json.loads(out.read_text()) == {"day": "2026-01-02"}
+
+
 class _FakeBashDecorator:
     """The shape of the Task SDK's @task.bash decorator the runtime reads: the
     wrapped function, and the operator class that names itself "@task.bash"."""

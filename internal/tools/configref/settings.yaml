@@ -1755,7 +1755,17 @@ environment:
     group: task
     description: >-
       JSON map of upstream task id to return value, read by the runtime's
-      `ti.xcom_pull`.
+      `ti.xcom_pull`. Set for provider operators and Python tasks.
+  - name: UPSTREAM_TASK_IDS
+    group: task
+    description: >-
+      JSON array of the task's declared upstreams; with it, `ti.xcom_pull`
+      raises for a task that is not one of them.
+  - name: UPSTREAM_XCOM_OMITTED
+    group: task
+    description: >-
+      JSON array of upstreams whose value was too large for
+      `DEXAFLOW_UPSTREAM_XCOM`; `ti.xcom_pull` raises for them.
   - name: XCOM_<NAME>
     group: task
     description: >-
