@@ -14,7 +14,8 @@
 #   2. that printed command is run as root, unedited but for sudo;
 #   3. Lite then downloads nothing new, initdb's, starts and answers /readyz.
 #
-# Needs Docker and network (the ~11 MB PostgreSQL download and apt). The images
+# Needs Docker and network (the ~11 MB PostgreSQL download and apt; set
+# E2E_APT_MIRROR to use another Ubuntu archive mirror). The images
 # default to Ubuntu 22.04 and 24.04; pass others as arguments. Behind a TLS
 # proxy, set E2E_CA_BUNDLE to its CA file and HTTPS_PROXY to the proxy:
 #   bash test/e2e/lite-managed-pg-distros.sh [image ...]
@@ -48,6 +49,12 @@ if [ -f /e2e/ca.crt ]; then
   # A TLS-intercepting proxy: apt over https through it, and its CA trusted.
   sed -i 's#http://#https://#g' /etc/apt/sources.list /etc/apt/sources.list.d/*.sources 2>/dev/null || true
   printf 'Acquire::https::Proxy "%s";\nAcquire::https::CAInfo "/e2e/ca.crt";\n' "$HTTPS_PROXY" >/etc/apt/apt.conf.d/99e2e-proxy
+fi
+if [ -n "${E2E_APT_MIRROR:-}" ]; then
+  # Same packages from another mirror of the Ubuntu archive (CI uses the one the
+  # hosted runner itself uses).
+  sed -i -E "s#https?://(archive|security)\.ubuntu\.com/ubuntu/?#${E2E_APT_MIRROR%/}/#g" \
+    /etc/apt/sources.list /etc/apt/sources.list.d/*.sources 2>/dev/null || true
 fi
 apt-get -o Acquire::Retries=3 update -qq >/dev/null
 # ca-certificates only, for the download. It pulls in openssl, which a bare
@@ -118,12 +125,10 @@ grep -q "downloading relocatable PostgreSQL" /home/dx/second.log && {
 echo "  PASS ready after installing the packages Lite named"
 INNER
 
-# The container shares the host network: since 2026-11-11 a container on the
-# default bridge of a hosted GitHub runner cannot resolve names (apt fails with
-# "Could not resolve 'archive.ubuntu.com'"), while the host resolves them. The
-# check is about libraries, not network isolation, so the host's resolver is
-# what the container should use.
-ca_args=(--network host)
+# The container shares the host network and resolver: the check is about
+# libraries, not network isolation. E2E_APT_MIRROR, when set, replaces
+# archive.ubuntu.com and security.ubuntu.com in the image's apt sources.
+ca_args=(--network host -e "E2E_APT_MIRROR=${E2E_APT_MIRROR:-}")
 if [ -n "${E2E_CA_BUNDLE:-}" ]; then
   ca_args+=(-v "$E2E_CA_BUNDLE:/e2e/ca.crt:ro" -e "HTTPS_PROXY=${HTTPS_PROXY:-}")
 fi
