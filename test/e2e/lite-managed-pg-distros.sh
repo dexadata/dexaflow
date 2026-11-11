@@ -118,9 +118,14 @@ grep -q "downloading relocatable PostgreSQL" /home/dx/second.log && {
 echo "  PASS ready after installing the packages Lite named"
 INNER
 
-ca_args=()
+# The container shares the host network: since 2026-11-11 a container on the
+# default bridge of a hosted GitHub runner cannot resolve names (apt fails with
+# "Could not resolve 'archive.ubuntu.com'"), while the host resolves them. The
+# check is about libraries, not network isolation, so the host's resolver is
+# what the container should use.
+ca_args=(--network host)
 if [ -n "${E2E_CA_BUNDLE:-}" ]; then
-  ca_args=(-v "$E2E_CA_BUNDLE:/e2e/ca.crt:ro" -e "HTTPS_PROXY=${HTTPS_PROXY:-}" --network host)
+  ca_args+=(-v "$E2E_CA_BUNDLE:/e2e/ca.crt:ro" -e "HTTPS_PROXY=${HTTPS_PROXY:-}")
 fi
 for image in "$@"; do
   docker run --rm "${ca_args[@]}" \
