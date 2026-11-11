@@ -56,7 +56,19 @@ if [ -n "${E2E_APT_MIRROR:-}" ]; then
   sed -i -E "s#https?://(archive|security)\.ubuntu\.com/ubuntu/?#${E2E_APT_MIRROR%/}/#g" \
     /etc/apt/sources.list /etc/apt/sources.list.d/*.sources 2>/dev/null || true
 fi
-apt-get -o Acquire::Retries=3 update -qq >/dev/null
+# apt-get update only warns when an index cannot be fetched (a name that did
+# not resolve, say) and leaves the package missing, so retry until every index
+# came in.
+for attempt in 1 2 3 4 5; do
+  apt-get -o Acquire::Retries=3 update -qq >/tmp/apt-update.log 2>&1 || true
+  if grep -q '^[WE]: ' /tmp/apt-update.log; then
+    echo "  apt-get update attempt $attempt incomplete:"; sed 's/^/    /' /tmp/apt-update.log
+    [ "$attempt" -lt 5 ] || { echo "  FAIL apt indexes still incomplete"; exit 1; }
+    sleep $((attempt * 5))
+  else
+    break
+  fi
+done
 # ca-certificates only, for the download. It pulls in openssl, which a bare
 # image already has the library of, and none of the libraries under test.
 apt-get -o Acquire::Retries=3 install -y -qq --no-install-recommends ca-certificates >/dev/null
