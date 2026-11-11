@@ -37,7 +37,7 @@ concurrency:
 env:
   # Matches release.yaml, so the agent baked into the scanned image is built
   # with the toolchain that ships.
-  GO_VERSION: "1.26.10"
+  GO_VERSION: "1.26.11"
   # The Trivy binary the scan runs, the same as release.yaml's and security.yaml's.
   TRIVY_VERSION: "v0.75.0"
 

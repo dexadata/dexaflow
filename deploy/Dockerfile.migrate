@@ -30,7 +30,7 @@
 # toolchain recorded in the binary's build info, so a floating tag here would
 # move this image's reported vulnerability set for reasons unrelated to any
 # commit, the same trap security.yaml documents for dexaflow-server.
-ARG GO_VERSION=1.26.10
+ARG GO_VERSION=1.26.11
 
 # Build on the NATIVE platform and cross-compile with GOARCH, rather than
 # letting buildx emulate the build stage under QEMU for the arm64 leg. The
