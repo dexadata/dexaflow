@@ -1,0 +1,11 @@
+kind: Fixed
+body: |-
+  **An `EmptyOperator` no longer fails the compile of a DAG whose
+  `default_args` set `on_failure_callback`.** In v0.5.10-rc.2 the inherited
+  callback was refused on every bash task, and an `EmptyOperator` compiles to
+  one, so the common Airflow shape of a callback in `default_args` and an
+  `EmptyOperator` start task did not compile. An `EmptyOperator` cannot fail,
+  so it now simply does not take the inherited callback. A callback set on the
+  `EmptyOperator` itself is still refused, and a `@task.bash` that inherits one
+  names the `on_failure_callback=None` opt-out.
+time: 2026-11-11T16:20:00.000000000+00:00

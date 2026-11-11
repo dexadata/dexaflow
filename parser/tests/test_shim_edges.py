@@ -305,6 +305,50 @@ def test_task_none_opts_out_of_default_args_callback(monkeypatch, tmp_path):
     assert "on_failure_callback" not in _task(spec, "b")
 
 
+def test_default_args_on_failure_callback_skips_empty_operator(monkeypatch, tmp_path):
+    """An EmptyOperator cannot fail, so a callback it inherits from default_args is
+    not refused (that failed the compile of the common Airflow shape, found testing
+    v0.5.10-rc.2); the Python tasks of the DAG still get it."""
+    spec = _compile(monkeypatch, tmp_path, """
+        from airflow.sdk import DAG, task
+        from airflow.providers.standard.operators.empty import EmptyOperator
+        def notify(ctx): pass
+        @task
+        def a() -> None: ...
+        with DAG("g", default_args={"on_failure_callback": notify}):
+            EmptyOperator(task_id="start") >> a()
+    """)
+    assert "on_failure_callback" not in _task(spec, "start")
+    assert _task(spec, "a").get("on_failure_callback") is True
+
+
+def test_own_on_failure_callback_on_empty_operator_is_still_refused(monkeypatch, tmp_path):
+    """A callback set on the EmptyOperator itself is still refused: the author asked
+    for it on that task, and a bash task cannot run it."""
+    with pytest.raises(ValueError, match=r"on_failure_callback on task 'start'"):
+        _compile(monkeypatch, tmp_path, """
+            from airflow.sdk import DAG
+            from airflow.providers.standard.operators.empty import EmptyOperator
+            def notify(ctx): pass
+            with DAG("g"):
+                EmptyOperator(task_id="start", on_failure_callback=notify)
+        """)
+
+
+def test_default_args_on_failure_callback_on_task_bash_names_the_opt_out(monkeypatch, tmp_path):
+    with pytest.raises(ValueError, match=r"'b' \(inherited from the DAG's default_args; pass "
+                                         r"on_failure_callback=None"):
+        _compile(monkeypatch, tmp_path, """
+            from airflow.sdk import DAG, task
+            def notify(ctx): pass
+            @task.bash
+            def b() -> str:
+                return "false"
+            with DAG("g", default_args={"on_failure_callback": notify}):
+                b()
+        """)
+
+
 def test_default_args_on_failure_callback_on_bash_is_loud_reject(monkeypatch, tmp_path):
     """A bash task cannot run an inherited callback either; the error names the
     task, says where the callback came from and how to opt the task out."""

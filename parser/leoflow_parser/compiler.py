@@ -919,16 +919,25 @@ def _check_callbacks(task, task_type: str, entry: dict, dag=None) -> None:
                 "yet, refusing to silently drop it. Use an alerts: block in "
                 "dexaflow.yaml, or a downstream @task with a trigger_rule.")
     inherited = _inherited_callback(task, dag, _ON_FAILURE_CALLBACK)
-    if not (_has_callback(task, _ON_FAILURE_CALLBACK) or inherited):
+    own = _has_callback(task, _ON_FAILURE_CALLBACK)
+    if not (own or inherited):
+        return
+    if inherited and not own and _is_empty_operator(task):
+        # An EmptyOperator does nothing and cannot fail (Airflow does not even
+        # execute one), so a failure callback it inherits would never run. It is
+        # not refused: default_args with a callback and an EmptyOperator is the
+        # common Airflow shape, and refusing it failed the whole DAG's compile.
         return
     if _is_task_bash(task):
         # The runtime replaces its process with bash once the function returns
         # the command, so no Python is left to run the callback on failure.
+        opt_out = (" (inherited from the DAG's default_args; pass "
+                   "on_failure_callback=None on the task to opt it out)") if inherited else ""
         raise ValueError(
-            f"on_failure_callback on @task.bash task {task.task_id!r} cannot run: the "
-            "command replaces the Python process. Use a @task that runs the command "
-            "with subprocess, an alerts: block in dexaflow.yaml, or a downstream "
-            "@task with trigger_rule='one_failed'.")
+            f"on_failure_callback on @task.bash task {task.task_id!r}{opt_out} cannot "
+            "run: the command replaces the Python process. Use a @task that runs the "
+            "command with subprocess, an alerts: block in dexaflow.yaml, or a "
+            "downstream @task with trigger_rule='one_failed'.")
     if task_type in _CALLBACK_CAPABLE_TYPES:
         entry[_ON_FAILURE_CALLBACK] = True
         return

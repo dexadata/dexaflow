@@ -165,7 +165,8 @@ A task that passes its own callback keeps it, and `on_failure_callback=None` on 
 task opts that task out. A bash task cannot run a Python callback (bash replaces
 the task's process), so a callback inherited by one fails the compile with the
 task named: opt it out with `on_failure_callback=None`, or alert through the
-`alerts:` block. `on_success_callback` and `on_retry_callback` are refused at
+`alerts:` block. An `EmptyOperator` is the exception: it cannot fail, so it
+simply does not take the inherited callback. `on_success_callback` and `on_retry_callback` are refused at
 compile, on a task or in `default_args`.
 
 ```python
