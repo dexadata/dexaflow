@@ -18,7 +18,7 @@
 # GO_VERSION is not authoritative here either: go.mod's `toolchain` line is the
 # source of truth for the toolchain, and scripts/check-go-toolchain-pin.sh fails
 # this default when it falls behind (#1036).
-ARG GO_VERSION=1.26.10
+ARG GO_VERSION=1.26.11
 ARG PYTHON_VERSION=3.11
 # RUNTIME_VARIANT picks the published image: `base` (the default, the image
 # every DAG image starts FROM) or `data`, the base plus the connector providers

@@ -11,7 +11,7 @@
 # Usage: built via `make chaos-dogfood-docker` (don't `docker build` directly
 #        — the Makefile passes the right build-args).
 
-ARG GO_VERSION=1.26.10
+ARG GO_VERSION=1.26.11
 ARG GOLANGCI_LINT_VERSION=v2.12.2
 
 FROM python:3.12-slim-bookworm AS base
