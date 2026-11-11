@@ -69,4 +69,7 @@ jobs:
         timeout-minutes: 12
         env:
           IMAGE: ${{ matrix.image }}
+          # The runner's own Ubuntu mirror: since 2026-11-11 archive.ubuntu.com
+          # does not resolve on hosted runners, even on the host network.
+          E2E_APT_MIRROR: http://azure.archive.ubuntu.com/ubuntu/
         run: timeout --kill-after=30 660 bash test/e2e/lite-managed-pg-distros.sh "$IMAGE"

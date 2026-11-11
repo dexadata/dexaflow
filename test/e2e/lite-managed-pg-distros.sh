@@ -14,7 +14,8 @@
 #   2. that printed command is run as root, unedited but for sudo;
 #   3. Lite then downloads nothing new, initdb's, starts and answers /readyz.
 #
-# Needs Docker and network (the ~11 MB PostgreSQL download and apt). The images
+# Needs Docker and network (the ~11 MB PostgreSQL download and apt; set
+# E2E_APT_MIRROR to use another Ubuntu archive mirror). The images
 # default to Ubuntu 22.04 and 24.04; pass others as arguments. Behind a TLS
 # proxy, set E2E_CA_BUNDLE to its CA file and HTTPS_PROXY to the proxy:
 #   bash test/e2e/lite-managed-pg-distros.sh [image ...]
@@ -49,7 +50,25 @@ if [ -f /e2e/ca.crt ]; then
   sed -i 's#http://#https://#g' /etc/apt/sources.list /etc/apt/sources.list.d/*.sources 2>/dev/null || true
   printf 'Acquire::https::Proxy "%s";\nAcquire::https::CAInfo "/e2e/ca.crt";\n' "$HTTPS_PROXY" >/etc/apt/apt.conf.d/99e2e-proxy
 fi
-apt-get -o Acquire::Retries=3 update -qq >/dev/null
+if [ -n "${E2E_APT_MIRROR:-}" ]; then
+  # Same packages from another mirror of the Ubuntu archive (CI uses the one the
+  # hosted runner itself uses).
+  sed -i -E "s#https?://(archive|security)\.ubuntu\.com/ubuntu/?#${E2E_APT_MIRROR%/}/#g" \
+    /etc/apt/sources.list /etc/apt/sources.list.d/*.sources 2>/dev/null || true
+fi
+# apt-get update only warns when an index cannot be fetched (a name that did
+# not resolve, say) and leaves the package missing, so retry until every index
+# came in.
+for attempt in 1 2 3 4 5; do
+  apt-get -o Acquire::Retries=3 update -qq >/tmp/apt-update.log 2>&1 || true
+  if grep -q '^[WE]: ' /tmp/apt-update.log; then
+    echo "  apt-get update attempt $attempt incomplete:"; sed 's/^/    /' /tmp/apt-update.log
+    [ "$attempt" -lt 5 ] || { echo "  FAIL apt indexes still incomplete"; exit 1; }
+    sleep $((attempt * 5))
+  else
+    break
+  fi
+done
 # ca-certificates only, for the download. It pulls in openssl, which a bare
 # image already has the library of, and none of the libraries under test.
 apt-get -o Acquire::Retries=3 install -y -qq --no-install-recommends ca-certificates >/dev/null
@@ -118,9 +137,12 @@ grep -q "downloading relocatable PostgreSQL" /home/dx/second.log && {
 echo "  PASS ready after installing the packages Lite named"
 INNER
 
-ca_args=()
+# The container shares the host network and resolver: the check is about
+# libraries, not network isolation. E2E_APT_MIRROR, when set, replaces
+# archive.ubuntu.com and security.ubuntu.com in the image's apt sources.
+ca_args=(--network host -e "E2E_APT_MIRROR=${E2E_APT_MIRROR:-}")
 if [ -n "${E2E_CA_BUNDLE:-}" ]; then
-  ca_args=(-v "$E2E_CA_BUNDLE:/e2e/ca.crt:ro" -e "HTTPS_PROXY=${HTTPS_PROXY:-}" --network host)
+  ca_args+=(-v "$E2E_CA_BUNDLE:/e2e/ca.crt:ro" -e "HTTPS_PROXY=${HTTPS_PROXY:-}")
 fi
 for image in "$@"; do
   docker run --rm "${ca_args[@]}" \
