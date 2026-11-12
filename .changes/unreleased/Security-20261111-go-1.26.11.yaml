@@ -1,9 +1,0 @@
-kind: Security
-body: |-
-  **Binaries and images are built with Go 1.26.11.** It fixes GO-2026-6859
-  (CVE-2026-97054) in `net/http`: when a `MaxBytesReader` limit was exceeded,
-  the server set `Connection: close` without synchronization, so a handler
-  reading the request body while writing response headers could crash the
-  process. The Dexaflow API caps request bodies with `MaxBytesReader`, so the
-  fix applies.
-time: 2026-11-11T16:20:00.000000000+00:00
