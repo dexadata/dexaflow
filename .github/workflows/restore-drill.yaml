@@ -22,7 +22,7 @@ concurrency:
 jobs:
   restore-drill:
     name: Restore drill (clean database recovery verification)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     services:
       postgres:
         image: mirror.gcr.io/library/postgres:16

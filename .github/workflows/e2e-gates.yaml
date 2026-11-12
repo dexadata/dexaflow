@@ -97,7 +97,7 @@ jobs:
   # ─────────────────────────────────────────────────────────────────────
   e2e-lite-gates:
     name: E2E Lite (all performance gates on)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     services:
       postgres:
@@ -171,7 +171,7 @@ jobs:
   # ─────────────────────────────────────────────────────────────────────
   e2e-operators-gates:
     name: E2E operators (k3d, all performance gates on)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # 40 for the operators leg and its gate checks, 20 more for the source
     # mode leg that runs last on the same runner.
     timeout-minutes: 60
@@ -384,7 +384,7 @@ jobs:
   # ─────────────────────────────────────────────────────────────────────
   e2e-warm-pools:
     name: E2E warm pools (k3d)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 40
     services:
       postgres:

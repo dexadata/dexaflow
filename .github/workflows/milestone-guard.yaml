@@ -28,7 +28,7 @@ jobs:
   milestone-guard:
     name: Release milestone set
     if: ${{ github.event_name == 'pull_request' }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     # Runs on every event and exits 0 when exempt, rather than skipping by a
     # job-level `if:`: a skipped job reports nothing, so an earlier failure on
@@ -88,7 +88,7 @@ jobs:
   milestone-guard-queue:
     name: Release milestone set
     if: ${{ github.event_name == 'merge_group' }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

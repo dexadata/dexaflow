@@ -46,7 +46,7 @@ jobs:
   # ─────────────────────────────────────────────────────────────────────
   govulncheck:
     name: govulncheck
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -76,7 +76,7 @@ jobs:
   # ─────────────────────────────────────────────────────────────────────
   codeql:
     name: CodeQL
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     strategy:
       fail-fast: false
@@ -120,7 +120,7 @@ jobs:
     name: CodeQL high-alert gate
     needs: codeql
     if: ${{ always() && github.event_name == 'pull_request' }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
       contents: read
@@ -164,7 +164,7 @@ jobs:
   # ─────────────────────────────────────────────────────────────────────
   trivy:
     name: Trivy (filesystem scan)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -289,7 +289,7 @@ jobs:
   # ─────────────────────────────────────────────────────────────────────
   server-image:
     name: Trivy (dexaflow-server image)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     permissions:
       contents: read
@@ -405,7 +405,7 @@ jobs:
   # ─────────────────────────────────────────────────────────────────────
   migrate-image:
     name: Trivy (dexaflow-migrate image)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     permissions:
       contents: read
@@ -467,7 +467,7 @@ jobs:
   # ─────────────────────────────────────────────────────────────────────
   gitleaks:
     name: gitleaks (secret scan)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -513,7 +513,7 @@ jobs:
   # ─────────────────────────────────────────────────────────────────────
   python-eol:
     name: Python EOL watch
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     # A PR must not go red because endoflife.date is down. The findings still
     # appear as annotations on the PR run — a contributor editing the enum sees
