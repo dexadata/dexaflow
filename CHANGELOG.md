@@ -248,6 +248,15 @@ adhere to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **An `EmptyOperator` no longer fails the compile of a DAG whose
+  `default_args` set `on_failure_callback`.** In v0.5.10-rc.2 the inherited
+  callback was refused on every bash task, and an `EmptyOperator` compiles to
+  one, so the common Airflow shape of a callback in `default_args` and an
+  `EmptyOperator` start task did not compile. An `EmptyOperator` cannot fail,
+  so it now simply does not take the inherited callback. A callback set on the
+  `EmptyOperator` itself is still refused, and a `@task.bash` that inherits one
+  names the `on_failure_callback=None` opt-out.
+
 - **A task receives the run's data interval.** No run stored
   `data_interval_start` or `data_interval_end`, so every task saw `None` for
   both, and a template such as `WHERE ts >= '{{ data_interval_start }}'`
@@ -305,6 +314,15 @@ adhere to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   larger value, sent as a dag.json instead of through the compiler, made the
   tenant's DAG list fail, and for `min_idle_workers` the warm pool reconcile
   of every tenant, with "out of range for type integer".
+
+### Security
+
+- **Binaries and images are built with Go 1.26.11.** It fixes GO-2026-6859
+  (CVE-2026-97054) in `net/http`: when a `MaxBytesReader` limit was exceeded,
+  the server set `Connection: close` without synchronization, so a handler
+  reading the request body while writing response headers could crash the
+  process. The Dexaflow API caps request bodies with `MaxBytesReader`, so the
+  fix applies.
 
 ## [0.5.9] - 2026-11-06
 
