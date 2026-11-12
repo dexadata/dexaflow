@@ -46,7 +46,7 @@ jobs:
   changed-lines:
     name: Mutation (changed lines)
     if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 60
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -68,7 +68,7 @@ jobs:
   plan:
     name: Mutation packages
     if: github.event_name != 'pull_request'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     outputs:
       packages: ${{ steps.list.outputs.packages }}
@@ -92,7 +92,7 @@ jobs:
   package:
     name: Mutation (${{ matrix.package }})
     needs: plan
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 240
     strategy:
       fail-fast: false
@@ -130,7 +130,7 @@ jobs:
   integration-coverage:
     name: Integration coverage of the bindings
     if: github.event_name != 'pull_request'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     services:
       postgres:

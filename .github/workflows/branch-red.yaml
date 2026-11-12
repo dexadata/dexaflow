@@ -60,7 +60,7 @@ jobs:
       github.event_name == 'workflow_run' &&
       contains(fromJSON('["failure","timed_out","startup_failure"]'), github.event.workflow_run.conclusion) &&
       contains(fromJSON('["push","schedule","workflow_dispatch"]'), github.event.workflow_run.event)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
       contents: read
@@ -80,7 +80,7 @@ jobs:
   sweep:
     name: Open, update or close the red branch issues
     if: github.repository == 'dexadata/dexaflow' && github.event_name != 'workflow_run'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
       contents: read

@@ -55,7 +55,7 @@ jobs:
   lint:
     name: Lint (golangci-lint A+ enforcement)
     if: github.event_name != 'push' || github.ref != 'refs/heads/main'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -92,7 +92,7 @@ jobs:
   proto-drift:
     name: Proto generated code is in sync
     if: github.event_name != 'push' || github.ref != 'refs/heads/main'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -136,7 +136,7 @@ jobs:
   pkg-client-drift:
     name: pkg/client is in sync with the OpenAPI spec
     if: github.event_name != 'push' || github.ref != 'refs/heads/main'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -164,7 +164,7 @@ jobs:
   mcp-e2e:
     name: MCP server e2e (real binary over stdio + http)
     if: github.event_name != 'push' || github.ref != 'refs/heads/main'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -185,7 +185,7 @@ jobs:
   workflow-lint:
     name: Lint workflows (actionlint)
     if: github.event_name != 'push' || github.ref != 'refs/heads/main'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -205,7 +205,7 @@ jobs:
   # ─────────────────────────────────────────────────────────────────────
   test:
     name: Test + Coverage
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     permissions:
       contents: read
@@ -286,7 +286,7 @@ jobs:
     name: Coverage badge
     needs: test
     if: github.repository == 'dexadata/dexaflow' && github.event_name == 'push' && github.ref == 'refs/heads/main'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     continue-on-error: true
     permissions:
@@ -334,7 +334,7 @@ jobs:
   shellcheck:
     name: shellcheck
     if: github.event_name != 'push' || github.ref != 'refs/heads/main'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -354,7 +354,7 @@ jobs:
   hadolint:
     name: hadolint
     if: github.event_name != 'push' || github.ref != 'refs/heads/main'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     # One job with a step per Dockerfile, not a matrix: the runners are
     # shared, and seven jobs per pull request cost more than they report.
@@ -414,7 +414,7 @@ jobs:
   integration:
     name: Integration tests
     if: github.event_name != 'push' || github.ref != 'refs/heads/main'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 20
     services:
       postgres:
@@ -514,7 +514,7 @@ jobs:
   e2e-db-outage:
     name: E2E Lite (database outage → 503, not 401)
     if: github.event_name != 'push' || github.ref != 'refs/heads/main'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 12
     services:
       postgres:
@@ -555,7 +555,7 @@ jobs:
   e2e-lite:
     name: E2E Lite (setup → login)
     if: github.event_name != 'push' || github.ref != 'refs/heads/main'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     services:
       postgres:
@@ -594,7 +594,7 @@ jobs:
   binary-only-install:
     name: Binary-only install (no repo, no PYTHONPATH)
     if: github.event_name != 'push' || github.ref != 'refs/heads/main'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -619,7 +619,7 @@ jobs:
   e2e-lite-multidag:
     name: E2E Lite (multi-DAG materialization gate)
     if: github.event_name != 'push' || github.ref != 'refs/heads/main'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     env:
       # The script runs `dexaflow compile`, which spawns the parser via
@@ -648,7 +648,7 @@ jobs:
   e2e-lite-selfheal:
     name: E2E Lite (boot self-heal gate)
     if: github.event_name != 'push' || github.ref != 'refs/heads/main'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     services:
       postgres:
@@ -686,7 +686,7 @@ jobs:
   e2e-lite-alerts:
     name: E2E Lite (on-failure alerting gate)
     if: github.event_name != 'push' || github.ref != 'refs/heads/main'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     services:
       postgres:
@@ -724,7 +724,7 @@ jobs:
   e2e-lite-callback:
     name: E2E Lite (on_failure_callback gate)
     if: github.event_name != 'push' || github.ref != 'refs/heads/main'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     services:
       postgres:
@@ -758,7 +758,7 @@ jobs:
   e2e-lite-admission:
     name: E2E Lite (admission webhook gate)
     if: github.event_name != 'push' || github.ref != 'refs/heads/main'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     services:
       postgres:
@@ -792,7 +792,7 @@ jobs:
   e2e-lite-dbt:
     name: E2E Lite (dbt duckdb)
     if: github.event_name != 'push' || github.ref != 'refs/heads/main'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     services:
       postgres:
@@ -852,7 +852,7 @@ jobs:
   e2e-sso-login:
     name: SSO login page (real IdP handshake)
     if: github.event_name != 'push' || github.ref != 'refs/heads/main'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     env:
       PLAYWRIGHT_VERSION: "1.64.1"
@@ -903,7 +903,7 @@ jobs:
   ui-smoke:
     name: UI smoke (headless SPA crash check)
     if: github.event_name != 'push' || github.ref != 'refs/heads/main'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # 15 until the UI contract checks joined the job (#1932), which add about
     # two minutes to a job that used about nine.
     timeout-minutes: 20
@@ -1050,7 +1050,7 @@ jobs:
     # anyway, so the k3d cluster for it would only hold runner slots.
     needs: [lint, repo-gates]
     if: github.event_name != 'push' || github.ref != 'refs/heads/main'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     services:
       postgres:
@@ -1154,7 +1154,7 @@ jobs:
     # anyway, so the k3d cluster for it would only hold runner slots.
     needs: [lint, repo-gates]
     if: github.event_name != 'push' || github.ref != 'refs/heads/main'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     services:
       postgres:
@@ -1237,7 +1237,7 @@ jobs:
     # anyway, so the k3d cluster for it would only hold runner slots.
     needs: [lint, repo-gates]
     if: github.event_name != 'push' || github.ref != 'refs/heads/main'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     services:
       postgres:
@@ -1338,7 +1338,7 @@ jobs:
   dbt-adapter-contracts:
     name: dbt adapter contracts (${{ matrix.adapter }})
     if: github.event_name != 'push' || github.ref != 'refs/heads/main'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     strategy:
       fail-fast: false
@@ -1378,7 +1378,7 @@ jobs:
     # anyway, so the k3d cluster for it would only hold runner slots.
     needs: [lint, repo-gates]
     if: github.event_name != 'push' || github.ref != 'refs/heads/main'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 30
     strategy:
       fail-fast: false
@@ -1472,7 +1472,7 @@ jobs:
   # ─────────────────────────────────────────────────────────────────────
   tdd-check:
     name: TDD discipline (commit pattern check)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     if: github.event_name == 'pull_request'
     steps:
@@ -1499,7 +1499,7 @@ jobs:
   # script.
   new-text:
     name: Text rules (added lines and commit messages)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     if: github.event_name == 'pull_request'
     steps:
@@ -1517,7 +1517,7 @@ jobs:
   # is signed off by its author. Merge commits and Dependabot are exempt.
   dco:
     name: DCO (every commit signed off by its author)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     if: github.event_name == 'pull_request'
     steps:
@@ -1537,7 +1537,7 @@ jobs:
   build:
     name: Build binaries
     if: github.event_name != 'push' || github.ref != 'refs/heads/main'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     needs: [lint, test]
     steps:
@@ -1574,7 +1574,7 @@ jobs:
   openapi-lint:
     name: OpenAPI spec lint
     if: github.event_name != 'push' || github.ref != 'refs/heads/main'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -1603,7 +1603,7 @@ jobs:
   repo-gates:
     name: Repository gates
     if: github.event_name != 'push' || github.ref != 'refs/heads/main'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -1771,7 +1771,7 @@ jobs:
   python-parser:
     name: Python parser tests (py${{ matrix.python-version }})
     if: github.event_name != 'push' || github.ref != 'refs/heads/main'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     strategy:
       fail-fast: false
@@ -1812,7 +1812,7 @@ jobs:
   om-contract:
     name: OpenMetadata REST contract
     if: github.event_name != 'push' || github.ref != 'refs/heads/main'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -1849,7 +1849,7 @@ jobs:
   python-runtime:
     name: Python runtime tests
     if: github.event_name != 'push' || github.ref != 'refs/heads/main'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 15
     defaults:
       run:
@@ -1891,7 +1891,7 @@ jobs:
   runtime-authoring-contract:
     name: Runtime authoring contract
     if: github.event_name != 'push' || github.ref != 'refs/heads/main'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

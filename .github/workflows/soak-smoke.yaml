@@ -47,7 +47,7 @@ env:
 jobs:
   soak-smoke:
     name: Soak harness smoke (6 minutes)
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     # Twice the soak's own ceiling plus build time. The harness has its own
     # wall-clock ceiling and watchdog; this is the outermost of three stops.
     timeout-minutes: 25

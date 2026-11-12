@@ -69,7 +69,7 @@ jobs:
     name: Docs for every user-facing change of the next release
     # A fork has no release tags of its own to count from.
     if: ${{ github.repository == 'dexadata/dexaflow' }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
       contents: read

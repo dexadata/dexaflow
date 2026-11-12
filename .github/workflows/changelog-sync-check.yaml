@@ -42,7 +42,7 @@ jobs:
     name: main carries the changelog of every patch release
     # A fork has no release tags of its own to compare with.
     if: ${{ github.repository == 'dexadata/dexaflow' }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
       contents: read

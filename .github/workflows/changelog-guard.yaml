@@ -45,7 +45,7 @@ jobs:
   changelog-guard:
     name: CHANGELOG entry present
     if: ${{ github.event_name == 'pull_request' }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     # Exempt PRs with no user-facing change (release-prep, chore, dependabot,
     # docs-only). The `labeled`/`unlabeled` triggers above make this re-evaluate
@@ -136,7 +136,7 @@ jobs:
   changelog-guard-queue:
     name: CHANGELOG entry present
     if: ${{ github.event_name == 'merge_group' }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
       - name: Judged on the pull request

@@ -42,7 +42,7 @@ concurrency:
 jobs:
   docs-guard:
     name: Docs updated for user-facing changes
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 10
     # Dependabot is exempt by author, not by label — the same reasoning the
     # CHANGELOG guard documents: keying on the author keeps one mechanism and
@@ -89,7 +89,7 @@ jobs:
   docs-guard-queue:
     name: Docs updated for user-facing changes
     if: ${{ github.event_name == 'merge_group' }}
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
       - name: Judged on the pull request
