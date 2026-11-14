@@ -1,0 +1,9 @@
+kind: Security
+body: |-
+  **The `data` runtime image ships dnspython 2.9.2 and soupsieve 4.1.** They fix
+  CVE-2026-128089 (excessive memory and CPU use in dnspython, pulled in by
+  email-validator) and CVE-2026-126190 and CVE-2026-126191 (denial of service
+  in soupsieve selector matching and compilation, pulled in by beautifulsoup4).
+  The lock is now compiled for Python 3.11.5 or later, so the resolver no longer
+  skips releases that require it.
+time: 2026-11-14T11:30:00.000000000+00:00

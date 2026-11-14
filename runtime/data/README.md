@@ -15,17 +15,22 @@ image as is, with no image build (source mode, ADR 0067).
 ## Recompile the lock
 
 ```sh
-uv pip compile --python-version 3.11 --python-platform x86_64-manylinux_2_28 \
+uv pip compile --python-version 3.11.5 --python-platform x86_64-manylinux_2_28 \
   --generate-hashes --no-header --emit-index-url \
   --override runtime/data/overrides.txt \
   runtime/data/requirements.in -o runtime/data/requirements.txt
 ```
 
+`3.11.5` is the floor, not the image's interpreter (the image runs the latest
+`python:3.11-slim`). A bare `3.11` means 3.11.0 to the resolver, which skips
+releases that need `>=3.11.5` (soupsieve 3.0.4 and later) and pins older,
+vulnerable versions.
+
 The image is built for amd64 and arm64 from this one lock. After a recompile,
 check that arm64 resolves to the same versions:
 
 ```sh
-uv pip compile --python-version 3.11 --python-platform aarch64-manylinux_2_28 \
+uv pip compile --python-version 3.11.5 --python-platform aarch64-manylinux_2_28 \
   --no-header --override runtime/data/overrides.txt \
   runtime/data/requirements.in -c runtime/data/requirements.txt
 ```
