@@ -574,6 +574,9 @@ type TaskSpec struct {
 	AttemptEpoch            int64                     `protobuf:"varint,26,opt,name=attempt_epoch,json=attemptEpoch,proto3" json:"attempt_epoch,omitempty"`                     // Which execution of this try the agent is (ADR 0051 amendment), read from its verified token; 0 for a token minted before the epoch existed. Informational for the agent: the control plane fences on the token, never on this field.
 	RunConfJson             string                    `protobuf:"bytes,27,opt,name=run_conf_json,json=runConfJson,proto3" json:"run_conf_json,omitempty"`                       // The DagRun's conf alone, JSON-encoded ("{}" for a run without one), not layered with param defaults as params_json is (#1843). Stamped as LEOFLOW_RUN_CONF -> context dag_run.conf. Empty from a control plane that predates the field; the runtime then reports dag_run.conf as not provided.
 	RunType                 string                    `protobuf:"bytes,28,opt,name=run_type,json=runType,proto3" json:"run_type,omitempty"`                                     // The DagRun's type in the Task SDK's DagRunType vocabulary (manual, scheduled, backfill, asset_triggered) (#1843). Stamped as LEOFLOW_RUN_TYPE -> context dag_run.run_type. Empty leaves it unset.
+	RunStartDate            string                    `protobuf:"bytes,29,opt,name=run_start_date,json=runStartDate,proto3" json:"run_start_date,omitempty"`                    // When the DagRun started running, RFC3339 (#2474). Stamped as LEOFLOW_RUN_START_DATE -> context dag_run.start_date. Empty from a control plane that predates the field; the runtime then reports dag_run.start_date as not provided.
+	RunAfter                string                    `protobuf:"bytes,30,opt,name=run_after,json=runAfter,proto3" json:"run_after,omitempty"`                                  // When the DagRun became due, RFC3339, in the Task SDK's run_after sense: the end of its data interval (#2474). Stamped as LEOFLOW_RUN_AFTER -> context dag_run.run_after. Empty leaves it unset.
+	RunState                string                    `protobuf:"bytes,31,opt,name=run_state,json=runState,proto3" json:"run_state,omitempty"`                                  // The DagRun's state when the spec was read ("running" while its tasks run) (#2474). Stamped as LEOFLOW_RUN_STATE -> context dag_run.state. Empty leaves it unset.
 	unknownFields           protoimpl.UnknownFields
 	sizeCache               protoimpl.SizeCache
 }
@@ -800,6 +803,27 @@ func (x *TaskSpec) GetRunConfJson() string {
 func (x *TaskSpec) GetRunType() string {
 	if x != nil {
 		return x.RunType
+	}
+	return ""
+}
+
+func (x *TaskSpec) GetRunStartDate() string {
+	if x != nil {
+		return x.RunStartDate
+	}
+	return ""
+}
+
+func (x *TaskSpec) GetRunAfter() string {
+	if x != nil {
+		return x.RunAfter
+	}
+	return ""
+}
+
+func (x *TaskSpec) GetRunState() string {
+	if x != nil {
+		return x.RunState
 	}
 	return ""
 }
@@ -2098,8 +2122,7 @@ const file_agent_proto_rawDesc = "" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12;\n" +
 	"\vserver_time\x18\x02 \x01(\v2\x1a.google.protobuf.TimestampR\n" +
 	"serverTime\"\x14\n" +
-	"\x12GetTaskSpecRequest\"\xa7\n" +
-	"\n" +
+	"\x12GetTaskSpecRequest\"\x87\v\n" +
 	"\bTaskSpec\x12\x1b\n" +
 	"\ttenant_id\x18\x01 \x01(\tR\btenantId\x12\x15\n" +
 	"\x06dag_id\x18\x02 \x01(\tR\x05dagId\x12\x1f\n" +
@@ -2135,7 +2158,10 @@ const file_agent_proto_rawDesc = "" +
 	"\x14declared_connections\x18\x19 \x03(\tR\x13declaredConnections\x12#\n" +
 	"\rattempt_epoch\x18\x1a \x01(\x03R\fattemptEpoch\x12\"\n" +
 	"\rrun_conf_json\x18\x1b \x01(\tR\vrunConfJson\x12\x19\n" +
-	"\brun_type\x18\x1c \x01(\tR\arunType\x1a>\n" +
+	"\brun_type\x18\x1c \x01(\tR\arunType\x12$\n" +
+	"\x0erun_start_date\x18\x1d \x01(\tR\frunStartDate\x12\x1b\n" +
+	"\trun_after\x18\x1e \x01(\tR\brunAfter\x12\x1b\n" +
+	"\trun_state\x18\x1f \x01(\tR\brunState\x1a>\n" +
 	"\x10EnvironmentEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\x1ad\n" +

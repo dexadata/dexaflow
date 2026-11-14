@@ -178,6 +178,9 @@ func TestGetTaskSpecMapsStoreData(t *testing.T) {
 		DeclaredConnections: []string{"warehouse"},
 		RunConfJSON:         `{"table":"orders"}`,
 		RunType:             "manual",
+		RunStartDate:        "2026-06-14T05:30:07Z",
+		RunAfter:            "2026-06-14T05:30:00Z",
+		RunState:            "running",
 	}}
 	srv, a := newServer(store)
 
@@ -215,6 +218,10 @@ func TestGetTaskSpecMapsStoreData(t *testing.T) {
 	}
 	if got := spec.GetRunType(); got != "manual" {
 		t.Errorf("run type = %q, want manual", got)
+	}
+	// The run's start, due time and state feed dag_run too (#2474).
+	if spec.GetRunStartDate() != "2026-06-14T05:30:07Z" || spec.GetRunAfter() != "2026-06-14T05:30:00Z" || spec.GetRunState() != "running" {
+		t.Errorf("run start/after/state = %q/%q/%q", spec.GetRunStartDate(), spec.GetRunAfter(), spec.GetRunState())
 	}
 }
 

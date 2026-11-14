@@ -364,6 +364,33 @@ func TestBuildEnvStampsRunConfAndType(t *testing.T) {
 	}
 }
 
+func TestBuildEnvStampsRunStartRunAfterAndState(t *testing.T) {
+	// The runtime's dag_run.start_date, run_after and state come from these
+	// (#2474); BigQueryInsertJobOperator reads start_date (#2473).
+	client := &fakeClient{spec: &agentv1.TaskSpec{
+		Operator:     "airflow_operator",
+		RunStartDate: "2026-06-14T05:30:07Z",
+		RunAfter:     "2026-06-14T05:30:00Z",
+		RunState:     "running",
+	}}
+	r := newRunner(client, &fakeCmd{}, &recordingSink{})
+
+	env, err := r.buildEnv(context.Background(), client.spec)
+	if err != nil {
+		t.Fatalf("buildEnv: %v", err)
+	}
+	je := strings.Join(env, "\n")
+	for _, want := range []string{
+		"LEOFLOW_RUN_START_DATE=2026-06-14T05:30:07Z",
+		"LEOFLOW_RUN_AFTER=2026-06-14T05:30:00Z",
+		"LEOFLOW_RUN_STATE=running",
+	} {
+		if !strings.Contains(je, want) {
+			t.Errorf("env missing %q; got %v", want, env)
+		}
+	}
+}
+
 func TestBuildEnvOmitsRunConfAndTypeFromAnOlderServer(t *testing.T) {
 	// A control plane that predates the fields sends neither; the runtime then
 	// reports dag_run.conf as not provided instead of an invented empty conf.
@@ -375,8 +402,10 @@ func TestBuildEnvOmitsRunConfAndTypeFromAnOlderServer(t *testing.T) {
 		t.Fatalf("buildEnv: %v", err)
 	}
 	for _, kv := range env {
-		if strings.HasPrefix(kv, "LEOFLOW_RUN_CONF=") || strings.HasPrefix(kv, "LEOFLOW_RUN_TYPE=") {
-			t.Errorf("env carries %q for a spec without the fields", kv)
+		for _, name := range []string{"LEOFLOW_RUN_CONF=", "LEOFLOW_RUN_TYPE=", "LEOFLOW_RUN_START_DATE=", "LEOFLOW_RUN_AFTER=", "LEOFLOW_RUN_STATE="} {
+			if strings.HasPrefix(kv, name) {
+				t.Errorf("env carries %q for a spec without the fields", kv)
+			}
 		}
 	}
 }

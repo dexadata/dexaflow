@@ -70,6 +70,16 @@ type TaskSpec struct {
 	// RunType is the DagRun's type in the Task SDK's DagRunType vocabulary
 	// (#1843). The agent stamps LEOFLOW_RUN_TYPE for dag_run.run_type.
 	RunType string
+	// RunStartDate is when the DagRun started running, RFC3339 (#2474). The
+	// agent stamps LEOFLOW_RUN_START_DATE for dag_run.start_date.
+	RunStartDate string
+	// RunAfter is when the DagRun became due, RFC3339, in the Task SDK's sense:
+	// the end of its data interval (#2474). The agent stamps LEOFLOW_RUN_AFTER
+	// for dag_run.run_after.
+	RunAfter string
+	// RunState is the DagRun's state when the spec was read (#2474). The agent
+	// stamps LEOFLOW_RUN_STATE for dag_run.state.
+	RunState string
 	// FirstRescheduleAt is when a reschedule-mode sensor first entered reschedule,
 	// RFC3339 (#380). The agent stamps LEOFLOW_FIRST_RESCHEDULE_AT so the sensor's
 	// get_first_reschedule_date returns it and cumulative timeout works. Empty on
@@ -343,6 +353,9 @@ func (s *Server) GetTaskSpec(ctx context.Context, _ *agentv1.GetTaskSpecRequest)
 		ParamsJson:              spec.ParamsJSON,
 		RunConfJson:             spec.RunConfJSON,
 		RunType:                 spec.RunType,
+		RunStartDate:            spec.RunStartDate,
+		RunAfter:                spec.RunAfter,
+		RunState:                spec.RunState,
 		FirstRescheduleAt:       spec.FirstRescheduleAt,
 		MaxTries:                clampInt32(spec.MaxTries),
 		OnFailureCallback:       spec.OnFailureCallback,

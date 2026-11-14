@@ -257,6 +257,31 @@ def test_operator_context_dag_run_without_delivered_conf_says_so(monkeypatch):
     assert not hasattr(dag_run, "run_type")
 
 
+def test_operator_context_dag_run_start_run_after_and_state(monkeypatch):
+    # BigQueryInsertJobOperator reads dag_run.start_date to name its job (#2473),
+    # Google Workflows reads run_after (#2474).
+    monkeypatch.setenv("LEOFLOW_RUN_START_DATE", "2026-06-14T05:30:07Z")
+    monkeypatch.setenv("LEOFLOW_RUN_AFTER", "2026-06-14T05:30:00Z")
+    monkeypatch.setenv("LEOFLOW_RUN_STATE", "running")
+    dag_run = runner._operator_context()["dag_run"]
+    assert dag_run.start_date == datetime(2026, 6, 14, 5, 30, 7, tzinfo=timezone.utc)
+    assert dag_run.run_after == datetime(2026, 6, 14, 5, 30, tzinfo=timezone.utc)
+    assert dag_run.state == "running"
+    assert dag_run.end_date is None
+
+
+def test_operator_context_dag_run_without_delivered_timing_says_so(monkeypatch):
+    # A control plane older than the agent delivers none of them: the attributes
+    # are missing with a message naming them and linking the docs.
+    for name in ("LEOFLOW_RUN_START_DATE", "LEOFLOW_RUN_AFTER", "LEOFLOW_RUN_STATE"):
+        monkeypatch.delenv(name, raising=False)
+    dag_run = runner._operator_context()["dag_run"]
+    with pytest.raises(AttributeError, match="'start_date'.*the-full-run-context"):
+        _ = dag_run.start_date
+    assert not hasattr(dag_run, "run_after")
+    assert not hasattr(dag_run, "state")
+
+
 def test_operator_context_dag_and_task_identity(monkeypatch):
     # Outside an operator run the runtime has no DAG or task object; the stand-ins
     # carry their ids, and ti.task is the same task (#1843).
@@ -270,7 +295,7 @@ def test_operator_context_dag_and_task_identity(monkeypatch):
 
 
 @pytest.mark.parametrize("key,name", [
-    ("dag", "get_task"), ("task", "execute"), ("dag_run", "start_date"), ("ti", "hostname")])
+    ("dag", "get_task"), ("task", "execute"), ("dag_run", "clear_number"), ("ti", "hostname")])
 def test_operator_context_missing_attribute_names_it(key, name):
     # A provider that reaches for an attribute the runtime lacks gets an error that
     # names it and says Dexaflow does not provide it, not a bare AttributeError.

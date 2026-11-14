@@ -2,10 +2,11 @@
 
 The runtime hands operators, ``@task`` functions and bash commands a context it
 builds itself (``runner._operator_context``), not the Task SDK's. These tests list
-the keys of the SDK's ``Context`` TypedDict and the public attributes of its
-``RuntimeTaskInstance`` and fail when the runtime neither provides one nor lists it
-below with the reason it cannot. A Task SDK bump that adds a key or an attribute
-therefore fails here, in the same pull request, instead of in a provider at run time.
+the keys of the SDK's ``Context`` TypedDict, the public attributes of its
+``RuntimeTaskInstance`` and the fields of its ``DagRun`` (#2474), and fail when the
+runtime neither provides one nor lists it below with the reason it cannot. A Task
+SDK bump that adds a key, an attribute or a field therefore fails here, in the same
+pull request, instead of in a provider at run time.
 
 They need the Task SDK, so they skip in the Airflow-free runtime job and run in the
 ``runtime-authoring-contract`` job, which installs the version ``runtime/Dockerfile``
@@ -19,6 +20,7 @@ import pytest
 
 pytest.importorskip("airflow.sdk")
 
+from airflow.sdk.api.datamodels._generated import DagRun  # noqa: E402
 from airflow.sdk.definitions.context import Context  # noqa: E402
 from airflow.sdk.execution_time.task_runner import RuntimeTaskInstance  # noqa: E402
 from pydantic import BaseModel  # noqa: E402
@@ -79,6 +81,36 @@ TI_ATTRIBUTES_NOT_PROVIDED = {
     "sentry_integration": "Sentry is not integrated",
 }
 
+# Task SDK DagRun fields the runtime's dag_run does not have (#2474).
+DAGRUN_ATTRIBUTES_NOT_PROVIDED = {
+    "clear_number": "the run's clear count is not delivered to the task",
+    "consumed_asset_events": "assets are not delivered to the task pod",
+    "note": "the run note is free text the task does not need; it is not delivered",
+    "partition_date": "Dexaflow runs have no partition",
+    "partition_key": "Dexaflow runs have no partition",
+    "team_name": "Dexaflow has no multi-team runs",
+    "triggering_user_name": "the triggering user is not delivered to the task",
+}
+
+# Every value the agent delivers, so the context is the fullest the runtime builds.
+_AGENT_ENV = {
+    "LEOFLOW_DAG_ID": "report",
+    "LEOFLOW_TASK_ID": "build",
+    "LEOFLOW_RUN_ID": "scheduled__2026-06-14T05:30:00+00:00",
+    "LEOFLOW_TRY_NUMBER": "1",
+    "LEOFLOW_MAX_TRIES": "1",
+    "LEOFLOW_TS": "2026-06-14T05:30:00Z",
+    "LEOFLOW_DS": "2026-06-14",
+    "LEOFLOW_DATA_INTERVAL_START": "2026-06-13T05:30:00Z",
+    "LEOFLOW_DATA_INTERVAL_END": "2026-06-14T05:30:00Z",
+    "LEOFLOW_PARAMS": json.dumps({"table": "orders"}),
+    "LEOFLOW_RUN_CONF": json.dumps({"table": "orders"}),
+    "LEOFLOW_RUN_TYPE": "scheduled",
+    "LEOFLOW_RUN_START_DATE": "2026-06-14T05:30:07Z",
+    "LEOFLOW_RUN_AFTER": "2026-06-14T05:30:00Z",
+    "LEOFLOW_RUN_STATE": "running",
+}
+
 _FAILING_TASK = """
 SEEN = []
 
@@ -110,18 +142,7 @@ def _provided_context_keys(tmp_path, monkeypatch) -> set:
     delivers, and return the keys its on_failure_callback received: the fullest
     context the runtime builds."""
     for name, value in {
-        "LEOFLOW_DAG_ID": "report",
-        "LEOFLOW_TASK_ID": "build",
-        "LEOFLOW_RUN_ID": "scheduled__2026-06-14T05:30:00+00:00",
-        "LEOFLOW_TRY_NUMBER": "1",
-        "LEOFLOW_MAX_TRIES": "1",
-        "LEOFLOW_TS": "2026-06-14T05:30:00Z",
-        "LEOFLOW_DS": "2026-06-14",
-        "LEOFLOW_DATA_INTERVAL_START": "2026-06-13T05:30:00Z",
-        "LEOFLOW_DATA_INTERVAL_END": "2026-06-14T05:30:00Z",
-        "LEOFLOW_PARAMS": json.dumps({"table": "orders"}),
-        "LEOFLOW_RUN_CONF": json.dumps({"table": "orders"}),
-        "LEOFLOW_RUN_TYPE": "scheduled",
+        **_AGENT_ENV,
         "LEOFLOW_ON_FAILURE_CALLBACK": "1",
         "LEOFLOW_RETURN_VALUE_PATH": str(tmp_path / "rv.json"),
     }.items():
@@ -175,3 +196,42 @@ def test_task_instance_exemptions_are_current():
     assert not provided, f"provided now, drop the exemption: {sorted(provided)}"
     gone = exempt - _sdk_ti_attributes()
     assert not gone, f"no longer on RuntimeTaskInstance, drop the exemption: {sorted(gone)}"
+
+
+def _full_dag_run(monkeypatch):
+    for name, value in _AGENT_ENV.items():
+        monkeypatch.setenv(name, value)
+    return runner._operator_context()["dag_run"]
+
+
+def test_dag_run_covers_the_task_sdk_dag_run(monkeypatch):
+    dag_run = _full_dag_run(monkeypatch)
+    missing = {
+        name for name in set(DagRun.model_fields) - set(DAGRUN_ATTRIBUTES_NOT_PROVIDED)
+        if not hasattr(dag_run, name)
+    }
+    assert not missing, (
+        f"the pinned Task SDK's DagRun has fields the runtime's dag_run neither has "
+        f"nor lists in DAGRUN_ATTRIBUTES_NOT_PROVIDED: {sorted(missing)}")
+
+
+def test_dag_run_exemptions_are_current(monkeypatch):
+    dag_run = _full_dag_run(monkeypatch)
+    exempt = set(DAGRUN_ATTRIBUTES_NOT_PROVIDED)
+    provided = {name for name in exempt if hasattr(dag_run, name)}
+    assert not provided, f"provided now, drop the exemption: {sorted(provided)}"
+    gone = exempt - set(DagRun.model_fields)
+    assert not gone, f"no longer on DagRun, drop the exemption: {sorted(gone)}"
+
+
+def test_dag_run_values_have_the_task_sdk_types(monkeypatch):
+    # The provided fields validate as a Task SDK DagRun, so a provider gets the
+    # types it expects (datetimes, a DagRunState value).
+    dag_run = _full_dag_run(monkeypatch)
+    fields = {
+        name: getattr(dag_run, name) for name in DagRun.model_fields
+        if name not in DAGRUN_ATTRIBUTES_NOT_PROVIDED
+    }
+    # The exempt fields the model requires get neutral values; they are not ours.
+    exempt_required = {"clear_number": 0, "consumed_asset_events": [], "partition_key": None}
+    DagRun.model_validate({**exempt_required, **fields})

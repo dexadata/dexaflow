@@ -307,6 +307,17 @@ func runContextEnv(spec *agentv1.TaskSpec) []string {
 	if v := spec.GetRunType(); v != "" {
 		env = append(env, "LEOFLOW_RUN_TYPE="+v)
 	}
+	// The run's start, due time and state, for dag_run.start_date, run_after
+	// and state (#2474). Unset from a control plane that predates them.
+	if v := spec.GetRunStartDate(); v != "" {
+		env = append(env, "LEOFLOW_RUN_START_DATE="+v)
+	}
+	if v := spec.GetRunAfter(); v != "" {
+		env = append(env, "LEOFLOW_RUN_AFTER="+v)
+	}
+	if v := spec.GetRunState(); v != "" {
+		env = append(env, "LEOFLOW_RUN_STATE="+v)
+	}
 	if v := spec.GetFirstRescheduleAt(); v != "" {
 		// Delivered to a re-dispatched reschedule-mode sensor so its
 		// get_first_reschedule_date returns the real first time and `timeout` is
