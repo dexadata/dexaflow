@@ -315,15 +315,16 @@ func runContextEnv(spec *agentv1.TaskSpec) []string {
 // invented value (an unknown conf is not an empty one).
 func dagRunEnv(spec *agentv1.TaskSpec) []string {
 	var env []string
+	// Each name carries its "=", as the other stamps in this file do.
 	for _, f := range []struct{ name, value string }{
-		{"LEOFLOW_RUN_CONF", spec.GetRunConfJson()},
-		{"LEOFLOW_RUN_TYPE", spec.GetRunType()},
-		{"LEOFLOW_RUN_START_DATE", spec.GetRunStartDate()},
-		{"LEOFLOW_RUN_AFTER", spec.GetRunAfter()},
-		{"LEOFLOW_RUN_STATE", spec.GetRunState()},
+		{"LEOFLOW_RUN_CONF=", spec.GetRunConfJson()},
+		{"LEOFLOW_RUN_TYPE=", spec.GetRunType()},
+		{"LEOFLOW_RUN_START_DATE=", spec.GetRunStartDate()},
+		{"LEOFLOW_RUN_AFTER=", spec.GetRunAfter()},
+		{"LEOFLOW_RUN_STATE=", spec.GetRunState()},
 	} {
 		if f.value != "" {
-			env = append(env, f.name+"="+f.value)
+			env = append(env, f.name+f.value)
 		}
 	}
 	return env
