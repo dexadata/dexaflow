@@ -207,7 +207,7 @@ type AgentTokenMinter interface {
 ```
 
 <a name="AgentTokenRenewer"></a>
-## type [AgentTokenRenewer](<https://github.com/dexadata/dexaflow/blob/main/internal/agentrpc/server.go#L106-L108>)
+## type [AgentTokenRenewer](<https://github.com/dexadata/dexaflow/blob/main/internal/agentrpc/server.go#L116-L118>)
 
 AgentTokenRenewer re\-mints a live attempt's agent token with a fresh short TTL, preserving the identity and the attempt's first\-dispatch origin. It is consulted only on a liveness\-proven heartbeat \(ADR 0055 Fix \#4\). ok is false when the attempt has outlived its max\-lifetime ceiling — the signal to let the credential lapse rather than refresh it. Implemented by \*auth.JWTAuthenticator.
 
@@ -218,7 +218,7 @@ type AgentTokenRenewer interface {
 ```
 
 <a name="Authenticator"></a>
-## type [Authenticator](<https://github.com/dexadata/dexaflow/blob/main/internal/agentrpc/server.go#L97-L99>)
+## type [Authenticator](<https://github.com/dexadata/dexaflow/blob/main/internal/agentrpc/server.go#L107-L109>)
 
 Authenticator verifies an agent bearer token into a task instance identity.
 
@@ -311,7 +311,7 @@ type LogBatchPublisher interface {
 ```
 
 <a name="LogPublisher"></a>
-## type [LogPublisher](<https://github.com/dexadata/dexaflow/blob/main/internal/agentrpc/server.go#L152-L154>)
+## type [LogPublisher](<https://github.com/dexadata/dexaflow/blob/main/internal/agentrpc/server.go#L162-L164>)
 
 LogPublisher fans a log line out for live tailing \(optional\).
 
@@ -322,7 +322,7 @@ type LogPublisher interface {
 ```
 
 <a name="LogResumer"></a>
-## type [LogResumer](<https://github.com/dexadata/dexaflow/blob/main/internal/agentrpc/server.go#L652>)
+## type [LogResumer](<https://github.com/dexadata/dexaflow/blob/main/internal/agentrpc/server.go#L665>)
 
 LogResumer is implemented by log sinks that can continue an attempt's stored log \(logs.DiskSink, logs.ObjectSink\): Resume opens a writer that keeps what is already stored, where Open may start the attempt over.
 
@@ -331,7 +331,7 @@ type LogResumer = logsink.Resumer
 ```
 
 <a name="LogSink"></a>
-## type [LogSink](<https://github.com/dexadata/dexaflow/blob/main/internal/agentrpc/server.go#L147-L149>)
+## type [LogSink](<https://github.com/dexadata/dexaflow/blob/main/internal/agentrpc/server.go#L157-L159>)
 
 LogSink opens a writer for a task attempt's streamed logs.
 
@@ -467,7 +467,7 @@ type SecretsStore interface {
 ```
 
 <a name="Server"></a>
-## type [Server](<https://github.com/dexadata/dexaflow/blob/main/internal/agentrpc/server.go#L157-L233>)
+## type [Server](<https://github.com/dexadata/dexaflow/blob/main/internal/agentrpc/server.go#L167-L243>)
 
 Server implements agentv1.AgentServiceServer over a Store and Authenticator.
 
@@ -479,7 +479,7 @@ type Server struct {
 ```
 
 <a name="NewServer"></a>
-### func [NewServer](<https://github.com/dexadata/dexaflow/blob/main/internal/agentrpc/server.go#L242>)
+### func [NewServer](<https://github.com/dexadata/dexaflow/blob/main/internal/agentrpc/server.go#L252>)
 
 ```go
 func NewServer(authn Authenticator, store Store, xcomSvc XComService) *Server
@@ -523,7 +523,7 @@ ExchangeToken validates the agent's projected ServiceAccount token \(bootstrap b
 It fails closed at every step: Unimplemented when the exchange is not wired, PermissionDenied on an insecure channel, Unauthenticated on a missing or rejected projected token, and Internal when the reviewed pod cannot be resolved to an attempt \(never mint an unscoped or misattributed token\). The minted token and the presented projected token are never logged.
 
 <a name="Server.FetchXCom"></a>
-### func \(\*Server\) [FetchXCom](<https://github.com/dexadata/dexaflow/blob/main/internal/agentrpc/server.go#L519>)
+### func \(\*Server\) [FetchXCom](<https://github.com/dexadata/dexaflow/blob/main/internal/agentrpc/server.go#L532>)
 
 ```go
 func (s *Server) FetchXCom(ctx context.Context, req *agentv1.FetchXComRequest) (*agentv1.FetchXComResponse, error)
@@ -550,7 +550,7 @@ func (s *Server) GetConnections(ctx context.Context, _ *agentv1.GetConnectionsRe
 GetConnections returns the calling task's tenant Connections as Airflow URIs for the agent to export as AIRFLOW\_CONN\_\<CONN\_ID\>.
 
 <a name="Server.GetTaskSpec"></a>
-### func \(\*Server\) [GetTaskSpec](<https://github.com/dexadata/dexaflow/blob/main/internal/agentrpc/server.go#L311>)
+### func \(\*Server\) [GetTaskSpec](<https://github.com/dexadata/dexaflow/blob/main/internal/agentrpc/server.go#L321>)
 
 ```go
 func (s *Server) GetTaskSpec(ctx context.Context, _ *agentv1.GetTaskSpecRequest) (*agentv1.TaskSpec, error)
@@ -568,7 +568,7 @@ func (s *Server) GetVariables(ctx context.Context, _ *agentv1.GetVariablesReques
 GetVariables returns the calling task's tenant Variables for the agent to export as AIRFLOW\_VAR\_\<KEY\>.
 
 <a name="Server.Heartbeat"></a>
-### func \(\*Server\) [Heartbeat](<https://github.com/dexadata/dexaflow/blob/main/internal/agentrpc/server.go#L419>)
+### func \(\*Server\) [Heartbeat](<https://github.com/dexadata/dexaflow/blob/main/internal/agentrpc/server.go#L432>)
 
 ```go
 func (s *Server) Heartbeat(ctx context.Context, _ *agentv1.HeartbeatRequest) (*agentv1.HeartbeatResponse, error)
@@ -577,7 +577,7 @@ func (s *Server) Heartbeat(ctx context.Context, _ *agentv1.HeartbeatRequest) (*a
 Heartbeat stamps the per\-TI liveness signal \(\#128\) and returns the server clock so the agent can detect skew. A storage error stamping the heartbeat is logged but does not fail the RPC — failing the call would risk the agent terminating itself unnecessarily on a transient DB blip. The scheduler reaper would, in the worst case, fail the TI as agent\_lost on the next tick; correct under "do no harm" \(ADR 0031\).
 
 <a name="Server.PushXCom"></a>
-### func \(\*Server\) [PushXCom](<https://github.com/dexadata/dexaflow/blob/main/internal/agentrpc/server.go#L491>)
+### func \(\*Server\) [PushXCom](<https://github.com/dexadata/dexaflow/blob/main/internal/agentrpc/server.go#L504>)
 
 ```go
 func (s *Server) PushXCom(ctx context.Context, req *agentv1.PushXComRequest) (*agentv1.PushXComResponse, error)
@@ -586,7 +586,7 @@ func (s *Server) PushXCom(ctx context.Context, req *agentv1.PushXComRequest) (*a
 PushXCom stores a value the task produced, keyed by the caller's identity. Size/schema violations are returned as a rejection, not a transport error, so the agent can fail the task with a clear reason.
 
 <a name="Server.Register"></a>
-### func \(\*Server\) [Register](<https://github.com/dexadata/dexaflow/blob/main/internal/agentrpc/server.go#L299>)
+### func \(\*Server\) [Register](<https://github.com/dexadata/dexaflow/blob/main/internal/agentrpc/server.go#L309>)
 
 ```go
 func (s *Server) Register(ctx context.Context, _ *agentv1.RegisterRequest) (*agentv1.RegisterResponse, error)
@@ -595,7 +595,7 @@ func (s *Server) Register(ctx context.Context, _ *agentv1.RegisterRequest) (*age
 Register acknowledges an agent's startup and returns the server clock.
 
 <a name="Server.ReportState"></a>
-### func \(\*Server\) [ReportState](<https://github.com/dexadata/dexaflow/blob/main/internal/agentrpc/server.go#L355>)
+### func \(\*Server\) [ReportState](<https://github.com/dexadata/dexaflow/blob/main/internal/agentrpc/server.go#L368>)
 
 ```go
 func (s *Server) ReportState(ctx context.Context, req *agentv1.ReportStateRequest) (*agentv1.ReportStateResponse, error)
@@ -631,7 +631,7 @@ func (s *Server) SetLivenessGate(checker TaskLivenessChecker, mode string)
 SetLivenessGate attaches the read\-only task\-instance liveness predicate the secret path consults, in the given mode \("observe" | "enforce", ADR 0055 E2\). An unrecognized mode falls back to observe — the safe, non\-denying default. A nil checker leaves the gate off \(delivery unchanged\), so the gate is opt\-in.
 
 <a name="Server.SetLogPublisher"></a>
-### func \(\*Server\) [SetLogPublisher](<https://github.com/dexadata/dexaflow/blob/main/internal/agentrpc/server.go#L278>)
+### func \(\*Server\) [SetLogPublisher](<https://github.com/dexadata/dexaflow/blob/main/internal/agentrpc/server.go#L288>)
 
 ```go
 func (s *Server) SetLogPublisher(p LogPublisher)
@@ -640,7 +640,7 @@ func (s *Server) SetLogPublisher(p LogPublisher)
 SetLogPublisher attaches the live\-tail publisher \(optional\). When set, StreamLogs publishes each line for the UI's live tail.
 
 <a name="Server.SetLogSink"></a>
-### func \(\*Server\) [SetLogSink](<https://github.com/dexadata/dexaflow/blob/main/internal/agentrpc/server.go#L274>)
+### func \(\*Server\) [SetLogSink](<https://github.com/dexadata/dexaflow/blob/main/internal/agentrpc/server.go#L284>)
 
 ```go
 func (s *Server) SetLogSink(sink LogSink)
@@ -685,7 +685,7 @@ func (s *Server) SetSecrets(store SecretsStore, allowInsecure bool)
 SetSecrets attaches the secrets store. allowInsecure permits serving secrets over a non\-TLS channel — for local/dev only; production must use TLS \(the handlers fail closed otherwise\). See ADR 0021 / issue \#58.
 
 <a name="Server.SetSettledHook"></a>
-### func \(\*Server\) [SetSettledHook](<https://github.com/dexadata/dexaflow/blob/main/internal/agentrpc/server.go#L238>)
+### func \(\*Server\) [SetSettledHook](<https://github.com/dexadata/dexaflow/blob/main/internal/agentrpc/server.go#L248>)
 
 ```go
 func (s *Server) SetSettledHook(fn func())
@@ -694,7 +694,7 @@ func (s *Server) SetSettledHook(fn func())
 SetSettledHook registers fn to run after an agent's terminal state report is recorded. The scheduler wires its coalescing Wake here when scheduler.eager\_promotion is on; fn must return without blocking.
 
 <a name="Server.SetShutdown"></a>
-### func \(\*Server\) [SetShutdown](<https://github.com/dexadata/dexaflow/blob/main/internal/agentrpc/server.go#L270>)
+### func \(\*Server\) [SetShutdown](<https://github.com/dexadata/dexaflow/blob/main/internal/agentrpc/server.go#L280>)
 
 ```go
 func (s *Server) SetShutdown(ctx context.Context)
@@ -703,7 +703,7 @@ func (s *Server) SetShutdown(ctx context.Context)
 SetShutdown wires the control plane's shutdown context: once ctx ends, every long\-lived stream returns Unavailable, so the gRPC graceful stop that follows completes instead of waiting for the tasks themselves to finish. An open StreamLogs first closes \(flushes\) its log writer; the agent treats the closed stream as best\-effort log delivery and keeps running its task. A StreamLogs that arrives AFTER the signal is refused before its writer is opened — the listener keeps accepting for the rest of the shutdown, and an opened\-then\- abandoned writer Puts an empty object over an attempt that is logging elsewhere. An open AwaitAssignment ends too — an idle warm worker holds one open indefinitely, so leaving it out would make the forced stop the normal shutdown path.
 
 <a name="Server.SetTailPublishOnDemand"></a>
-### func \(\*Server\) [SetTailPublishOnDemand](<https://github.com/dexadata/dexaflow/blob/main/internal/agentrpc/server.go#L284>)
+### func \(\*Server\) [SetTailPublishOnDemand](<https://github.com/dexadata/dexaflow/blob/main/internal/agentrpc/server.go#L294>)
 
 ```go
 func (s *Server) SetTailPublishOnDemand(on bool)
@@ -712,7 +712,7 @@ func (s *Server) SetTailPublishOnDemand(on bool)
 SetTailPublishOnDemand selects logs.tail.publish: false \(the default, "always"\) publishes every line as it arrives; true \("on\_demand"\) publishes only while a probe finds a follower, replaying the lines held since the last probe that found none \(see tailGate\).
 
 <a name="Server.SetTailReplayBudget"></a>
-### func \(\*Server\) [SetTailReplayBudget](<https://github.com/dexadata/dexaflow/blob/main/internal/agentrpc/server.go#L289>)
+### func \(\*Server\) [SetTailReplayBudget](<https://github.com/dexadata/dexaflow/blob/main/internal/agentrpc/server.go#L299>)
 
 ```go
 func (s *Server) SetTailReplayBudget(maxBytes int64, meter TailReplayMeter)
@@ -739,7 +739,7 @@ func (s *Server) SetTokenRejectionRecorder(r TokenRejectionRecorder)
 SetTokenRejectionRecorder attaches the rejection meter. A nil recorder \(the default\) counts nothing; the log line is written either way. It is safe to call while the server is already serving.
 
 <a name="Server.SetTokenRenewal"></a>
-### func \(\*Server\) [SetTokenRenewal](<https://github.com/dexadata/dexaflow/blob/main/internal/agentrpc/server.go#L255>)
+### func \(\*Server\) [SetTokenRenewal](<https://github.com/dexadata/dexaflow/blob/main/internal/agentrpc/server.go#L265>)
 
 ```go
 func (s *Server) SetTokenRenewal(renewer AgentTokenRenewer, renewalTTL, maxAttemptLifetime time.Duration)
@@ -757,7 +757,7 @@ func (s *Server) SetWarmPools(reg *WorkerRegistry)
 SetWarmPools wires a prebuilt warm\-worker assignment registry \(ADR 0058 N1b\). A nil registry \(the default\) leaves AwaitAssignment inert — it returns FailedPrecondition — so with execution.warm\_pools\_enabled off the transport is completely dormant and no running path changes. Used by tests to inject a registry with a deterministic lease; callers wire it via EnableWarmPools.
 
 <a name="Server.StreamLogs"></a>
-### func \(\*Server\) [StreamLogs](<https://github.com/dexadata/dexaflow/blob/main/internal/agentrpc/server.go#L559>)
+### func \(\*Server\) [StreamLogs](<https://github.com/dexadata/dexaflow/blob/main/internal/agentrpc/server.go#L572>)
 
 ```go
 func (s *Server) StreamLogs(stream agentv1.AgentService_StreamLogsServer) (err error)
@@ -766,7 +766,7 @@ func (s *Server) StreamLogs(stream agentv1.AgentService_StreamLogsServer) (err e
 StreamLogs receives the task's log lines and writes them through the sink, flushing on stream end so the logs survive the pod. The stream also ends when the control plane shuts down \(SetShutdown\), so the flush runs before exit — and a stream that ARRIVES after that signal is refused before any writer is opened, so it leaves no empty object behind.
 
 <a name="Store"></a>
-## type [Store](<https://github.com/dexadata/dexaflow/blob/main/internal/agentrpc/server.go#L119-L138>)
+## type [Store](<https://github.com/dexadata/dexaflow/blob/main/internal/agentrpc/server.go#L129-L148>)
 
 Store is the server's view of persistent task state.
 
@@ -845,7 +845,7 @@ type TaskLivenessChecker interface {
 ```
 
 <a name="TaskSpec"></a>
-## type [TaskSpec](<https://github.com/dexadata/dexaflow/blob/main/internal/agentrpc/server.go#L30-L94>)
+## type [TaskSpec](<https://github.com/dexadata/dexaflow/blob/main/internal/agentrpc/server.go#L30-L104>)
 
 TaskSpec is the execution specification the agent needs to run a task.
 
@@ -893,6 +893,16 @@ type TaskSpec struct {
     // RunType is the DagRun's type in the Task SDK's DagRunType vocabulary
     // (#1843). The agent stamps LEOFLOW_RUN_TYPE for dag_run.run_type.
     RunType string
+    // RunStartDate is when the DagRun started running, RFC3339 (#2474). The
+    // agent stamps LEOFLOW_RUN_START_DATE for dag_run.start_date.
+    RunStartDate string
+    // RunAfter is when the DagRun became due, RFC3339, in the Task SDK's sense:
+    // the end of its data interval (#2474). The agent stamps LEOFLOW_RUN_AFTER
+    // for dag_run.run_after.
+    RunAfter string
+    // RunState is the DagRun's state when the spec was read (#2474). The agent
+    // stamps LEOFLOW_RUN_STATE for dag_run.state.
+    RunState string
     // FirstRescheduleAt is when a reschedule-mode sensor first entered reschedule,
     // RFC3339 (#380). The agent stamps LEOFLOW_FIRST_RESCHEDULE_AT so the sensor's
     // get_first_reschedule_date returns it and cumulative timeout works. Empty on
@@ -1091,7 +1101,7 @@ func (r *WorkerRegistry) Touch(w *registeredWorker)
 Touch records that w's stream is alive \(any worker message, including the periodic heartbeat\). It is a no\-op unless the registry still points at exactly this entry, so a superseded stream cannot keep its replacement alive.
 
 <a name="XComService"></a>
-## type [XComService](<https://github.com/dexadata/dexaflow/blob/main/internal/agentrpc/server.go#L141-L144>)
+## type [XComService](<https://github.com/dexadata/dexaflow/blob/main/internal/agentrpc/server.go#L151-L154>)
 
 XComService stores and retrieves XCom values for the agent.
 

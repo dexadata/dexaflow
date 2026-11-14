@@ -156,6 +156,12 @@ func (s *ExecutionStore) TaskSpec(ctx context.Context, id auth.AgentIdentity) (a
 		ParamsJSON:        paramsJSON,
 		RunConfJSON:       runConfJSON(run.Conf),
 		RunType:           taskSDKRunType(run.Trigger),
+		RunStartDate:      rfc3339OrEmpty(run.StartedAt),
+		// Airflow 3's run_after for a run whose data interval is its logical
+		// date at both ends (#2446) is that date: the data interval end, which
+		// already falls back to the logical date for an older run.
+		RunAfter:          dataIntervalEnd,
+		RunState:          string(run.State),
 		FirstRescheduleAt: firstRescheduleAt,
 		MaxTries:          attemptBudget,
 		OnFailureCallback: task.OnFailureCallback,

@@ -414,6 +414,11 @@ def _load_xcom_by_task() -> dict:
     return decoded if isinstance(decoded, dict) else {}
 
 
+# The docs section listing what the task context carries and what it does not.
+CONTEXT_DOCS_URL = (
+    "https://dexaflow.dexadata.ai/author-dags/operators-sensors/#the-full-run-context")
+
+
 class NotProvidedError(AttributeError):
     """NotProvidedError is raised for a context attribute Dexaflow does not provide.
 
@@ -422,13 +427,14 @@ class NotProvidedError(AttributeError):
     data for and no others. A provider that reaches for another one gets this
     error, which names the attribute, instead of a bare AttributeError deep inside
     the provider (#1843). It is an AttributeError, so ``hasattr`` and
-    ``getattr(obj, name, default)`` keep working.
+    ``getattr(obj, name, default)`` keep working. The message links the docs
+    section that lists what the context carries (#2474).
     """
 
     def __init__(self, owner: str, name: str) -> None:
         super().__init__(
             f"{owner} has no attribute {name!r}: Dexaflow does not provide it in the "
-            f"task context yet (#1843)")
+            f"task context yet (see {CONTEXT_DOCS_URL})")
         self.name = name
 
 
@@ -471,12 +477,15 @@ class _StandaloneDag(_ContextObject):
 class _StandaloneDagRun(_ContextObject):
     """The ``dag_run`` key, shaped like the Task SDK's DagRun for the fields the
     agent delivers: ``dag_id``, ``run_id``, ``logical_date``, the data interval,
-    ``run_type`` (LEOFLOW_RUN_TYPE, the Task SDK's DagRunType value) and ``conf``
+    ``run_type`` (LEOFLOW_RUN_TYPE, the Task SDK's DagRunType value), ``conf``
     (LEOFLOW_RUN_CONF, the run conf alone, without the param defaults that
-    ``params`` layers under it). A control plane that does not deliver
-    ``conf`` or ``run_type`` leaves the attribute missing rather than invented.
-    ``start_date``, ``end_date``, ``state`` and the rest are not delivered to the
-    pod, so they are not provided."""
+    ``params`` layers under it), ``start_date`` (LEOFLOW_RUN_START_DATE),
+    ``run_after`` (LEOFLOW_RUN_AFTER, when the run became due) and ``state``
+    (LEOFLOW_RUN_STATE) (#2474). ``end_date`` is None, as on a running run. A
+    control plane that does not deliver one of these leaves the attribute
+    missing rather than invented. The fields listed in
+    ``tests/test_task_sdk_context_contract.py`` are not delivered to the pod, so
+    they are not provided."""
 
     _owner = "the DAG run"
 
@@ -492,6 +501,18 @@ class _StandaloneDagRun(_ContextObject):
         raw_conf = os.environ.get("LEOFLOW_RUN_CONF")
         if raw_conf is not None:
             self.conf = _json_object(raw_conf)
+        # BigQueryInsertJobOperator and the other BigQuery job operators read
+        # start_date to name their job (#2473); Google Workflows reads run_after.
+        for attr, env in (("start_date", "LEOFLOW_RUN_START_DATE"),
+                          ("run_after", "LEOFLOW_RUN_AFTER")):
+            value = _parse_dt(os.environ.get(env))
+            if value is not None:
+                setattr(self, attr, value)
+        state = os.environ.get("LEOFLOW_RUN_STATE")
+        if state:
+            self.state = state
+        # The task runs while its run does, and a running run has no end yet.
+        self.end_date = None
 
 
 def _json_object(raw: str | None) -> dict:

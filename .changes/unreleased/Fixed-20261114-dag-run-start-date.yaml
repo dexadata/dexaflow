@@ -1,0 +1,13 @@
+kind: Fixed
+body: |-
+  **`BigQueryInsertJobOperator`, `GCSToBigQueryOperator` and
+  `BigQueryToGCSOperator` work.** They name their job from
+  `dag_run.start_date`, which the task context did not carry, so they failed
+  before submitting it with "the DAG run has no attribute 'start_date'". The
+  context's `dag_run` now carries `start_date`, `run_after` (which
+  `WorkflowsCreateWorkflowOperator` reads), `state` and `end_date`, and the
+  runtime's tests compare `dag_run` with the pinned Task SDK's `DagRun`, so a
+  field a new Task SDK adds is either provided or listed as not provided. The
+  error for an attribute Dexaflow does not provide now links the docs section
+  that lists them (#2473, #2474).
+time: 2026-11-14T12:40:00.000000000+00:00

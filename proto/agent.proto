@@ -148,6 +148,9 @@ message TaskSpec {
     int64 attempt_epoch = 26;                         // Which execution of this try the agent is (ADR 0051 amendment), read from its verified token; 0 for a token minted before the epoch existed. Informational for the agent: the control plane fences on the token, never on this field.
     string run_conf_json = 27;                        // The DagRun's conf alone, JSON-encoded ("{}" for a run without one), not layered with param defaults as params_json is (#1843). Stamped as LEOFLOW_RUN_CONF -> context dag_run.conf. Empty from a control plane that predates the field; the runtime then reports dag_run.conf as not provided.
     string run_type = 28;                             // The DagRun's type in the Task SDK's DagRunType vocabulary (manual, scheduled, backfill, asset_triggered) (#1843). Stamped as LEOFLOW_RUN_TYPE -> context dag_run.run_type. Empty leaves it unset.
+    string run_start_date = 29;                       // When the DagRun started running, RFC3339 (#2474). Stamped as LEOFLOW_RUN_START_DATE -> context dag_run.start_date. Empty from a control plane that predates the field; the runtime then reports dag_run.start_date as not provided.
+    string run_after = 30;                            // When the DagRun became due, RFC3339, in the Task SDK's run_after sense: the end of its data interval (#2474). Stamped as LEOFLOW_RUN_AFTER -> context dag_run.run_after. Empty leaves it unset.
+    string run_state = 31;                            // The DagRun's state when the spec was read ("running" while its tasks run) (#2474). Stamped as LEOFLOW_RUN_STATE -> context dag_run.state. Empty leaves it unset.
 }
 
 // XComUpstreams is the list of upstream task_ids whose return_values feed one

@@ -182,15 +182,23 @@ logical date. `macros` is the Task SDK's macros module
 
 `dag_run` carries `dag_id`, `run_id`, `logical_date`, `data_interval_start`,
 `data_interval_end`, `run_type` (the Task SDK's values: `manual`, `scheduled`,
-`backfill`, `asset_triggered`) and `conf`, the run's conf alone. `conf` is not
+`backfill`, `asset_triggered`), `conf`, the run's conf alone, `start_date` (when
+the run started), `run_after` (when the run became due: the end of its data
+interval, so the logical date), `state` (`running` while its tasks run) and
+`end_date` (`None`, as on any running run). `conf` is not
 `params`: it holds what the run was triggered with, without the param
-defaults that `params` layers under it. On an operator run `task` is the
+defaults that `params` layers under it. Before 0.5.11 `dag_run` had no
+`start_date` or `run_after`, so `BigQueryInsertJobOperator`,
+`GCSToBigQueryOperator` and `BigQueryToGCSOperator`, which name their job from
+`start_date`, failed before submitting it
+([#2473](https://github.com/dexadata/dexaflow/issues/2473),
+[#2474](https://github.com/dexadata/dexaflow/issues/2474)). On an operator run `task` is the
 operator itself; on a `@task` or bash task, and for `dag` everywhere, the
 runtime holds no Airflow object, so `task` and `dag` carry their ids
 (`{{ task.task_id }}`, `{{ dag.dag_id }}`) and nothing else.
 
 The context objects carry only what the agent delivers. An attribute they
-lack, such as `dag_run.start_date` or `ti.hostname`, raises an
+lack, such as `dag_run.clear_number` or `ti.hostname`, raises an
 `AttributeError` that names it and says Dexaflow does not provide it, instead
 of a bare error deep inside a provider. These Task SDK keys are not provided,
 because the task pod has no data for them: `prev_data_interval_start_success`,
@@ -201,10 +209,14 @@ because the task pod has no data for them: `prev_data_interval_start_success`,
 `task_state_store`, `expanded_ti_count`,
 `map_index_template`, `partition_key`, `partition_date`, `reason` and
 `test_mode`. A template that names one renders it as an empty string (an
-empty quoted argument in a bash command). The
-runtime's tests compare this list with the pinned Task SDK, so a Task SDK
-upgrade that adds a key fails until it is provided or listed
-([#1843](https://github.com/dexadata/dexaflow/issues/1843)).
+empty quoted argument in a bash command). `dag_run` does not carry
+`clear_number`, `note`, `triggering_user_name`, `consumed_asset_events`,
+`partition_key`, `partition_date` or `team_name`. The
+runtime's tests compare these lists, and the task instance's, with the pinned
+Task SDK, so a Task SDK upgrade that adds a key or a field fails until it is
+provided or listed
+([#1843](https://github.com/dexadata/dexaflow/issues/1843),
+[#2474](https://github.com/dexadata/dexaflow/issues/2474)).
 
 `params` (#148) are layered as in Airflow: the DAG's declared param defaults,
 then the task's own `params=`, then the run's `conf`, each winning per key. The
@@ -213,9 +225,10 @@ them into `DEXAFLOW_PARAMS`, and the runtime merges the operator's `params=`
 under them before rendering, so `{{ params.x }}` sees task params too (#1841,
 #1844). A `BashOperator`'s and a `@task`'s own `params=` are captured by the
 compiler as the task's `params` in `dag.json` and layered the same way (#1843).
-The data interval, logical date, run conf and run type
+The data interval, logical date, run conf, run type, start, due time and state
 ride through the gRPC `TaskSpec` (proto fields `logical_date`,
-`data_interval_start/end`, `params_json`, `run_conf_json`, `run_type`).
+`data_interval_start/end`, `params_json`, `run_conf_json`, `run_type`,
+`run_start_date`, `run_after`, `run_state`).
 
 ### XCom chaining between tasks — like Airflow
 

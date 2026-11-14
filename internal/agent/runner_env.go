@@ -298,20 +298,34 @@ func runContextEnv(spec *agentv1.TaskSpec) []string {
 	if v := spec.GetParamsJson(); v != "" {
 		env = append(env, "LEOFLOW_PARAMS="+v)
 	}
-	// The run conf alone and the run type, for the runtime's dag_run (#1843).
-	// Unset from a control plane that predates them, so the runtime can tell an
-	// unknown conf from an empty one.
-	if v := spec.GetRunConfJson(); v != "" {
-		env = append(env, "LEOFLOW_RUN_CONF="+v)
-	}
-	if v := spec.GetRunType(); v != "" {
-		env = append(env, "LEOFLOW_RUN_TYPE="+v)
-	}
+	env = append(env, dagRunEnv(spec)...)
 	if v := spec.GetFirstRescheduleAt(); v != "" {
 		// Delivered to a re-dispatched reschedule-mode sensor so its
 		// get_first_reschedule_date returns the real first time and `timeout` is
 		// honored cumulatively across pokes (#380). Empty on the first attempt.
 		env = append(env, "LEOFLOW_FIRST_RESCHEDULE_AT="+v)
+	}
+	return env
+}
+
+// dagRunEnv renders the run fields the runtime's dag_run carries beyond its
+// identity: the run conf alone and the run type (#1843), and the run's start,
+// due time and state (#2474). Each is unset from a control plane that predates
+// it, so the runtime reports the attribute as not provided instead of an
+// invented value (an unknown conf is not an empty one).
+func dagRunEnv(spec *agentv1.TaskSpec) []string {
+	var env []string
+	// Each name carries its "=", as the other stamps in this file do.
+	for _, f := range []struct{ name, value string }{
+		{"LEOFLOW_RUN_CONF=", spec.GetRunConfJson()},
+		{"LEOFLOW_RUN_TYPE=", spec.GetRunType()},
+		{"LEOFLOW_RUN_START_DATE=", spec.GetRunStartDate()},
+		{"LEOFLOW_RUN_AFTER=", spec.GetRunAfter()},
+		{"LEOFLOW_RUN_STATE=", spec.GetRunState()},
+	} {
+		if f.value != "" {
+			env = append(env, f.name+f.value)
+		}
 	}
 	return env
 }
