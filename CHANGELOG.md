@@ -248,6 +248,17 @@ adhere to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **`BigQueryInsertJobOperator`, `GCSToBigQueryOperator` and
+  `BigQueryToGCSOperator` work.** They name their job from
+  `dag_run.start_date`, which the task context did not carry, so they failed
+  before submitting it with "the DAG run has no attribute 'start_date'". The
+  context's `dag_run` now carries `start_date`, `run_after` (which
+  `WorkflowsCreateWorkflowOperator` reads), `state` and `end_date`, and the
+  runtime's tests compare `dag_run` with the pinned Task SDK's `DagRun`, so a
+  field a new Task SDK adds is either provided or listed as not provided. The
+  error for an attribute Dexaflow does not provide now links the docs section
+  that lists them (#2473, #2474).
+
 - **An `EmptyOperator` no longer fails the compile of a DAG whose
   `default_args` set `on_failure_callback`.** In v0.5.10-rc.2 the inherited
   callback was refused on every bash task, and an `EmptyOperator` compiles to
@@ -316,6 +327,13 @@ adhere to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   of every tenant, with "out of range for type integer".
 
 ### Security
+
+- **The `data` runtime image ships dnspython 2.9.2 and soupsieve 4.1.** They fix
+  CVE-2026-128089 (excessive memory and CPU use in dnspython, pulled in by
+  email-validator) and CVE-2026-126190 and CVE-2026-126191 (denial of service
+  in soupsieve selector matching and compilation, pulled in by beautifulsoup4).
+  The lock is now compiled for Python 3.11.5 or later, so the resolver no longer
+  skips releases that require it.
 
 - **Binaries and images are built with Go 1.26.11.** It fixes GO-2026-6859
   (CVE-2026-97054) in `net/http`: when a `MaxBytesReader` limit was exceeded,
