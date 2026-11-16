@@ -134,7 +134,14 @@ pass "no INVALID index"
 log "comparing the schema with a fresh install"
 "$TMP/dexaflow-migrate" -path migrations -database "$FRESH_URL" up >"$TMP/fresh.log" 2>&1 \
   || fail "the fresh install failed" "$TMP/fresh.log"
-dump() { pg_dump --schema-only --no-owner --no-privileges --no-comments "$1" | grep -v '^\\\(un\)\?restrict ' | grep -v '^--' | sed '/^$/d'; }
+# Newer pg_dump builds print a per-column `pg_attver` attribute option whose
+# value depends on the database it was read from, not on the schema; it is
+# stripped so two databases with the same schema compare equal.
+dump() {
+  pg_dump --schema-only --no-owner --no-privileges --no-comments "$1" \
+    | grep -v '^\\\(un\)\?restrict ' | grep -v '^--' \
+    | sed -E 's/pg_attver=[0-9]+(, )?//; s/, \)/)/' | grep -v ' SET ();$' | sed '/^$/d'
+}
 dump "$SKIP_URL" >"$TMP/skip.sql"
 dump "$FRESH_URL" >"$TMP/fresh.sql"
 if ! diff -u "$TMP/fresh.sql" "$TMP/skip.sql" >"$TMP/schema.diff"; then
