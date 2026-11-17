@@ -230,6 +230,14 @@ read the body before the tag.
    (`scripts/release-ci-gate.sh`, see
    [Red CI blocks a release](#red-ci-blocks-a-release)); running checks are
    waited for, and a red one stops the cut before anything is prepared.
+   For a **GA**, `scripts/release-data-image-scan.sh` then scans the
+   published data image of the rc being promoted (its newest rc, else the
+   newest rc of any version, refused unless its `runtime/`, `go.mod`, `go.sum`
+   and `GO_VERSION` equal the tip's), both platforms, with today's advisories
+   and the tip's `.trivyignore.yaml`. The Release workflow rebuilds that image
+   and scans it the same way, so a finding here is one the tag would hit:
+   v0.5.10 was spent on eight aiohttp advisories published after its rc. A
+   dry run reports the result; the real cut stops before preparing anything.
 2. **Prepare**: a `release/<tag>` branch off the base. Bump
    `helm/dexaflow/Chart.yaml` `version`+`appVersion` in lockstep (ADR 0028), regenerate the chart README with
    `helm-docs`, fold the pending changelog fragments into `[Unreleased]`, and
