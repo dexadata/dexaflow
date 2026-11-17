@@ -69,7 +69,16 @@ func (t cliTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 // picked one of those idle connections then fails with "transport connection
 // broken: http: CloseIdleConnections called". A transport of its own keeps
 // CLI requests out of that.
-var cliBaseTransport = http.DefaultTransport.(*http.Transport).Clone()
+var cliBaseTransport = cloneDefaultTransport()
+
+// cloneDefaultTransport copies http.DefaultTransport, or falls back to the
+// shared one if something in the process replaced it with another type.
+func cloneDefaultTransport() http.RoundTripper {
+	if t, ok := http.DefaultTransport.(*http.Transport); ok {
+		return t.Clone()
+	}
+	return http.DefaultTransport
+}
 
 // cliHTTPClient is the HTTP client of every request the CLI sends to a
 // control plane, with the given timeout (0 for none): cliBaseTransport
