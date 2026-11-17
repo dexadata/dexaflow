@@ -1,8 +1,0 @@
-kind: Fixed
-body: |-
-  **`get_current_context()` works inside a task body.** The runtime now sets the
-  Task SDK's current context around a `@task` function and an operator's
-  `execute()`, as Airflow's task runner does, so a task that calls
-  `get_current_context()` instead of taking `**context`, or provider code that
-  does, no longer fails with "no context was found".
-time: 2026-11-17T11:10:00.000000000+00:00

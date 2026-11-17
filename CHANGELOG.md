@@ -248,6 +248,12 @@ adhere to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Fixed
 
+- **`get_current_context()` works inside a task body.** The runtime now sets the
+  Task SDK's current context around a `@task` function and an operator's
+  `execute()`, as Airflow's task runner does, so a task that calls
+  `get_current_context()` instead of taking `**context`, or provider code that
+  does, no longer fails with "no context was found".
+
 - **`BigQueryInsertJobOperator`, `GCSToBigQueryOperator` and
   `BigQueryToGCSOperator` work.** They name their job from
   `dag_run.start_date`, which the task context did not carry, so they failed
