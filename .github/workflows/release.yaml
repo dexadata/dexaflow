@@ -625,6 +625,12 @@ jobs:
       # runner's architecture: without TRIVY_PLATFORM the arm64 half fails
       # with "no child with platform linux/amd64" before scanning anything
       # (v0.5.8-rc.2).
+      #
+      # An rc refuses HIGH and CRITICAL; a GA refuses CRITICAL only (ADR 0108).
+      # The rc gate already refused every HIGH the database knew about, so a
+      # HIGH the GA scan finds was published after the last rc. It does not
+      # stop the GA: the next step reports it and the data-scan-report job
+      # opens an issue for the next patch.
       - name: Scan the data image's language packages
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         env:
@@ -635,11 +641,41 @@ jobs:
           scan-type: image
           image-ref: ${{ env.REGISTRY }}/${{ github.repository_owner }}/dexaflow-runtime@${{ steps.build.outputs.digest }}
           scanners: vuln
-          severity: CRITICAL,HIGH
+          severity: ${{ contains(github.ref_name, '-rc.') && 'CRITICAL,HIGH' || 'CRITICAL' }}
           ignore-unfixed: true
           trivyignores: .trivyignore.yaml
           exit-code: 1
           format: table
+
+      # GA only: the HIGH findings the step above let through (ADR 0108). Same
+      # image, same database, same ignore file; it never fails the job.
+      - name: Report HIGH findings published after the rc
+        if: ${{ !contains(github.ref_name, '-rc.') }}
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        env:
+          TRIVY_PKG_TYPES: library
+          TRIVY_PLATFORM: linux/${{ matrix.arch }}
+          TRIVY_SKIP_DB_UPDATE: "true"
+        with:
+          version: ${{ env.TRIVY_VERSION }}
+          scan-type: image
+          image-ref: ${{ env.REGISTRY }}/${{ github.repository_owner }}/dexaflow-runtime@${{ steps.build.outputs.digest }}
+          scanners: vuln
+          severity: HIGH
+          ignore-unfixed: true
+          trivyignores: .trivyignore.yaml
+          exit-code: 0
+          format: json
+          output: data-high-${{ matrix.arch }}.json
+
+      - name: Upload the HIGH report
+        if: ${{ !contains(github.ref_name, '-rc.') }}
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: runtime-data-high-${{ matrix.arch }}
+          path: data-high-${{ matrix.arch }}.json
+          if-no-files-found: error
+          retention-days: 90
 
       - name: Record the digest
         env:
@@ -655,6 +691,84 @@ jobs:
           path: ${{ runner.temp }}/digests/*
           if-no-files-found: error
           retention-days: 1
+
+  # ADR 0108: one issue per GA that shipped with a HIGH finding published after
+  # its last rc, in the next patch's milestone, so the fix has an owner and a
+  # deadline. Nothing needs this job: it reports, it never holds the release.
+  data-scan-report:
+    name: Report HIGH findings in the data image (GA)
+    needs: runtime-data-image-build
+    if: ${{ !contains(github.ref_name, '-rc.') }}
+    # A failure here (an API hiccup, a missing milestone) must not mark the run
+    # failed: cut-release.sh reads the run's conclusion and would re-draft a
+    # release whose gates all passed.
+    continue-on-error: true
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: runtime-data-high-*
+          path: ${{ runner.temp }}/data-high
+          merge-multiple: true
+
+      - name: Open the issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ github.ref_name }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          DIR: ${{ runner.temp }}/data-high
+        run: |
+          set -euo pipefail
+          # One line per finding, the same on both architectures, so a pure
+          # Python package found twice is listed once.
+          findings="$(jq -r '.Results[]? | .Vulnerabilities[]? |
+            "| \(.VulnerabilityID) | \(.PkgName) \(.InstalledVersion) | \(.FixedVersion) | `\(.PkgPath // "")` |"' \
+            "$DIR"/*.json | sort -u)"
+          if [ -z "$findings" ]; then
+            echo "no HIGH finding in the data image"
+            exit 0
+          fi
+          title="${TAG}: HIGH findings published after its rc"
+          {
+            echo "### ${title}"
+            echo
+            echo "| ID | Package | Fixed in | Path |"
+            echo "|---|---|---|---|"
+            echo "$findings"
+          } >> "$GITHUB_STEP_SUMMARY"
+          existing="$(gh issue list --state all --limit 100 --search "in:title ${title}" \
+            --json number,title --jq "[.[] | select(.title == \"${title}\")][0].number // empty")"
+          if [ -n "$existing" ]; then
+            echo "issue #${existing} already exists"
+            exit 0
+          fi
+          # The next patch: the open milestone with the lowest version above
+          # this tag. Left unset when there is none, the issue still opens.
+          ver="${TAG#v}"
+          milestone="$(gh api "repos/${GH_REPO}/milestones?state=open&per_page=100" --jq '.[].title' \
+            | sed -n 's/^v\([0-9]*\.[0-9]*\.[0-9]*\)$/\1/p' \
+            | { cat; echo "$ver"; } | sort -t. -k1,1n -k2,2n -k3,3n -u \
+            | awk -v v="$ver" 'found {print; exit} $0 == v {found=1}')"
+          {
+            echo "The data image of ${TAG} was published with these fixable HIGH findings."
+            echo "The vulnerability database learned about them after the last rc was scanned,"
+            echo "so they did not stop the GA (ADR 0108)."
+            echo
+            echo "| ID | Package | Fixed in | Path |"
+            echo "|---|---|---|---|"
+            echo "$findings"
+            echo
+            echo "Fix them in the next patch, or accept them in \`.trivyignore.yaml\` with a"
+            echo "statement and an expiry, within seven days. Reports: ${RUN_URL}"
+          } > "$RUNNER_TEMP/issue.md"
+          args=(--title "$title" --body-file "$RUNNER_TEMP/issue.md")
+          if [ -n "$milestone" ]; then args+=(--milestone "v${milestone}"); fi
+          gh issue create "${args[@]}"
 
   runtime-data-image:
     name: Publish dexaflow-runtime data (py3.11)
