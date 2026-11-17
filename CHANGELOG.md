@@ -334,6 +334,14 @@ adhere to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Security
 
+- **The `data` runtime image ships ray 2.60.0.** ray bundles its own copy of
+  aiohttp for the runtime-env agent, and 2.60.0 moves it from 3.14.3 to 3.14.4,
+  which fixes CVE-2026-128124 and CVE-2026-128126 through CVE-2026-128132
+  (aiohttp, published after v0.5.10-rc.5) along with CVE-2026-111064,
+  CVE-2026-111066, CVE-2026-123817 and GHSA-2g87-pp6c-29x5, which were accepted
+  until now. The site-packages aiohttp that task code imports was already on
+  3.14.5.
+
 - **The `data` runtime image ships dnspython 2.9.2 and soupsieve 4.1.** They fix
   CVE-2026-128089 (excessive memory and CPU use in dnspython, pulled in by
   email-validator) and CVE-2026-126190 and CVE-2026-126191 (denial of service
