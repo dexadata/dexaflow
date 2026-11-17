@@ -71,15 +71,13 @@
 # PIP_VERSION in runtime/Dockerfile and delete what it fixes.
 #
 # The data variant (runtime/data) adds the second group below: the jackson and
-# guava jars bundled in ray's ray_dist.jar and the aiohttp ray vendors for its
-# runtime-env agent (#2247). ray comes from apache-airflow-providers-google,
-# and ray 2.59.0, the newest release, still bundles these versions. None of it
-# runs in a task: the image has no JVM to load the jar, and the runtime-env
-# agent is a ray cluster server nothing in the image starts. The purls name the
-# bundled versions only, so the site-packages aiohttp (a separate install) and
-# any other copy stay scanned. These entries lapse before the pip ones so the
-# next ray release is checked sooner: when the findings come back, recompile
-# the data lock and delete what the new ray fixes.
+# guava jars bundled in ray's ray_dist.jar (#2247). ray comes from
+# apache-airflow-providers-google, and ray 2.60.0, the newest release, still
+# bundles these versions. None of it runs in a task: the image has no JVM to
+# load the jar. The purls name the bundled versions only, so any other copy
+# stays scanned. These entries lapse before the pip ones so the next ray
+# release is checked sooner: when the findings come back, recompile the data
+# lock and delete what the new ray fixes.
 
 vulnerabilities:
   - id: CVE-2026-97687
@@ -150,7 +148,7 @@ vulnerabilities:
     purls:
       - pkg:maven/com.fasterxml.jackson.core/jackson-core@2.18.8
     statement: >-
-      jackson-core 2.18.8 inside ray's ray_dist.jar (ray 2.59.0), fixed in 2.18.11. The data image has no
+      jackson-core 2.18.8 inside ray's ray_dist.jar (ray 2.60.0), fixed in 2.18.11. The data image has no
       JVM, so nothing loads the jar, and no ray release bundles a fixed version
       yet. Recompile runtime/data when one does (#2247).
     expired_at: 2027-01-31
@@ -158,7 +156,7 @@ vulnerabilities:
     purls:
       - pkg:maven/com.fasterxml.jackson.core/jackson-core@2.18.8
     statement: >-
-      jackson-core 2.18.8 inside ray's ray_dist.jar (ray 2.59.0), fixed in 2.18.11. The data image has no
+      jackson-core 2.18.8 inside ray's ray_dist.jar (ray 2.60.0), fixed in 2.18.11. The data image has no
       JVM, so nothing loads the jar, and no ray release bundles a fixed version
       yet. Recompile runtime/data when one does (#2247).
     expired_at: 2027-01-31
@@ -166,7 +164,7 @@ vulnerabilities:
     purls:
       - pkg:maven/com.fasterxml.jackson.core/jackson-databind@2.18.8
     statement: >-
-      jackson-databind 2.18.8 inside ray's ray_dist.jar (ray 2.59.0), fixed in 2.18.10. The data image has no
+      jackson-databind 2.18.8 inside ray's ray_dist.jar (ray 2.60.0), fixed in 2.18.10. The data image has no
       JVM, so nothing loads the jar, and no ray release bundles a fixed version
       yet. Recompile runtime/data when one does (#2247).
     expired_at: 2027-01-31
@@ -174,7 +172,7 @@ vulnerabilities:
     purls:
       - pkg:maven/com.fasterxml.jackson.core/jackson-databind@2.18.8
     statement: >-
-      jackson-databind 2.18.8 inside ray's ray_dist.jar (ray 2.59.0), fixed in 2.18.11. The data image has no
+      jackson-databind 2.18.8 inside ray's ray_dist.jar (ray 2.60.0), fixed in 2.18.11. The data image has no
       JVM, so nothing loads the jar, and no ray release bundles a fixed version
       yet. Recompile runtime/data when one does (#2247).
     expired_at: 2027-01-31
@@ -182,7 +180,7 @@ vulnerabilities:
     purls:
       - pkg:maven/com.fasterxml.jackson.core/jackson-databind@2.18.8
     statement: >-
-      jackson-databind 2.18.8 inside ray's ray_dist.jar (ray 2.59.0), fixed in 2.18.11. The data image has no
+      jackson-databind 2.18.8 inside ray's ray_dist.jar (ray 2.60.0), fixed in 2.18.11. The data image has no
       JVM, so nothing loads the jar, and no ray release bundles a fixed version
       yet. Recompile runtime/data when one does (#2247).
     expired_at: 2027-01-31
@@ -190,48 +188,7 @@ vulnerabilities:
     purls:
       - pkg:maven/com.google.guava/guava@32.0.1-jre
     statement: >-
-      guava 32.0.1-jre inside ray's ray_dist.jar (ray 2.59.0), fixed in 33.7.2. The data image has no
+      guava 32.0.1-jre inside ray's ray_dist.jar (ray 2.60.0), fixed in 33.7.2. The data image has no
       JVM, so nothing loads the jar, and no ray release bundles a fixed version
       yet. Recompile runtime/data when one does (#2247).
-    expired_at: 2027-01-31
-  - id: CVE-2026-111064
-    purls:
-      - pkg:pypi/aiohttp@3.14.3
-    statement: >-
-      aiohttp 3.14.3 that ray 2.59.0 vendors for its runtime-env agent
-      (ray/_private/runtime_env/agent/thirdparty_files), fixed in 3.14.4. The
-      agent is a ray cluster server that nothing in the data image starts; task
-      code imports the site-packages aiohttp, a separate and newer install that
-      stays scanned. Recompile runtime/data when a ray release vendors 3.14.4 (#2247).
-    expired_at: 2027-01-31
-  - id: CVE-2026-111066
-    purls:
-      - pkg:pypi/aiohttp@3.14.3
-    statement: >-
-      aiohttp 3.14.3 that ray 2.59.0 vendors for its runtime-env agent
-      (ray/_private/runtime_env/agent/thirdparty_files), fixed in 3.14.4. The
-      agent is a ray cluster server that nothing in the data image starts; task
-      code imports the site-packages aiohttp, a separate and newer install that
-      stays scanned. Recompile runtime/data when a ray release vendors 3.14.4 (#2247).
-    expired_at: 2027-01-31
-  - id: GHSA-2g87-pp6c-29x5
-    purls:
-      - pkg:pypi/aiohttp@3.14.3
-    statement: >-
-      aiohttp 3.14.3 that ray 2.59.0 vendors for its runtime-env agent
-      (ray/_private/runtime_env/agent/thirdparty_files), fixed in 3.14.4. The
-      agent is a ray cluster server that nothing in the data image starts; task
-      code imports the site-packages aiohttp, a separate and newer install that
-      stays scanned. Recompile runtime/data when a ray release vendors 3.14.4 (#2247).
-    expired_at: 2027-01-31
-  - id: CVE-2026-123817
-    purls:
-      - pkg:pypi/aiohttp@3.14.3
-    statement: >-
-      Excessive memory and CPU use in the aiohttp 3.14.3 that ray 2.59.0 vendors
-      for its runtime-env agent (ray/_private/runtime_env/agent/thirdparty_files),
-      fixed in 3.14.4. The agent is a ray cluster server that nothing in the data
-      image starts; task code imports the site-packages aiohttp, a separate and
-      newer install that stays scanned. Recompile runtime/data when a ray release
-      vendors 3.14.4 (#2247).
     expired_at: 2027-01-31
