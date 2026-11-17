@@ -100,7 +100,12 @@ jobs:
 
   release:
     name: Build, sign, publish
-    needs: chart-preflight
+    # Every job that pushes a versioned tag waits for the data image scan
+    # (runtime-data-image-build), which can fail on a finding published after
+    # the rc. Nothing tagged is pushed before it, so a red scan leaves only
+    # digests and the tag can be deleted and cut again instead of burning the
+    # version (v0.5.10).
+    needs: [chart-preflight, runtime-data-image-build]
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
@@ -213,7 +218,8 @@ jobs:
   # Trivy gate in security.yaml scans on every PR.
   migrate-image:
     name: Build + push dexaflow-migrate image
-    needs: chart-preflight
+    # Waits for the data image scan; see the release job.
+    needs: [chart-preflight, runtime-data-image-build]
     runs-on: ubuntu-24.04
     timeout-minutes: 30
     permissions:
@@ -431,7 +437,8 @@ jobs:
   # `dexaflow compile` warns the author who pins it.
   runtime-image:
     name: Publish dexaflow-runtime base (py${{ matrix.python }})
-    needs: runtime-image-build
+    # Waits for the data image scan; see the release job.
+    needs: [runtime-image-build, runtime-data-image-build]
     runs-on: ubuntu-24.04
     timeout-minutes: 15
     strategy:
