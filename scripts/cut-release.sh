@@ -1372,17 +1372,18 @@ main() {
       log "$base tip ${tip:0:8}: required checks"
       ci_gate "$tip" "$base" "${CUT_TIP_WAIT_DEADLINE:-1800}" "$base tip"
     fi
-    # A GA rebuilds the data image of the rc it promotes, and release.yaml
-    # scans it with the advisories of the day: v0.5.10 was spent on eight
-    # published after its rc. Scanning the rc's image here, before anything is
-    # prepared, turns such a finding into a pull request and a second cut. The
-    # prepare commit changes neither the image nor .trivyignore.yaml, so the
-    # tip answers for it.
+    # A GA rebuilds the data image of the rc it promotes, and the scan's answer
+    # depends on the day's advisory database: v0.5.10's GA scan found eight
+    # HIGH findings its rc's scan had not. Under ADR 0108 a fixable CRITICAL
+    # stops a GA and a HIGH only warns. Scanning here, before anything is
+    # prepared, catches a CRITICAL while it costs nothing; the scan runs again
+    # right before the tag. The prepare commit changes neither the image nor
+    # .trivyignore.yaml, so the tip answers for it.
     if ! is_rc "$version"; then
-      log "data image of the promoted rc, scanned for $tag"
+      log "data image of the promoted rc, scanned for $tag (ADR 0108)"
       if ! "$ROOT/scripts/release-data-image-scan.sh" "$tag" "$tip"; then
-        [ "$dry" = 1 ] || die "the data image $tag would ship carries a finding release.yaml refuses (above): nothing prepared. Fix it or accept it in .trivyignore.yaml on $base, then cut again"
-        warn "the data image $tag would ship carries a finding (above); the real cut stops here"
+        [ "$dry" = 1 ] || die "the data image $tag would ship has a fixable CRITICAL or could not be scanned (above): nothing prepared. Fix it or accept it in .trivyignore.yaml on $base, then cut again"
+        warn "the data image $tag would ship has a fixable CRITICAL or could not be scanned (above); the real cut stops here"
       fi
     fi
   fi
@@ -1540,13 +1541,15 @@ main() {
   # Every required check passed on the merge commit, whatever --allow-red says.
   ci_gate "$sha" "$base" "${CUT_TIP_WAIT_DEADLINE:-1800}" "merge commit"
 
-  # A resume skipped the preflight scan above, and advisories keep landing
-  # while a prepare waits in the queue. A finding here still spends nothing,
-  # since no tag exists, but the fix cannot ride this prepare commit.
-  if [ "$resume" = 1 ] && ! is_rc "$version"; then
-    log "data image of the promoted rc, scanned for $tag"
+  # ADR 0108: right before a GA tag, the promoted rc's data image is scanned
+  # again with a fresh database. The advisories keep landing while a prepare
+  # waits in the queue, and a resume skipped the preflight scan. A CRITICAL
+  # here still spends nothing, since no tag exists, but the fix cannot ride
+  # this prepare commit.
+  if ! is_rc "$version"; then
+    log "data image of the promoted rc, scanned again before tagging $tag (ADR 0108)"
     "$ROOT/scripts/release-data-image-scan.sh" "$tag" "$sha" \
-      || die "the data image $tag would ship carries a finding release.yaml refuses (above): NOT tagging, so $tag is not spent. The prepare commit cannot carry the fix: revert it on $base, land the fix or the .trivyignore.yaml entry, and cut again"
+      || die "the data image $tag would ship has a fixable CRITICAL or could not be scanned (above): NOT tagging, so $tag is not spent. The prepare commit cannot carry the fix: revert it on $base, land the fix or the .trivyignore.yaml entry, and cut again"
   fi
 
   check_queue "$force_queue" || die "the Actions queue is busy: the release jobs would wait behind it while nothing is promoted. Hold PR pushes until it drains (RELEASING.md, release freeze), then re-run with --resume, or pass --force-queue"
