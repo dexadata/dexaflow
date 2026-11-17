@@ -1,8 +1,8 @@
 ---
-title: "ADR 0108: A CVE published between the rc and the GA does not stop the GA unless it is critical"
+title: "ADR 0108: A finding that appears between the rc and the GA does not stop the GA unless it is critical"
 linkTitle: "0108 · CVEs between rc and GA"
 weight: 1080
-description: "ADR 0108: the rc gate keeps refusing every fixable HIGH or CRITICAL finding in the images we build. At the GA, a fixable CRITICAL still stops the release, while a fixable HIGH the vulnerability database learned about after the last rc opens an issue for the next patch with a seven day deadline and the release goes on. Nothing is tagged or published before the image scan has run."
+description: "ADR 0108: the rc gate keeps refusing every fixable HIGH or CRITICAL finding in the images we build. At the GA, a fixable CRITICAL still stops the release, while a fixable HIGH that the scanner reports only after the last rc opens an issue for the next patch with a seven day deadline and the release goes on. Nothing is tagged or published before the image scan has run."
 ---
 
 **Status:** Accepted
@@ -21,12 +21,17 @@ That is what stopped v0.5.10 on 2026-11-17. The v0.5.10-rc.5 scan ran at
 12:44 UTC on a cached database and reported nothing. The GA scan ran at
 14:28 UTC, downloaded a newer database, and reported eight HIGH findings in the
 aiohttp 3.14.3 that ray 2.59.0 vendors for its runtime-env agent. The code was
-the same in both images. The tag already existed, the GitHub release was a
+the same in both images. The CVEs were not new: NVD had them since
+2026-11-13 and the GitHub advisories that name the fixed aiohttp version since
+2026-11-16 11:51 UTC. What changed between the two scans was the Trivy
+database, which is republished a few times a day and picked up those
+advisories in between. Any scan can lag the advisories by hours, so the
+same image can pass at the rc and fail at the GA. The tag already existed, the GitHub release was a
 draft, and the only ways forward were to delete the tag and cut again or to
 skip to the next patch.
 
 A release gate is useful when it stops something we shipped by mistake. A
-finding published an hour before the GA is not that: the image was already
+finding the scanner learned about an hour before the GA is not that: the image was already
 built and tested as an rc, and the same packages are running wherever the rc
 or the previous patch is installed. Refusing the GA keeps users on the
 previous patch, which carries the same finding plus whatever the new patch
@@ -49,7 +54,7 @@ reachable".
    found by the GA scan does not, because the rc gate already refused every
    HIGH the database knew about. The Release workflow writes the findings to the
    job summary and opens one issue per release, titled
-   `vX.Y.Z: HIGH findings published after its rc`, with the report attached.
+   `vX.Y.Z: HIGH findings new since its rc`, with the report attached.
 3. **That issue has a deadline.** It goes into the next patch's milestone and
    is fixed or accepted in `.trivyignore.yaml` within seven days. A CRITICAL is
    never deferred: it stops the GA and is fixed before the cut.
@@ -77,9 +82,9 @@ reachable".
 
 ## Consequences
 
-- A GA can ship with a HIGH finding that was published after its last rc. The
+- A GA can ship with a HIGH finding that the scanner reported only after its last rc. The
   release has an issue that says so, and the next patch carries the fix.
-- A CRITICAL published during the cut still stops it, before the tag when the
+- A CRITICAL that appears during the cut still stops it, before the tag when the
   pre-tag scan catches it.
 - The rc gate and the GA gate now use different severities, so the workflow
   decides from the tag name (`-rc.` in the tag means rc).

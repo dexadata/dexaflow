@@ -628,7 +628,7 @@ jobs:
       #
       # An rc refuses HIGH and CRITICAL; a GA refuses CRITICAL only (ADR 0108).
       # The rc gate already refused every HIGH the database knew about, so a
-      # HIGH the GA scan finds was published after the last rc. It does not
+      # HIGH the GA scan finds is one the database learned about after the last rc. It does not
       # stop the GA: the next step reports it and the data-scan-report job
       # opens an issue for the next patch.
       - name: Scan the data image's language packages
@@ -649,7 +649,7 @@ jobs:
 
       # GA only: the HIGH findings the step above let through (ADR 0108). Same
       # image, same database, same ignore file; it never fails the job.
-      - name: Report HIGH findings published after the rc
+      - name: Report HIGH findings new since the rc
         if: ${{ !contains(github.ref_name, '-rc.') }}
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         env:
@@ -692,8 +692,8 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
-  # ADR 0108: one issue per GA that shipped with a HIGH finding published after
-  # its last rc, in the next patch's milestone, so the fix has an owner and a
+  # ADR 0108: one issue per GA that shipped with a HIGH finding new since its
+  # last rc, in the next patch's milestone, so the fix has an owner and a
   # deadline. Nothing needs this job: it reports, it never holds the release.
   data-scan-report:
     name: Report HIGH findings in the data image (GA)
@@ -733,7 +733,7 @@ jobs:
             echo "no HIGH finding in the data image"
             exit 0
           fi
-          title="${TAG}: HIGH findings published after its rc"
+          title="${TAG}: HIGH findings new since its rc"
           {
             echo "### ${title}"
             echo
