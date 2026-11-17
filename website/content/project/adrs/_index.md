@@ -120,6 +120,7 @@ this page.
 - [ADR 0104: row level security binds each request's connection to its tenant](/project/adrs/0104-row-level-security/)
 - [ADR 0105: the split scheduler runs a leader and a standby](/project/adrs/0105-split-scheduler-standby/)
 - [ADR 0107: a stable channel on top of the weekly patch train](/project/adrs/0107-stable-channel-on-the-weekly-train/)
+- [ADR 0108: a finding that appears between the rc and the GA does not stop the GA unless it is critical](/project/adrs/0108-findings-new-between-rc-and-ga/)
 
 ## Template
 
