@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import importlib
 import inspect
 import json
@@ -37,6 +38,17 @@ def _lifecycle(msg: str) -> None:
 # drill-down can be reintroduced once the SPA renders them correctly.
 
 DEFAULT_RETURN_VALUE_PATH = "/tmp/leoflow_return_value.json"  # noqa: S108
+
+
+def _current_context(context: dict):
+    """Make ``context`` what ``get_current_context()`` returns while the user's
+    code runs, as Airflow's task runner does around ``execute`` (#2480). Without
+    the Task SDK (a bare runtime) there is nothing to set."""
+    try:
+        from airflow.sdk.execution_time.context import set_current_context
+    except ImportError:
+        return contextlib.nullcontext(context)
+    return set_current_context(context)
 
 
 def _load_call_args() -> dict:
@@ -169,7 +181,8 @@ def run(entrypoint: str) -> None:
         _lifecycle(f"resolved kwargs: {sorted(kwargs.keys())}")
 
     try:
-        result = fn(**kwargs)
+        with _current_context(context):
+            result = fn(**kwargs)
     except Exception as exc:  # noqa: BLE001 — surface user errors to the log
         _lifecycle(f"user function {fn_name} raised {type(exc).__name__}: {exc}")
         # Stdout is line-buffered or `-u` unbuffered; flush stderr too so the
@@ -966,7 +979,8 @@ def run_operator(operator_class: str, args: dict) -> None:
 
     _lifecycle(f"executing {class_name}.execute()")
     try:
-        result = op.execute(context)
+        with _current_context(context):
+            result = op.execute(context)
     except Exception as exc:  # noqa: BLE001 — translate reschedule/deferral; re-raise the rest
         if _is_reschedule_exc(exc):
             _signal_reschedule(exc, class_name)  # writes the file + SystemExit, or raises

@@ -1952,6 +1952,10 @@ jobs:
       # dag.py (#484): the Airflow-free runtime job cannot import one.
       - name: Operator callback contract
         run: python -m pytest runtime/python/tests/test_task_sdk_operator_callback.py -q
+      # get_current_context() inside a @task body and an operator's execute()
+      # (#2480): the runtime must set the SDK's current context around both.
+      - name: Current context contract
+        run: python -m pytest runtime/python/tests/test_task_sdk_current_context.py -q
       # Every BaseOperator and DAG argument of the pinned Task SDK is mapped,
       # refused or ignored on purpose by the parser (#2449): a pin bump that adds
       # one fails here instead of compiling DAGs that silently drop it.
