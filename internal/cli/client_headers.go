@@ -63,11 +63,19 @@ func (t cliTransport) RoundTrip(req *http.Request) (*http.Response, error) {
 	return t.base.RoundTrip(r)
 }
 
+// cliBaseTransport is a copy of http.DefaultTransport that only the CLI
+// uses. Anything in the process may call CloseIdleConnections on the shared
+// default transport (httptest.Server.Close does), and a request that has just
+// picked one of those idle connections then fails with "transport connection
+// broken: http: CloseIdleConnections called". A transport of its own keeps
+// CLI requests out of that.
+var cliBaseTransport = http.DefaultTransport.(*http.Transport).Clone()
+
 // cliHTTPClient is the HTTP client of every request the CLI sends to a
-// control plane, with the given timeout (0 for none): http.DefaultTransport
+// control plane, with the given timeout (0 for none): cliBaseTransport
 // behind cliTransport.
 func cliHTTPClient(timeout time.Duration) *http.Client {
-	return &http.Client{Timeout: timeout, Transport: cliTransport{base: http.DefaultTransport}}
+	return &http.Client{Timeout: timeout, Transport: cliTransport{base: cliBaseTransport}}
 }
 
 // cliAPIClient is apiclient.New on cliHTTPClient, with no timeout unless
