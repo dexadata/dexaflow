@@ -8,6 +8,7 @@ Airflow-free runtime job and run in the ``runtime-authoring-contract`` job.
 
 import itertools
 import json
+from pathlib import Path
 
 import pytest
 
@@ -49,7 +50,8 @@ def test_task_body_reads_get_current_context(tmp_path, monkeypatch):
         "    return [ctx['ds'], ctx['ti'].task_id, ctx['dag_run'].run_id]\n",
     )
     runner.run(f"{mod}:probe")
-    assert json.load(open(rv)) == ["2026-06-14", "probe", "manual__1"]
+    got = json.loads(Path(rv).read_text())
+    assert got == ["2026-06-14", "probe", "manual__1"]
 
 
 def test_operator_execute_reads_get_current_context(tmp_path, monkeypatch):
@@ -64,7 +66,8 @@ def test_operator_execute_reads_get_current_context(tmp_path, monkeypatch):
         "        return get_current_context()['ds']\n",
     )
     runner.run_operator(f"{mod}.Probe", {})
-    assert json.load(open(rv)) == "2026-06-14"
+    got = json.loads(Path(rv).read_text())
+    assert got == "2026-06-14"
 
 
 def test_context_is_unset_after_the_task(tmp_path, monkeypatch):
