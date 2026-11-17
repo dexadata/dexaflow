@@ -6,8 +6,6 @@ adhere to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
-## [0.5.10] - 2026-11-17
-
 ### Added
 
 - **`dexaflow compile` accepts `EmptyOperator`, `chain`, `cross_downstream`,
