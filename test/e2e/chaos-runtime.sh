@@ -138,6 +138,15 @@ wait_scheduler_status() {
   return 1
 }
 
+# work_attempt <run>: the 'work' TI's state and the start of its current
+# execution, as "<state> <start_date>". An infra re-place keeps try_number but
+# starts a new execution, so start_date tells the attempts apart.
+work_attempt() {
+  curl -fsS --max-time 10 -H "Authorization: Bearer $TOKEN" \
+    "$API/api/v2/dags/$DAG_ID/dagRuns/$1/taskInstances" 2>/dev/null \
+    | jq -r '.task_instances[] | select(.task_id == "work") | "\(.state) \(.start_date)"'
+}
+
 task_states() {
   curl -fsS --max-time 10 -H "Authorization: Bearer $TOKEN" \
     "$API/api/v2/dags/$DAG_ID/dagRuns/$1/taskInstances" 2>/dev/null | jq -r '.task_instances[].state'
@@ -354,18 +363,36 @@ scenario_task_pod_kill() {
   log "B: force-deleting $pod mid-execution"
   kubectl delete pod -n leoflow "$pod" --grace-period=0 --force >/dev/null 2>&1 || true
 
-  # The agent-lost reaper must move the TI off `running` (to failed / retry),
-  # within the agent-lost window + margin — it must NOT stay `running` forever.
-  local deadline st killed_at; killed_at=$(date +%s); deadline=$(( killed_at + 180 ))
+  # The agent-lost reaper must end the killed attempt within the agent-lost
+  # window + margin. It marks the TI failed as an infra loss, and the scheduler
+  # then re-places it off the retry budget (ADR 0051): the TI goes back through
+  # none/queued to running with the same try_number, often between two polls.
+  # So the killed attempt has ended when the 'work' TI is in another state, or
+  # runs a new execution (a different start_date). Watching the state alone
+  # missed the re-place (#2470).
+  local deadline cur st start0 start killed_at
+  start0="$(work_attempt "$run" | awk '{print $2}')"
+  killed_at=$(date +%s); deadline=$(( killed_at + 180 ))
   while [ "$(date +%s)" -lt "$deadline" ]; do
-    st="$(task_states "$run" | head -1)"
+    cur="$(work_attempt "$run")"; st="${cur%% *}"; start="${cur#* }"
     if [ -n "$st" ] && [ "$st" != "running" ] && [ "$st" != "queued" ] && [ "$st" != "null" ]; then
-      ok "B: TI left 'running' $(( $(date +%s) - killed_at ))s after the pod was killed (state=$st), no stuck task"
+      ok "B: the killed attempt ended $(( $(date +%s) - killed_at ))s after the pod was killed (state=$st), no stuck task"
+      break
+    fi
+    if [ "$st" = "running" ] && [ -n "$start0" ] && [ "$start" != "$start0" ]; then
+      ok "B: the killed attempt ended and was re-placed $(( $(date +%s) - killed_at ))s after the pod was killed (new execution started $start), no stuck task"
       break
     fi
     sleep 5
   done
-  [ "$(date +%s)" -lt "$deadline" ] || { bad "B: TI stuck (never left running/queued) 180s after the pod was killed"; return; }
+  if [ "$(date +%s)" -ge "$deadline" ]; then
+    bad "B: the killed attempt never ended 180s after the pod was killed (work TI: $cur, started $start0 before the kill)"
+    # The reapers' decisions, in the job log itself: the uploaded artifact is
+    # not readable from every place a failure is looked at.
+    printf '\n---- scheduler.log: reaper lines ----\n' >&2
+    grep -iE 'reap|agent_lost|settling|re-?place|infra' "${WORKDIR}/scheduler.log" 2>/dev/null | tail -60 >&2 || true
+    return
+  fi
 
   # No orphaned pod for that killed attempt should linger (reaper teardown, #518).
   sleep 5
