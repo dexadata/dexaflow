@@ -211,6 +211,28 @@ self_test() {
   _eq "$([ "$(flake_verdict '')" = "$(flake_verdict 'FAIL: TestFoo assertion failed')" ] && echo same || echo different)" \
       "different" "empty and a genuine failure must not classify alike"
 
+  # failed_runs_rerunnable and wait_sha_green with an empty --log-failed
+  # (#2493): the v0.5.10-rc.6 cut stopped RED on a go proxy INTERNAL_ERROR that
+  # a rerun cleared. An empty log is unknown, so the run is rerun.
+  local ws; ws="$(mktemp -d)"
+  _ws_gh() { # gh stub: $WS_LOG is what --log-failed prints; a rerun turns the run green
+    case "$*" in
+      "run view"*--log-failed*) printf '%s' "$WS_LOG" ;;
+      "run rerun"*) : >"$ws/rerun" ;;
+      "run list"*)
+        if [ -e "$ws/rerun" ]; then c=success; else c=failure; fi
+        printf '[{"databaseId":11,"status":"completed","conclusion":"%s","workflowName":"Security","createdAt":"2026-11-17T00:00:00Z"}]' "$c" ;;
+    esac
+  }
+  _eq "$( (gh() { _ws_gh "$@"; }; WS_LOG=''; failed_runs_rerunnable 11) 2>/dev/null && echo rerun || echo stop)" rerun "an empty failed-step log is rerun"
+  _eq "$( (gh() { _ws_gh "$@"; }; WS_LOG='stream error: stream ID 1047; INTERNAL_ERROR'; failed_runs_rerunnable 11) 2>/dev/null && echo rerun || echo stop)" rerun "a flake log is rerun"
+  _eq "$( (gh() { _ws_gh "$@"; }; WS_LOG='FAIL: TestFoo'; failed_runs_rerunnable 11) 2>/dev/null && echo rerun || echo stop)" stop "a real failure stops"
+  _eq "$( (gh() { _ws_gh "$@"; }; WS_LOG='FAIL: TestFoo'; gh() { case "$*" in *" 12 "*|*" 12") printf '' ;; *) _ws_gh "$@" ;; esac; }; failed_runs_rerunnable 12 11) 2>/dev/null && echo rerun || echo stop)" stop "one real failure among unknowns stops"
+  _eq "$( (gh() { _ws_gh "$@"; }; sleep() { :; }; WS_LOG=''; wait_sha_green 0123456789abcdef) 2>/dev/null)" GREEN "wait_sha_green reruns a run whose log is empty and sees it green"
+  rm -f "$ws/rerun"
+  _eq "$( (gh() { _ws_gh "$@"; }; sleep() { :; }; WS_LOG='FAIL: TestFoo'; wait_sha_green 0123456789abcdef) 2>/dev/null)" RED "wait_sha_green stops on a real failure"
+  rm -rf "$ws"
+
   _eq "$(normalize_tag 0.4.4)"      "v0.4.4"        "normalize bare"
   _eq "$(normalize_tag v0.4.4)"     "v0.4.4"        "normalize v"
   _eq "$(normalize_tag v0.4.4-rc.1)" "v0.4.4-rc.1"  "normalize rc"
@@ -962,6 +984,21 @@ wait_pr_merged() {
   return 1
 }
 
+# failed_runs_rerunnable <run-id>...: succeeds when every failed run is worth a
+# rerun, that is when flake_verdict reads its failed-step log as "flake" or
+# "unknown". An empty log (no step log, #1007, or logs not published yet right
+# after the run concludes) is unknown, and for a cut unknown means rerun (#978,
+# #2493). Each verdict is logged so a stop says which run was judged real.
+failed_runs_rerunnable() {
+  local rid v ok=0
+  for rid in "$@"; do
+    v="$(flake_verdict "$(gh run view "$rid" --log-failed 2>/dev/null | tail -c 2000000 || true)")"
+    warn "failed run $rid: $v"
+    [ "$v" = real ] && ok=1
+  done
+  return "$ok"
+}
+
 wait_sha_green() {
   local sha="$1" reruns=0 j verdict failed rid isflake start=$SECONDS
   local deadline="${CUT_WAIT_DEADLINE:-5400}" # 90 min; a stuck-queued run must not hang the cut forever
@@ -994,10 +1031,9 @@ wait_sha_green() {
                 echo RED; return 1 ;;
     esac
     failed=$(echo "$j" | jq -r '.[] | select(.conclusion=="failure") | .databaseId')
-    isflake=1
-    for rid in $failed; do
-      gh run view "$rid" --log-failed 2>/dev/null | grep -qE "$FLAKE_RE" || isflake=0
-    done
+    isflake=0
+    # shellcheck disable=SC2086 # one run id per word
+    failed_runs_rerunnable $failed && isflake=1
     if [ "$isflake" = 1 ] && [ "$reruns" -lt 8 ]; then
       reruns=$((reruns+1)); warn "transient flake -> rerun #$reruns ($failed)"
       for rid in $failed; do gh run rerun "$rid" --failed >/dev/null 2>&1; done
