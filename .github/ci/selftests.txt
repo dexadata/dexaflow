@@ -62,6 +62,7 @@ scripts/release-base.sh
 scripts/release-check-agent-stamp.sh
 scripts/release-check-public.sh
 scripts/release-ci-gate.sh
+scripts/release-data-image-scan.sh
 scripts/release-gap.sh
 scripts/release-notes.sh
 scripts/release-promote-plan.sh

@@ -230,6 +230,16 @@ read the body before the tag.
    (`scripts/release-ci-gate.sh`, see
    [Red CI blocks a release](#red-ci-blocks-a-release)); running checks are
    waited for, and a red one stops the cut before anything is prepared.
+   For a **GA**, `scripts/release-data-image-scan.sh` then scans the
+   published data image of the rc being promoted (its newest rc, else the
+   newest rc of any version, refused unless its `runtime/`, `go.mod`, `go.sum`
+   and `GO_VERSION` equal the tip's), both platforms, with a fresh advisory
+   database and the tip's `.trivyignore.yaml`, under the GA rule of
+   [ADR 0108](https://dexaflow.dexadata.ai/project/adrs/0108-findings-new-between-rc-and-ga/):
+   a fixable CRITICAL stops the cut before anything is prepared, a fixable
+   HIGH is listed and the cut goes on (the Release workflow opens the
+   `vX.Y.Z: HIGH findings new since its rc` issue for it). A dry run reports
+   the result. The cut scans again right before the tag, with the same rule.
 2. **Prepare**: a `release/<tag>` branch off the base. Bump
    `helm/dexaflow/Chart.yaml` `version`+`appVersion` in lockstep (ADR 0028), regenerate the chart README with
    `helm-docs`, fold the pending changelog fragments into `[Unreleased]`, and
