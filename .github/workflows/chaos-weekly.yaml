@@ -79,4 +79,14 @@ jobs:
       - name: Build binaries
         run: make build
       - name: Run the chaos scenarios
+        env:
+          CHAOS_LOG_DIR: ${{ runner.temp }}/chaos-logs
         run: bash test/e2e/chaos-runtime.sh
+      - name: Upload the role logs
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: chaos-logs
+          path: ${{ runner.temp }}/chaos-logs
+          retention-days: 14
+          if-no-files-found: ignore

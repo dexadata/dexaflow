@@ -65,6 +65,12 @@ HOST_ADDR="${LEOFLOW_E2E_HOST_ADDR:-$([ "$(uname -s)" = Linux ] && echo host.k3d
 # The dev Postgres container to restart in scenario C (future); its name differs
 # between `make dev-up` (compose) and a standalone run. Overridable.
 API_PID=""; SCHED_PID=""; TOKEN=""; FAILED=0
+# SCHED_STARTED_AT is when the scheduler process last started; its leadership
+# (and so the reapers' settling grace) starts right after it.
+SCHED_STARTED_AT=0
+# The reapers' post-leadership settling grace (defaultSettlingGrace in
+# internal/executor/reaper.go, 2 x the 90s agent-lost threshold).
+SETTLING_GRACE=180
 
 log()  { printf '\033[1;34m==>\033[0m %s\n' "$*"; }
 ok()   { printf '\033[1;32m    PASS\033[0m %s\n' "$*"; }
@@ -77,6 +83,14 @@ fatal() { printf '\033[1;31mFATAL:\033[0m %s\n' "$*" >&2; dump_pods; exit 1; }
 cleanup() {
   [ -n "$API_PID" ] && kill "$API_PID" 2>/dev/null || true
   [ -n "$SCHED_PID" ] && kill "$SCHED_PID" 2>/dev/null || true
+  # CHAOS_LOG_DIR keeps the role logs and the final pod state for the workflow
+  # to upload (#2470): without them a failed run cannot say when a task left
+  # `running` or what the reapers decided.
+  if [ -n "${CHAOS_LOG_DIR:-}" ]; then
+    mkdir -p "$CHAOS_LOG_DIR"
+    cp "$WORKDIR"/*.log "$CHAOS_LOG_DIR"/ 2>/dev/null || true
+    kubectl get pods -n leoflow -o wide >"$CHAOS_LOG_DIR/pods.txt" 2>&1 || true
+  fi
   k3d cluster delete "$CLUSTER" >/dev/null 2>&1 || true
   rm -rf "$WORKDIR"
 }
@@ -95,12 +109,15 @@ export LEOFLOW_REDIS_URL="${LEOFLOW_E2E_REDIS_URL:-redis://localhost:6379/0}"
 export LEOFLOW_LOGS_DIR="${WORKDIR}/logs"; mkdir -p "$LEOFLOW_LOGS_DIR"
 
 start_scheduler() {
+  SCHED_STARTED_AT=$(date +%s)
+  # Append: a restart must not erase the log of the process a scenario killed.
+  printf '\n==== scheduler start %s ====\n' "$(date -u +%FT%TZ)" >>"${WORKDIR}/scheduler.log"
   LEOFLOW_SERVER_ROLE=scheduler \
   LEOFLOW_SERVER_HTTP_ADDR="0.0.0.0:8085" \
   LEOFLOW_SERVER_METRICS_ADDR="0.0.0.0:${SCHED_METRICS_PORT}" \
   LEOFLOW_SERVER_GRPC_ADDR="0.0.0.0:${GRPC_PORT}" \
   LEOFLOW_EXECUTOR_AGENT_CONTROL_PLANE_ADDR="${HOST_ADDR}:${GRPC_PORT}" \
-    "$ROOT/bin/leoflow-server" >"${WORKDIR}/scheduler.log" 2>&1 &
+    "$ROOT/bin/leoflow-server" >>"${WORKDIR}/scheduler.log" 2>&1 &
   SCHED_PID=$!
 }
 
@@ -282,12 +299,12 @@ scenario_scheduler_crash() {
     states="$(task_states "$run")"
     echo "$states" | grep -qE 'failed|upstream_failed' && { bad "A: a task failed after restart: $states"; return; }
     if [ -n "$states" ] && ! echo "$states" | grep -qvE 'success|skipped'; then
-      ok "A: in-flight run RESUMED to success after the scheduler restart"
+      ok "A: in-flight run RESUMED to success $(( $(date +%s) - SCHED_STARTED_AT ))s after the scheduler restart"
       break
     fi
     sleep 4
   done
-  [ "$(date +%s)" -lt "$deadline" ] || { bad "A: run did not resume to success within 180s"; return; }
+  [ "$(date +%s)" -lt "$deadline" ] || { bad "A: run did not resume to success within 180s (task states: $(echo "$states" | tr '\n' ' '))"; return; }
 
   # At-most-once: exactly one pod per attempt for 'work' (a resumed scheduler must
   # NOT re-dispatch a task that already ran — no duplicate work pod).
@@ -305,6 +322,17 @@ scenario_scheduler_crash() {
 # ─────────────────────────────────────────────────────────────────────────────
 scenario_task_pod_kill() {
   log "SCENARIO B — delete a running task pod; assert the TI leaves 'running' and no orphan lingers"
+  # Wait out the reapers' settling grace of the scheduler A restarted (#2470).
+  # No reaper may act until SETTLING_GRACE after leadership, by design, so a kill
+  # right after A put the earliest agent-lost reap up to the grace plus one
+  # maintenance interval (60s) away: past the 180s this scenario allows from the
+  # kill whenever A resumed quickly. B asserts the agent-lost backstop of a
+  # settled leader; D covers the restart window itself.
+  local settled_at; settled_at=$(( SCHED_STARTED_AT + SETTLING_GRACE + 5 ))
+  if [ "$(date +%s)" -lt "$settled_at" ]; then
+    log "B: waiting $(( settled_at - $(date +%s) ))s for the scheduler's settling grace to end"
+    sleep $(( settled_at - $(date +%s) ))
+  fi
   local run; run="$(trigger_run)"
   [ -n "$run" ] && [ "$run" != "null" ] || { bad "B: no run id"; return; }
   wait_task_running "$run" || { bad "B: 'work' pod never reached Running"; return; }
@@ -328,11 +356,11 @@ scenario_task_pod_kill() {
 
   # The agent-lost reaper must move the TI off `running` (to failed / retry),
   # within the agent-lost window + margin — it must NOT stay `running` forever.
-  local deadline st; deadline=$(( $(date +%s) + 180 ))
+  local deadline st killed_at; killed_at=$(date +%s); deadline=$(( killed_at + 180 ))
   while [ "$(date +%s)" -lt "$deadline" ]; do
     st="$(task_states "$run" | head -1)"
     if [ -n "$st" ] && [ "$st" != "running" ] && [ "$st" != "queued" ] && [ "$st" != "null" ]; then
-      ok "B: TI left 'running' after the pod was killed (state=$st) — no stuck task"
+      ok "B: TI left 'running' $(( $(date +%s) - killed_at ))s after the pod was killed (state=$st), no stuck task"
       break
     fi
     sleep 5
