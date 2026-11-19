@@ -268,6 +268,10 @@ release:
   # not move before the gate. The `promote` job in release.yaml marks a GA
   # Latest once every gate is green, and only for the newest minor.
   make_latest: false
+  # A rerun of the release job (cut-release.sh reruns a failed attempt) finds
+  # the assets the first attempt uploaded and failed with 422 already_exists.
+  # Replace them with this attempt's build, which also re-signs checksums.txt.
+  replace_existing_artifacts: true
   name_template: "{{ .Tag }}"
   # The body is not set here. GoReleaser creates the release, and a workflow
   # step then writes the body with `gh release edit` from

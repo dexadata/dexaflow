@@ -42,6 +42,17 @@ which amends [ADR 0062](https://dexaflow.dexadata.ai/project/adrs/0062-release-b
   `v0.5.2`, ...). The milestone guard check fails a PR without one. A PR
   milestoned for the patch being cut needs its cherry-pick; one milestoned for
   a later release stays on `main` until then.
+- **A milestone records what a release shipped, not only what was planned
+  for it.** A patch cut from `main` ships everything merged before its tag,
+  whatever milestone each change named. v0.5.10's GA was cut from `main` on
+  2026-11-18 and carried all the work milestoned for v0.5.11, and v0.5.11-rc.1
+  then had nothing left to say. So when a GA is published, every issue and
+  pull request closed by a commit the GA carries moves to the GA's milestone,
+  and the next milestone keeps only open work. The cut refuses a version with
+  nothing to release (no fragment under `.changes/unreleased/` and an empty
+  `[Unreleased]`) before it opens the prepare pull request, and the Release
+  workflow composes the notes in its preflight, before any image or asset is
+  built.
 - **Nothing on `main` is left behind by accident** (mapped minors only; for
   a patch cut from `main` there is nothing to pick). `scripts/release-gap.sh
   X.Y.Z` lists every commit on `main` since `vX.Y.0` that `release-X.Y` does
