@@ -391,6 +391,27 @@ self_test() {
   printf '# Changelog\n\n## [Unreleased]\n\n- new\n' >"$cl"
   (CHANGELOG="$cl"; date_the_changelog 9.9.9) >/dev/null 2>&1 || { echo "FAIL: a GA with entries was refused (#971)"; fail=1; }
   grep -q '^## \[9.9.9\] - ' "$cl" || { echo "FAIL: the GA did not date [Unreleased] (#971)"; fail=1; }
+
+  # base_has_pending_changes: a base with nothing pending refuses the cut
+  # before any branch exists; a fragment or an [Unreleased] entry lets it go.
+  local bp; bp="$(mktemp -d)"
+  (
+    export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null
+    cd "$bp" && git -c init.defaultBranch=main init -q --bare origin.git &&
+    git clone -q origin.git wt && cd wt &&
+    git config user.email t@example.invalid && git config user.name tester &&
+    printf '# Changelog\n\n## [Unreleased]\n\n## [0.5.10] - 2026-11-18\n\n- old\n' >CHANGELOG.md &&
+    git add -A && git commit -qm empty && git push -q origin main
+  ) >/dev/null 2>&1
+  _bp() { (cd "$bp/wt" && git fetch -q origin && base_has_pending_changes main && echo pending || echo none); }
+  _eq "$(_bp)" none "an empty [Unreleased] and no fragment is nothing to release"
+  (cd "$bp/wt" && mkdir -p .changes/unreleased && printf 'kind: Fixed\n' >.changes/unreleased/x.yaml &&
+    git add -A && git -c user.email=t@example.invalid -c user.name=t commit -qm frag && git push -q origin main) >/dev/null 2>&1
+  _eq "$(_bp)" pending "a pending fragment is something to release"
+  (cd "$bp/wt" && git rm -q -r .changes && printf '# Changelog\n\n## [Unreleased]\n\n### Fixed\n\n- new\n' >CHANGELOG.md &&
+    git add -A && git -c user.email=t@example.invalid -c user.name=t commit -qm entry && git push -q origin main) >/dev/null 2>&1
+  _eq "$(_bp)" pending "an [Unreleased] entry is something to release"
+  rm -rf "$bp"
   rm -f "$cl"
   # The release watch judges the same way (#1028). Shape of v0.4.5-rc.3: one
   # tag push, two Release runs created in the same second, one cancelled.
@@ -1154,6 +1175,22 @@ unreleased_has_entries() {
   awk '/^## \[Unreleased\]/{u=1; next} u && /^## \[/{exit} u && NF{found=1; exit} END{exit !found}' "$1"
 }
 
+# base_has_pending_changes <base>: true when origin/<base> has something to
+# release, a fragment under .changes/unreleased/ or an entry already in its
+# [Unreleased]. Checked before the prepare branch exists, on an rc as well as a
+# GA: v0.5.11-rc.1 was tagged and built with nothing to say, because v0.5.10's
+# GA had been cut from the same main the day before, and only the Release
+# workflow's notes step noticed, after the assets were uploaded.
+base_has_pending_changes() { # <base>
+  local base="$1" cl
+  git ls-tree --name-only "origin/$base" .changes/unreleased/ 2>/dev/null | grep -qE '\.ya?ml$' && return 0
+  cl="$(mktemp)"
+  git show "origin/$base:CHANGELOG.md" >"$cl" 2>/dev/null || { rm -f "$cl"; return 1; }
+  unreleased_has_entries "$cl"; local rc=$?
+  rm -f "$cl"
+  return "$rc"
+}
+
 # date_the_changelog <chart_version>: GA only — move [Unreleased] to a dated
 # section and open a fresh [Unreleased]. rc keeps [Unreleased] untouched.
 date_the_changelog() {
@@ -1502,6 +1539,9 @@ main() {
   if [ "$base" = main ] && is_patch "$version" && [ "$(minor_of "$cur")" != "$(minor_of "$cv")" ]; then
     die "main carries chart $cur, not a $(minor_of "$cv").x version, so a $cv patch cannot come from it. Create release-$(minor_of "$cv") from v$(minor_of "$cv")'s newest GA tag and map it in .github/patch-branches.txt (ADR 0102)"
   fi
+
+  base_has_pending_changes "$base" ||
+    die "origin/$base has nothing to release: no fragment under .changes/unreleased/ and an empty [Unreleased] in CHANGELOG.md. Everything merged since the last tag was skip-changelog work, so $tag would ship what the previous release already shipped. Check: git log --oneline \$(git describe --tags --abbrev=0 origin/$base)..origin/$base"
 
   local branch="release/$tag"
   # Safe re-run (M3): a prior failed cut can leave release/<tag> behind (local or

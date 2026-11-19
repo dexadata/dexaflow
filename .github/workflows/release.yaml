@@ -98,6 +98,15 @@ jobs:
       - name: Gate, chart contract (env and Secret keys render)
         run: bash scripts/helm-template-checks.sh
 
+      # The release body is composed again after GoReleaser, where it is set
+      # and read back. Composing it here first means a tag with nothing to say
+      # stops before any image, asset or draft exists: v0.5.11-rc.1 failed at
+      # that later step with every asset already uploaded (#2493 follow-up).
+      - name: Gate, release notes compose from CHANGELOG.md
+        env:
+          TAG: ${{ github.ref_name }}
+        run: bash scripts/release-notes.sh "$TAG" >/dev/null
+
   release:
     name: Build, sign, publish
     # Every job that pushes a versioned tag waits for the data image scan
