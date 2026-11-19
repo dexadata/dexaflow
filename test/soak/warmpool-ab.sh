@@ -331,8 +331,13 @@ case "$(basename "$out")" in
   leoflow-server) cat > "$out" <<'BIN'
 #!/usr/bin/env bash
 { echo "--- server"; env; } >> "${AB_STUB_LOG:?}.server-env"
-[ "${AB_STUB_SERVER:-}" = boots ] && exec sleep 300
-exit 1
+[ "${AB_STUB_SERVER:-}" = boots ] || exit 1
+# Ready only once the environment is on record, so a slow process start
+# (macOS scans a fresh binary) cannot be stopped before it wrote anything.
+touch "${AB_STUB_LOG}.ready"
+trap 'rm -f "${AB_STUB_LOG}.ready"; kill "$!" 2>/dev/null; exit 0' TERM
+sleep 300 & wait "$!"
+exit 0
 BIN
   ;;
   leoflow) cat > "$out" <<'BIN'
@@ -353,7 +358,7 @@ echo "curl $*" >> "${AB_STUB_LOG:?}"
 url="" method=GET
 for a in "$@"; do case "$a" in http*) url="$a" ;; POST|PATCH) method="$a" ;; esac; done
 case "$method $url" in
-  *"/readyz") [ "${AB_STUB_SERVER:-}" = boots ] ;;
+  *"/readyz") [ -f "${AB_STUB_LOG}.ready" ] ;;
   "PATCH "*"/api/v2/dags/"*) echo '{"is_paused": false}' ;;
   "POST "*"/dagRuns") echo '{"dag_run_id": "stub-run"}' ;;
   "GET "*"/dagRuns/"*) echo '{"state": "success"}' ;;
