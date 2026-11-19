@@ -6,6 +6,17 @@ adhere to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Changed
+
+- **Release tooling.** `scripts/cut-release.sh` refuses a version with nothing
+  to release (no changelog fragment and an empty `[Unreleased]`) before it
+  opens the prepare pull request, and reruns a failed check whose log is empty
+  instead of stopping (#2493). The Release workflow composes the release notes
+  in its preflight, before any image or asset is built, and a rerun of its
+  publish job replaces the assets an earlier attempt uploaded instead of
+  failing on them. Before a GA is prepared, the cut scans the promoted rc's
+  data image with the GA rule of ADR 0108 (#2488).
+
 ## [0.5.10] - 2026-11-18
 
 ### Added
