@@ -4,10 +4,17 @@
   "versions": [
     {
       "id": "latest",
-      "ref": "v0.5.10",
+      "ref": "v0.5.11",
       "subpath": "",
-      "label": "v0.5.10 (latest)",
+      "label": "v0.5.11 (latest)",
       "archived": false
+    },
+    {
+      "id": "v0.5.10",
+      "ref": "v0.5.10",
+      "subpath": "v0.5.10",
+      "label": "v0.5.10",
+      "archived": true
     },
     {
       "id": "v0.5.9",
