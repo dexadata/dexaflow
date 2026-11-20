@@ -6,6 +6,8 @@ adhere to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.5.11] - 2026-11-20
+
 ### Changed
 
 - **Release tooling.** `scripts/cut-release.sh` refuses a version with nothing
