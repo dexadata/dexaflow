@@ -44,7 +44,7 @@ type taskResponseDTO struct {
 	WaitForDownstream       bool            `json:"wait_for_downstream"`
 	Retries                 int             `json:"retries"`
 	RetryDelay              timeDeltaDTO    `json:"retry_delay"`
-	RetryExponentialBackoff bool            `json:"retry_exponential_backoff"`
+	RetryExponentialBackoff float64         `json:"retry_exponential_backoff"`
 	DownstreamTaskIDs       []string        `json:"downstream_task_ids"`
 	IsMapped                bool            `json:"is_mapped"`
 	StartDate               *string         `json:"start_date"`
@@ -137,6 +137,16 @@ func downstreamIDs(tasks []domain.TaskSpec, taskID string) []string {
 	return out
 }
 
+// retryDelayDTO is a task's retry_delay as the Airflow API shapes a timedelta:
+// whole days, then the seconds left.
+func retryDelayDTO(secs *int) timeDeltaDTO {
+	s := 300
+	if secs != nil {
+		s = *secs
+	}
+	return timeDeltaDTO{Type: "TimeDelta", Days: s / 86400, Seconds: s % 86400}
+}
+
 func toTaskResponse(spec domain.DAGSpec, t domain.TaskSpec) taskResponseDTO {
 	tr := strSafe(string(t.TriggerRule), "all_success")
 	retries := 0
@@ -151,19 +161,20 @@ func toTaskResponse(spec domain.DAGSpec, t domain.TaskSpec) taskResponseDTO {
 		ClassRef:        classRef(t),
 		TriggerRule:     tr,
 		Retries:         retries,
-		// Airflow's default retry_delay is 300s; emit it as a TimeDelta object
-		// (the Tasks Details view calls Object.keys on it, so it must not be null).
-		RetryDelay:        timeDeltaDTO{Type: "TimeDelta", Seconds: 300},
-		DownstreamTaskIDs: downstreamIDs(spec.Tasks, t.TaskID),
-		Pool:              cmp.Or(t.Pool, domain.DefaultPoolName),
-		PoolSlots:         t.EffectivePoolSlots(),
-		PriorityWeight:    1,
-		WeightRule:        "downstream",
-		UIColor:           "#fff",
-		UIFgColor:         "#000",
-		TemplateFields:    []string{},
-		ExtraLinks:        []string{},
-		Params:            json.RawMessage("{}"),
+		// A TimeDelta object, Airflow's default 300s when the task sets none (the
+		// Tasks Details view calls Object.keys on it, so it must not be null).
+		RetryDelay:              retryDelayDTO(t.RetryDelaySeconds),
+		RetryExponentialBackoff: t.RetryExponentialBackoff,
+		DownstreamTaskIDs:       downstreamIDs(spec.Tasks, t.TaskID),
+		Pool:                    cmp.Or(t.Pool, domain.DefaultPoolName),
+		PoolSlots:               t.EffectivePoolSlots(),
+		PriorityWeight:          1,
+		WeightRule:              "downstream",
+		UIColor:                 "#fff",
+		UIFgColor:               "#000",
+		TemplateFields:          []string{},
+		ExtraLinks:              []string{},
+		Params:                  json.RawMessage("{}"),
 	}
 }
 
@@ -195,6 +206,8 @@ func renderedFieldsFor(spec domain.DAGSpec, taskID string) json.RawMessage {
 		putIf("trigger_rule", string(t.TriggerRule), t.TriggerRule != "")
 		putIf("retries", t.Retries, t.Retries != nil)
 		putIf("retry_delay_seconds", t.RetryDelaySeconds, t.RetryDelaySeconds != nil)
+		putIf("retry_exponential_backoff", t.RetryExponentialBackoff, t.RetryExponentialBackoff != 0)
+		putIf("max_retry_delay_seconds", t.MaxRetryDelaySeconds, t.MaxRetryDelaySeconds != nil)
 		putIf("execution_timeout_seconds", t.ExecutionTimeoutSeconds, t.ExecutionTimeoutSeconds != nil)
 		putIf("execution_mode", string(t.ExecutionMode), t.ExecutionMode != "")
 		putIf("resources", t.Resources, t.Resources != nil)

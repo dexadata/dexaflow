@@ -1,6 +1,7 @@
 package scheduler
 
 import (
+	"fmt"
 	"hash/fnv"
 	"math"
 	"time"
@@ -331,17 +332,18 @@ func retriable(run RunState, taskID string) bool {
 }
 
 // readyToRetry reports whether the cooldown window from the user's declared
-// retry_delay_seconds has elapsed since the task ended. The check honors the
-// "absent data falls back to immediate retry" convention so legacy callers
-// (tests, in-flight DAGs predating issue #201) keep working unchanged.
+// retry_delay_seconds (grown by retry_exponential_backoff, #2454) has elapsed
+// since the task ended. The check honors the "absent data falls back to
+// immediate retry" convention so legacy callers (tests, in-flight DAGs
+// predating issue #201) keep working unchanged.
 //
 // Returns true when:
-//   - delay is 0 (no cooldown declared), OR
+//   - the delay is 0 (no cooldown declared), OR
 //   - the task's EndedAt is not recorded (can't compute, retry immediately), OR
 //   - run.Now is zero (no clock provided — test seam preserves old behavior), OR
 //   - run.Now >= EndedAt + delay (cooldown has elapsed)
 func readyToRetry(run RunState, taskID string) bool {
-	delay := run.RetryDelaySeconds[taskID]
+	delay := RetryDelay(run, taskID)
 	if delay <= 0 {
 		return true
 	}
@@ -352,7 +354,55 @@ func readyToRetry(run RunState, taskID string) bool {
 	if run.Now.IsZero() {
 		return true
 	}
-	return !run.Now.Before(ended.Add(time.Duration(delay) * time.Second))
+	return !run.Now.Before(ended.Add(delay))
+}
+
+// MaxRetryDelay is the ceiling of a backoff delay whatever the multiplier and
+// the try, Airflow's [core] max_task_retry_delay default (one day).
+const MaxRetryDelay = 24 * time.Hour
+
+// RetryDelay is how long a task waits in up_for_retry after its failed try,
+// computed as Airflow 3 does (TaskInstance.next_retry_datetime, #2454).
+//
+// Without a backoff multiplier (0, 1 or unset) it is retry_delay_seconds. With
+// one, the floor is retry_delay times multiplier to the power of the failed
+// try minus one, at least one second; the delay is that floor plus a
+// deterministic jitter below it, so tasks that failed together do not all come
+// back in the same tick. It is capped by MaxRetryDelay, then by the task's
+// max_retry_delay. As in Airflow, max_retry_delay applies only with a
+// multiplier.
+func RetryDelay(run RunState, taskID string) time.Duration {
+	base := run.RetryDelaySeconds[taskID]
+	m := run.RetryBackoff[taskID]
+	if m <= 0 || m == 1 {
+		return time.Duration(max(base, 0)) * time.Second
+	}
+	try := max(run.Tries[taskID], 1)
+	limit := MaxRetryDelay.Seconds()
+	floor := math.Ceil(float64(base) * math.Pow(m, float64(try-1)))
+	if math.IsInf(floor, 0) || math.IsNaN(floor) || floor > limit {
+		floor = limit
+	}
+	minBackoff := max(int64(floor), 1)
+	secs := min(minBackoff+retryJitter(run, taskID, try, minBackoff), int64(limit))
+	delay := time.Duration(secs) * time.Second
+	if c := run.MaxRetryDelaySeconds[taskID]; c > 0 {
+		delay = min(delay, time.Duration(c)*time.Second)
+	}
+	return delay
+}
+
+// retryJitter is a value in [0, n) fixed by the task instance and its try, so
+// every scheduler tick (and every replica) computes the same retry time.
+func retryJitter(run RunState, taskID string, try int, n int64) int64 {
+	key := fmt.Sprintf("%s#%s#%s#%d", run.DagID, taskID, run.LogicalDate, try)
+	// FNV-1a, 64 bit: what hash/fnv computes, without its error-returning Write.
+	h := uint64(14695981039346656037)
+	for i := range len(key) {
+		h ^= uint64(key[i])
+		h *= 1099511628211
+	}
+	return int64(h % uint64(n)) //nolint:gosec // n is a positive int64, so the remainder fits
 }
 
 // readyToDispatch reports whether a `scheduled` task may be dispatched now: true

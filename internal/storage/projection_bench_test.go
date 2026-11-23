@@ -58,3 +58,23 @@ func TestProjectRunStateCarriesTheTaskInstances(t *testing.T) {
 		t.Fatal("the projection shares the cached spec's task slice")
 	}
 }
+
+// retry_exponential_backoff and max_retry_delay reach the planner (#2454),
+// and a DAG that sets neither builds no maps for them.
+func TestProjectRunStateCarriesTheRetryBackoff(t *testing.T) {
+	capSecs := 600
+	tasks := []domain.TaskSpec{{TaskID: "a", RetryExponentialBackoff: 2, MaxRetryDelaySeconds: &capSecs}, {TaskID: "b"}}
+	row := queries.ListActiveDagRunsRow{DagRun: queries.DagRun{RunID: "r", State: "running"}}
+	rs := projectRunState(row, domain.DAGSpec{DagID: "d", Tasks: tasks}, scheduler.NewTaskGraph(tasks), nil, time.Unix(0, 0))
+	if rs.RetryBackoff["a"] != 2 || rs.MaxRetryDelaySeconds["a"] != 600 {
+		t.Fatalf("backoff %v, max delay %v", rs.RetryBackoff, rs.MaxRetryDelaySeconds)
+	}
+	if _, ok := rs.RetryBackoff["b"]; ok {
+		t.Fatalf("b has a backoff entry: %v", rs.RetryBackoff)
+	}
+	plain := []domain.TaskSpec{{TaskID: "a"}}
+	rs = projectRunState(row, domain.DAGSpec{DagID: "d", Tasks: plain}, scheduler.NewTaskGraph(plain), nil, time.Unix(0, 0))
+	if rs.RetryBackoff != nil || rs.MaxRetryDelaySeconds != nil {
+		t.Fatalf("no task backs off, yet backoff %v, max delay %v", rs.RetryBackoff, rs.MaxRetryDelaySeconds)
+	}
+}

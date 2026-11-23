@@ -520,6 +520,48 @@ def test_no_scheduling_attrs_emits_no_keys(monkeypatch, tmp_path):
     assert "execution_timeout_seconds" not in b
 
 
+def test_retry_backoff_is_captured(monkeypatch, tmp_path):
+    """retry_exponential_backoff and max_retry_delay reach dag.json (#2454): True
+    is Airflow 3's multiplier 2.0, a number is kept, default_args supplies both,
+    and max_retry_delay goes with a multiplier only, as Airflow applies it."""
+    spec = _compile(monkeypatch, tmp_path, """
+        from datetime import timedelta
+        from airflow.providers.standard.operators.bash import BashOperator
+        from airflow.sdk import DAG
+        with DAG("g", default_args={"retry_exponential_backoff": True,
+                                    "max_retry_delay": timedelta(hours=1)}):
+            BashOperator(task_id="inherits", bash_command="false", retries=3)
+            BashOperator(task_id="own", bash_command="false", retries=3,
+                         retry_exponential_backoff=5, max_retry_delay=600.0)
+            BashOperator(task_id="off", bash_command="false", retries=3,
+                         retry_exponential_backoff=0)
+            BashOperator(task_id="one", bash_command="false", retries=3,
+                         retry_exponential_backoff=1.0)
+    """)
+    inherits = _task(spec, "inherits")
+    assert inherits["retry_exponential_backoff"] == 2.0
+    assert inherits["max_retry_delay_seconds"] == 3600
+    own = _task(spec, "own")
+    assert own["retry_exponential_backoff"] == 5.0
+    assert own["max_retry_delay_seconds"] == 600
+    for constant in ("off", "one"):
+        t = _task(spec, constant)
+        assert "retry_exponential_backoff" not in t
+        assert "max_retry_delay_seconds" not in t
+
+
+def test_retry_backoff_must_be_a_number(monkeypatch, tmp_path):
+    """A multiplier that is not a number is refused at compile time (#2454)."""
+    with pytest.raises(Exception, match="retry_exponential_backoff"):
+        _compile(monkeypatch, tmp_path, """
+            from airflow.providers.standard.operators.bash import BashOperator
+            from airflow.sdk import DAG
+            with DAG("g"):
+                BashOperator(task_id="b", bash_command="false",
+                             retry_exponential_backoff="fast")
+        """)
+
+
 def test_task_decorator_retries_are_captured(monkeypatch, tmp_path):
     """@task(retries=…, retry_delay=…) — the common TaskFlow style — is captured too
     (the decorator kwargs flow to the underlying python operator, #434)."""

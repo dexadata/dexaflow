@@ -611,7 +611,7 @@ type DagRunRepository interface {
 ```
 
 <a name="DagSourceReader"></a>
-## type [DagSourceReader](<https://github.com/dexadata/dexaflow/blob/main/internal/api/ui_tasks.go#L258-L260>)
+## type [DagSourceReader](<https://github.com/dexadata/dexaflow/blob/main/internal/api/ui_tasks.go#L271-L273>)
 
 DagSourceReader reads one version of a DAG and the spec registered with it: the version numbered versionNumber \(the version\_number of the dagVersions listing\), or the newest version when versionNumber is 0. It returns domain.ErrNotFound when the caller's tenant has no such version. The spec may be shared with a cache: callers only read it.
 

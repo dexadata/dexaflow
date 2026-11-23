@@ -177,9 +177,16 @@ type TaskSpec struct {
 	// or running (Airflow's pool_slots, ADR 0066). Zero means 1, so a DAG that
 	// never sets it weighs exactly what it did before. dexaflow.yaml sets it as
 	// `size`. Ignored where Pool is (Lite).
-	PoolSlots               int               `json:"pool_slots,omitempty"`
-	Retries                 *int              `json:"retries,omitempty"`
-	RetryDelaySeconds       *int              `json:"retry_delay_seconds,omitempty"`
+	PoolSlots         int  `json:"pool_slots,omitempty"`
+	Retries           *int `json:"retries,omitempty"`
+	RetryDelaySeconds *int `json:"retry_delay_seconds,omitempty"`
+	// RetryExponentialBackoff is Airflow's retry_exponential_backoff, the
+	// multiplier of the retry delay per earlier try (#2454). The parser writes
+	// True as 2 and leaves out 0; 0 and 1 keep the delay constant.
+	RetryExponentialBackoff float64 `json:"retry_exponential_backoff,omitempty"`
+	// MaxRetryDelaySeconds is Airflow's max_retry_delay, the cap of a delay
+	// grown by RetryExponentialBackoff.
+	MaxRetryDelaySeconds    *int              `json:"max_retry_delay_seconds,omitempty"`
 	ExecutionTimeoutSeconds *int              `json:"execution_timeout_seconds,omitempty"`
 	ExecutionMode           ExecutionMode     `json:"execution_mode,omitempty"`
 	Entrypoint              string            `json:"entrypoint,omitempty"`

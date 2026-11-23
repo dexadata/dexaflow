@@ -346,8 +346,6 @@ _DROPPED_TASK_ARGS = [
     ("executor", "'CeleryExecutor'", "own pod"),
     ("run_as_user", "'etl'", "image's user"),
     ("weight_rule", "'upstream'", None),
-    ("retry_exponential_backoff", "True", "#2454"),
-    ("max_retry_delay", "timedelta(hours=1)", "#2454"),
     ("sla", "timedelta(hours=1)", "removed"),
     ("end_date", "datetime(2030, 1, 1)", "Pause"),
 ]

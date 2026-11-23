@@ -198,38 +198,56 @@ func projectRunState(row queries.ListActiveDagRunsRow, cached domain.DAGSpec, gr
 	// can gate `up_for_retry → none` on the user-declared cooldown (#201).
 	// TaskSpec.RetryDelaySeconds is *int (omitempty); nil = no cooldown.
 	retryDelay := make(map[string]int, len(spec.Tasks))
+	// retry_exponential_backoff and max_retry_delay (#2454): most DAGs set
+	// neither, so the maps stay nil until one task does.
+	var backoff map[string]float64
+	var maxDelay map[string]int
 	for _, t := range spec.Tasks {
 		if t.RetryDelaySeconds != nil {
 			retryDelay[t.TaskID] = *t.RetryDelaySeconds
 		}
+		if t.RetryExponentialBackoff != 0 {
+			if backoff == nil {
+				backoff = map[string]float64{}
+			}
+			backoff[t.TaskID] = t.RetryExponentialBackoff
+		}
+		if t.MaxRetryDelaySeconds != nil {
+			if maxDelay == nil {
+				maxDelay = map[string]int{}
+			}
+			maxDelay[t.TaskID] = *t.MaxRetryDelaySeconds
+		}
 	}
 	return scheduler.RunState{
-		RunID:             uuidToString(run.ID),
-		DisplayRunID:      run.RunID,
-		LogicalDate:       rfc3339OrEmpty(run.LogicalDate),
-		DagID:             spec.DagID,
-		DagVersionID:      uuidToString(run.DagVersionID),
-		TenantID:          uuidToString(run.TenantID),
-		State:             domain.DagRunState(run.State),
-		Held:              row.DagPaused,
-		Suspension:        domain.SuspensionMode(row.TenantSuspensionMode),
-		MaxActiveRuns:     int(row.DagMaxActiveRuns),
-		Tasks:             spec.Tasks,
-		Graph:             graph,
-		States:            ts.states,
-		Tries:             ts.tries,
-		MaxTries:          ts.maxTries,
-		EndedAt:           ts.endedAt,
-		RetryDelaySeconds: retryDelay,
-		RescheduleAt:      ts.rescheduleAt,
-		NextDispatchAt:    ts.nextDispatchAt,
-		DispatchAttempts:  ts.dispatchAttempts,
-		InfraFailed:       ts.infraFailed,
-		InfraProvisional:  ts.infraProvisional,
-		InfraAttempts:     ts.infraAttempts,
-		Now:               now,
-		Alerts:            spec.Alerts,
-		MaxActiveTasks:    spec.MaxActiveTasks,
+		RunID:                uuidToString(run.ID),
+		DisplayRunID:         run.RunID,
+		LogicalDate:          rfc3339OrEmpty(run.LogicalDate),
+		DagID:                spec.DagID,
+		DagVersionID:         uuidToString(run.DagVersionID),
+		TenantID:             uuidToString(run.TenantID),
+		State:                domain.DagRunState(run.State),
+		Held:                 row.DagPaused,
+		Suspension:           domain.SuspensionMode(row.TenantSuspensionMode),
+		MaxActiveRuns:        int(row.DagMaxActiveRuns),
+		Tasks:                spec.Tasks,
+		Graph:                graph,
+		States:               ts.states,
+		Tries:                ts.tries,
+		MaxTries:             ts.maxTries,
+		EndedAt:              ts.endedAt,
+		RetryDelaySeconds:    retryDelay,
+		RetryBackoff:         backoff,
+		MaxRetryDelaySeconds: maxDelay,
+		RescheduleAt:         ts.rescheduleAt,
+		NextDispatchAt:       ts.nextDispatchAt,
+		DispatchAttempts:     ts.dispatchAttempts,
+		InfraFailed:          ts.infraFailed,
+		InfraProvisional:     ts.infraProvisional,
+		InfraAttempts:        ts.infraAttempts,
+		Now:                  now,
+		Alerts:               spec.Alerts,
+		MaxActiveTasks:       spec.MaxActiveTasks,
 	}
 }
 

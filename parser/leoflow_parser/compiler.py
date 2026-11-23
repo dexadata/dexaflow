@@ -622,9 +622,6 @@ _UNHONORED_TASK_ARGS = {
     "weight_rule": ((None, "downstream"), None, None),
     "max_active_tis_per_dag": ((None,), "#2428", None),
     "max_active_tis_per_dagrun": ((None,), "#2428", None),
-    "retry_exponential_backoff": ((False, 0), "#2454",
-                                  "Retries wait retry_delay each time."),
-    "max_retry_delay": ((None,), "#2454", None),
     "retry_policy": ((None,), None, "Retries follow retries and retry_delay."),
     "email": ((None, "", ()), None, _ALERTS_ADVICE),
     "sla": ((None,), None, "Airflow 3 removed it; use execution_timeout or an "
@@ -651,6 +648,7 @@ _UNHONORED_TASK_ARGS = {
 # tables, so a new one cannot be dropped without a word (#2449).
 _MAPPED_TASK_ARGS = frozenset({
     "task_id", "dag", "default_args", "trigger_rule", "retries", "retry_delay",
+    "retry_exponential_backoff", "max_retry_delay",
     "execution_timeout", "pool", "pool_slots", "params", "on_failure_callback",
     "start_date", "multiple_outputs", "do_xcom_push",
 })
@@ -836,7 +834,8 @@ _ON_FAILURE_CALLBACK = "on_failure_callback"
 # via _apply_scheduling_attrs. _split_operator_args skips them so they are not
 # mistaken for the operator's own args (and a timedelta does not trip its reject).
 _SCHEDULING_ATTR_NAMES = frozenset(
-    {"trigger_rule", "retries", "retry_delay", "execution_timeout", "pool", "pool_slots"}
+    {"trigger_rule", "retries", "retry_delay", "retry_exponential_backoff", "max_retry_delay",
+     "execution_timeout", "pool", "pool_slots"}
 )
 
 # _DEFAULT_POOL is Airflow's default pool and the engine's fallback for a task
@@ -1129,6 +1128,24 @@ def _seconds(value) -> int | None:
     return int(total)
 
 
+def _backoff_multiplier(task, value) -> float | None:
+    """Airflow's retry_exponential_backoff as the multiplier dag.json carries
+    (#2454), or None when the delay stays constant. Airflow 3 reads True as 2.0
+    and False as 0, and backs off only for a multiplier above 0 other than 1."""
+    if value is None:
+        return None
+    if isinstance(value, bool):
+        value = 2.0 if value else 0.0
+    if not isinstance(value, (int, float)):
+        raise ValueError(
+            f"retry_exponential_backoff={value!r} on task {task.task_id!r}: "
+            "want a number (the multiplier) or a bool")
+    value = float(value)
+    if value <= 0 or value == 1:
+        return None
+    return value
+
+
 def _apply_scheduling_attrs(task, dag, entry: dict[str, Any]) -> None:
     """Capture retries / retry_delay / execution_timeout / pool / pool_slots (operator or
     default_args) onto the task entry, converting durations to seconds. Silently dropping these —
@@ -1139,6 +1156,14 @@ def _apply_scheduling_attrs(task, dag, entry: dict[str, Any]) -> None:
     retry_delay = _seconds(_sched_attr(task, dag, "retry_delay"))
     if retry_delay is not None:
         entry["retry_delay_seconds"] = retry_delay
+    backoff = _backoff_multiplier(task, _sched_attr(task, dag, "retry_exponential_backoff"))
+    if backoff is not None:
+        entry["retry_exponential_backoff"] = backoff
+        # max_retry_delay caps only a growing delay, as in Airflow, so it is
+        # emitted only with a multiplier; 0 means no cap there too.
+        max_retry_delay = _seconds(_sched_attr(task, dag, "max_retry_delay"))
+        if max_retry_delay:
+            entry["max_retry_delay_seconds"] = max_retry_delay
     execution_timeout = _seconds(_sched_attr(task, dag, "execution_timeout"))
     if execution_timeout is not None:
         entry["execution_timeout_seconds"] = execution_timeout
