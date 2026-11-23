@@ -313,7 +313,16 @@ scenario_scheduler_crash() {
     fi
     sleep 4
   done
-  [ "$(date +%s)" -lt "$deadline" ] || { bad "A: run did not resume to success within 180s (task states: $(echo "$states" | tr '\n' ' '))"; return; }
+  if [ "$(date +%s)" -ge "$deadline" ]; then
+    bad "A: run did not resume to success within 180s (task states: $(echo "$states" | tr '\n' ' '))"
+    # Keep the agent's side of the story (#2470): the work pod is reaped once
+    # the grace ends, and with it the only record of why its report did not land.
+    local p
+    for p in $(kubectl get pods -n leoflow --no-headers 2>/dev/null | awk '/chaosdag-work-/{print $1}'); do
+      kubectl logs -n leoflow "$p" --all-containers >"$WORKDIR/A-$p.log" 2>&1 || true
+    done
+    return
+  fi
 
   # At-most-once: exactly one pod per attempt for 'work' (a resumed scheduler must
   # NOT re-dispatch a task that already ran — no duplicate work pod).
