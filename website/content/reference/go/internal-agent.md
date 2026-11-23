@@ -113,7 +113,7 @@ func NewReturnValuePath() (path string, cleanup func() error, err error)
 NewReturnValuePath returns a unique, agent\-owned path for this task's return value, plus a cleanup. The agent runs one task per process, so a per\-process temp dir keeps concurrent tasks and other users from ever sharing a single /tmp/leoflow\_return\_value.json \(which collided — permission denied across uids, clobbered across parallel tasks\). The runtime is pointed here via the LEOFLOW\_RETURN\_VALUE\_PATH env the runner injects.
 
 <a name="ReadReturnValue"></a>
-## func [ReadReturnValue](<https://github.com/dexadata/dexaflow/blob/main/internal/agent/command.go#L107>)
+## func [ReadReturnValue](<https://github.com/dexadata/dexaflow/blob/main/internal/agent/command.go#L118>)
 
 ```go
 func ReadReturnValue(path string) (value []byte, ok bool, err error)
@@ -259,7 +259,7 @@ func (NoopLogSink) Send(*agentv1.LogLine) error
 Send discards the line.
 
 <a name="Runner"></a>
-## type [Runner](<https://github.com/dexadata/dexaflow/blob/main/internal/agent/runner.go#L56-L137>)
+## type [Runner](<https://github.com/dexadata/dexaflow/blob/main/internal/agent/runner.go#L56-L142>)
 
 Runner orchestrates a single task execution inside the worker container: it registers with the control plane, fetches the task spec and XCom inputs, runs the user process while streaming logs, pushes the return value, and reports the terminal state.
 
@@ -277,6 +277,11 @@ type Runner struct {
     // ReschedulePath is the file a reschedule-mode sensor writes its next-poke time
     // to before exiting with rescheduleExitCode; empty disables reschedule (#380).
     ReschedulePath string
+    // XComDir is the per-attempt directory an XCom input too large for the
+    // environment is written to, and the runtime reads it from there (#2455).
+    // Empty keeps every input in the environment, where a value over 128 KiB
+    // fails the exec.
+    XComDir string
     // TmpDir, when set, is exported to the task as TMPDIR so the child's temp files
     // land in a per-attempt directory the caller wipes between attempts, instead of
     // the pod's real /tmp. The warm worker points this at a subdir of its scratch
@@ -324,7 +329,7 @@ type Runner struct {
 ```
 
 <a name="Runner.Run"></a>
-### func \(\*Runner\) [Run](<https://github.com/dexadata/dexaflow/blob/main/internal/agent/runner.go#L160>)
+### func \(\*Runner\) [Run](<https://github.com/dexadata/dexaflow/blob/main/internal/agent/runner.go#L165>)
 
 ```go
 func (r *Runner) Run(ctx context.Context) error
