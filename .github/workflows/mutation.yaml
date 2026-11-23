@@ -124,11 +124,13 @@ jobs:
               ps -eo rss=,etimes=,args= --sort=-rss | head -3 | cut -c1-160 | sed 's/^/  /'
             done ) &
           watch=$!
-          # The jobs that died ended with "The hosted runner lost communication
-          # with the server": a mutant that spins (a negated loop condition, a
-          # boundary that never ends) keeps every core busy until its timeout,
-          # and the runner's own agent starves. Run the mutants at the lowest
-          # priority and leave one of the four cores to the runner.
+          # The jobs that died ended with "The runner has received a shutdown
+          # signal": a mutant (an allocation loop that no longer ends) took a
+          # test binary to 6.5 GB within seconds and, with the second worker,
+          # the runner ran out of memory and lost its VM. Cap each process's
+          # address space so such a mutant dies alone (gremlins counts it as
+          # killed), run at the lowest priority, and leave the runner a core.
+          ulimit -v $((5 * 1024 * 1024))
           rc=0
           GOMAXPROCS=3 nice -n 19 scripts/mutation.sh run "$PACKAGE" || rc=$?
           kill "$watch" 2>/dev/null || true
