@@ -102,6 +102,17 @@ func XComEnvVar(name string, value []byte) string {
 	return "LEOFLOW_XCOM_" + strings.ToUpper(name) + "=" + string(value)
 }
 
+// xcomFileEnvPrefix names an XCom input delivered as a file: the variable
+// holds the path of a file with the JSON (#2455). It is not LEOFLOW_XCOM_, so
+// the runtime's walk of the LEOFLOW_XCOM_ variables never reads a path as a
+// value.
+const xcomFileEnvPrefix = "LEOFLOW_XCOMFILE_"
+
+// maxXComEnvValueBytes is the largest XCom input delivered in the environment.
+// Linux caps a single environment string at 128 KiB (MAX_ARG_STRLEN) and fails
+// the exec with E2BIG past it; a larger value goes to a file.
+const maxXComEnvValueBytes = 96 * 1024
+
 // ReadReturnValue reads the optional return-value file. ok is false (no error)
 // when the file does not exist.
 func ReadReturnValue(path string) (value []byte, ok bool, err error) {

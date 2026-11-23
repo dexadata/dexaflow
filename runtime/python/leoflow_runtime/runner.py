@@ -11,7 +11,8 @@ import shlex
 import sys
 from datetime import datetime
 
-from leoflow_runtime.xcom import XCOM_ENV_PREFIX
+from leoflow_runtime.xcom import input_names as xcom_input_names
+from leoflow_runtime.xcom import read_raw as read_xcom_raw
 
 # Lifecycle messages are prefixed so the user can distinguish runtime-emitted
 # lines from their own print(). They go to stdout (not stderr) on purpose:
@@ -106,7 +107,7 @@ def _resolve_kwargs(fn, context: dict, call_args: dict | None = None) -> dict:
         # the wire size when the pull succeeds — invaluable when debugging a
         # task that "received None" because the upstream payload didn't arrive.
         # XCom takes precedence over the literal call arg of the same name.
-        raw = os.environ.get(XCOM_ENV_PREFIX + name.upper())
+        raw = read_xcom_raw(name)
         if raw is not None:
             kwargs[name] = json.loads(raw)
             _lifecycle(f"pulled {name} ({len(raw)} B)")
@@ -389,6 +390,12 @@ RESCHEDULE_EXIT_CODE = 75
 UPSTREAM_TASK_IDS_ENV = "LEOFLOW_UPSTREAM_TASK_IDS"
 UPSTREAM_XCOM_OMITTED_ENV = "LEOFLOW_UPSTREAM_XCOM_OMITTED"
 
+# The path of a file holding the whole upstream map, set when the map is too
+# large for one environment variable (#2455). The runtime reads it instead of
+# UPSTREAM_XCOM_ENV, so nothing is omitted; UPSTREAM_XCOM_OMITTED_ENV is still
+# set for a runtime older than the file.
+UPSTREAM_XCOM_FILE_ENV = "LEOFLOW_UPSTREAM_XCOM_FILE"
+
 
 class XComNotDeliveredError(LookupError):
     """XComNotDeliveredError is raised by ``ti.xcom_pull`` for a value Dexaflow
@@ -418,6 +425,11 @@ def _load_xcom_by_task() -> dict:
     operators). Malformed/absent → empty: a missing upstream pulls as None, never a
     crash."""
     raw = os.environ.get(UPSTREAM_XCOM_ENV)
+    path = os.environ.get(UPSTREAM_XCOM_FILE_ENV)
+    if path:
+        # The whole map, when it is too large for the environment (#2455).
+        with open(path, encoding="utf-8") as f:
+            raw = f.read()
     if not raw:
         return {}
     try:
@@ -579,7 +591,9 @@ class _StandaloneTaskInstance(_ContextObject):
         self.task = task if task is not None else _StandaloneTask(self.task_id, self.dag_id)
         self._xcom_by_task = _load_xcom_by_task()
         self._upstream_ids = _load_id_list(UPSTREAM_TASK_IDS_ENV)
-        self._omitted = set(_load_id_list(UPSTREAM_XCOM_OMITTED_ENV) or [])
+        # With the map in a file, every value was delivered (#2455).
+        self._omitted = (set() if os.environ.get(UPSTREAM_XCOM_FILE_ENV)
+                         else set(_load_id_list(UPSTREAM_XCOM_OMITTED_ENV) or []))
         self.pushed: dict = {}
 
     @property
@@ -763,10 +777,10 @@ def _merge_operator_xcom(args: dict) -> dict:
     kwarg, so ``MyOperator(sql=extract())`` runs with the real upstream SQL. An
     XCom value overrides any same-name literal, matching the @task precedence.
     """
-    for key, raw in os.environ.items():
-        if not key.startswith(XCOM_ENV_PREFIX):
+    for param in xcom_input_names():
+        raw = read_xcom_raw(param)
+        if raw is None:
             continue
-        param = key[len(XCOM_ENV_PREFIX):].lower()
         args[param] = json.loads(raw)
         _lifecycle(f"pulled {param} for operator ({len(raw)} B)")
     return args

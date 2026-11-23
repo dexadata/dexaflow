@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/dexadata/dexaflow/internal/agent/secretsource"
 	agentv1 "github.com/dexadata/dexaflow/proto/agent/v1"
@@ -47,7 +48,11 @@ func (r *Runner) buildEnv(ctx context.Context, spec *agentv1.TaskSpec) ([]string
 			if err != nil {
 				return nil, fmt.Errorf("fetching xcom %q from %q: %w", param, taskIDs[0], err)
 			}
-			xcom = append(xcom, XComEnvVar(param, resp.GetValue()))
+			kv, err := r.xcomInputEnv(param, resp.GetValue())
+			if err != nil {
+				return nil, err
+			}
+			xcom = append(xcom, kv)
 		default:
 			// Fan-in: each upstream's return_value becomes one element of a JSON
 			// array, in declaration order. An absent upstream contributes `null`
@@ -56,7 +61,11 @@ func (r *Runner) buildEnv(ctx context.Context, spec *agentv1.TaskSpec) ([]string
 			if err != nil {
 				return nil, err
 			}
-			xcom = append(xcom, XComEnvVar(param, collected))
+			kv, err := r.xcomInputEnv(param, collected)
+			if err != nil {
+				return nil, err
+			}
+			xcom = append(xcom, kv)
 		}
 	}
 	env := mergeEnv(r.Env, spec.GetEnvironment(), xcom)
@@ -68,7 +77,7 @@ func (r *Runner) buildEnv(ctx context.Context, spec *agentv1.TaskSpec) ([]string
 	// and never reach the agent's pipe.
 	env = append(env, "PYTHONUNBUFFERED=1", "PYTHONIOENCODING=UTF-8")
 	env = append(env, runContextEnv(spec)...)
-	byTaskEnv, err := xcomByTaskEnv(ctx, fetcher, spec)
+	byTaskEnv, err := xcomByTaskEnv(ctx, fetcher, spec, r.XComDir)
 	if err != nil {
 		return nil, err
 	}
@@ -179,6 +188,12 @@ const upstreamXComEnv = "LEOFLOW_UPSTREAM_XCOM"
 // from a task it was never given (an error, #2452).
 const upstreamTaskIDsEnv = "LEOFLOW_UPSTREAM_TASK_IDS"
 
+// upstreamXComFileEnv names a file holding the whole upstream map, written
+// when the map does not fit in upstreamXComEnv (#2455). The runtime reads it
+// and ignores upstreamXComOmittedEnv, which is still set for a runtime older
+// than the file, so that one keeps refusing what it cannot see.
+const upstreamXComFileEnv = "LEOFLOW_UPSTREAM_XCOM_FILE"
+
 // upstreamXComOmittedEnv lists, as a JSON array, the upstreams whose value was
 // left out of upstreamXComEnv because the map would not fit in one environment
 // variable; the runtime's ti.xcom_pull raises for them instead of returning None.
@@ -205,10 +220,11 @@ func pullsUpstreamXCom(spec *agentv1.TaskSpec) bool {
 // can pull a chained upstream's output like in Airflow (ADR 0040, #2452). The values
 // come from the batched prefetch, so a Python task's bound inputs are not read
 // twice. An upstream with no return_value is omitted (pulls as None); one that would
-// push the map past maxUpstreamXComMapBytes is listed in upstreamXComOmittedEnv.
-// The declared upstreams always ride in upstreamTaskIDsEnv. nil when the task has
-// no upstream or cannot pull.
-func xcomByTaskEnv(ctx context.Context, fetcher xcomFetcher, spec *agentv1.TaskSpec) ([]string, error) {
+// push the map past maxUpstreamXComMapBytes is listed in upstreamXComOmittedEnv,
+// and, when dir is set, the whole map is also written to a file there and named by
+// upstreamXComFileEnv (#2455). The declared upstreams always ride in
+// upstreamTaskIDsEnv. nil when the task has no upstream or cannot pull.
+func xcomByTaskEnv(ctx context.Context, fetcher xcomFetcher, spec *agentv1.TaskSpec, dir string) ([]string, error) {
 	if !pullsUpstreamXCom(spec) || len(spec.GetDependsOn()) == 0 {
 		return nil, nil
 	}
@@ -218,6 +234,7 @@ func xcomByTaskEnv(ctx context.Context, fetcher xcomFetcher, spec *agentv1.TaskS
 	}
 	env := []string{upstreamTaskIDsEnv + "=" + string(ids)}
 	byTask := map[string]json.RawMessage{}
+	all := map[string]json.RawMessage{}
 	var omitted []string
 	size := 2 // the braces of the encoded map
 	for _, taskID := range spec.GetDependsOn() {
@@ -231,6 +248,7 @@ func xcomByTaskEnv(ctx context.Context, fetcher xcomFetcher, spec *agentv1.TaskS
 		if err != nil {
 			return nil, fmt.Errorf("fetching xcom for upstream %q: %w", taskID, err)
 		}
+		all[taskID] = resp.GetValue()
 		// key, quotes, colon, comma: an upper bound on what the entry adds.
 		entry := len(taskID) + len(resp.GetValue()) + 4
 		if size+entry > maxUpstreamXComMapBytes {
@@ -253,8 +271,54 @@ func xcomByTaskEnv(ctx context.Context, fetcher xcomFetcher, spec *agentv1.TaskS
 			return nil, fmt.Errorf("encoding omitted upstreams: %w", err)
 		}
 		env = append(env, upstreamXComOmittedEnv+"="+string(encoded))
+		if dir != "" {
+			whole, err := json.Marshal(all)
+			if err != nil {
+				return nil, fmt.Errorf("encoding xcom-by-task map: %w", err)
+			}
+			path, err := writeXComFile(dir, "upstream_xcom.json", whole)
+			if err != nil {
+				return nil, err
+			}
+			env = append(env, upstreamXComFileEnv+"="+path)
+		}
 	}
 	return env, nil
+}
+
+// xcomInputEnv renders XCom input name: in the environment when it fits, as a
+// file in r.XComDir named by xcomFileEnvPrefix when it does not (#2455).
+// Without an XComDir it stays in the environment, as before.
+func (r *Runner) xcomInputEnv(name string, value []byte) (string, error) {
+	if len(value) <= maxXComEnvValueBytes || r.XComDir == "" {
+		return XComEnvVar(name, value), nil
+	}
+	// A param is a Python identifier; anything else is mapped so the name can
+	// never leave the directory.
+	safe := strings.Map(func(c rune) rune {
+		if c == '_' || unicode.IsLetter(c) || unicode.IsDigit(c) {
+			return c
+		}
+		return '_'
+	}, strings.ToLower(name))
+	path, err := writeXComFile(r.XComDir, "input_"+safe+".json", value)
+	if err != nil {
+		return "", err
+	}
+	slog.Debug("xcom input delivered as a file", "param", name, "bytes", len(value))
+	return xcomFileEnvPrefix + strings.ToUpper(name) + "=" + path, nil
+}
+
+// writeXComFile writes an XCom value into dir, readable by the task's user only.
+func writeXComFile(dir, name string, value []byte) (string, error) {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return "", fmt.Errorf("creating the xcom directory %q: %w", dir, err)
+	}
+	path := filepath.Join(dir, name)
+	if err := os.WriteFile(path, value, 0o600); err != nil {
+		return "", fmt.Errorf("writing xcom file %q: %w", path, err)
+	}
+	return path, nil
 }
 
 // runContextEnv renders the DagRun/task identity the runtime's standalone operator

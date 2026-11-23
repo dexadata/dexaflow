@@ -2,10 +2,13 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
+	"maps"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -552,6 +555,107 @@ func TestBuildEnvOmitsUpstreamValuesPastTheEnvLimit(t *testing.T) {
 	if !strings.Contains(je, `LEOFLOW_UPSTREAM_XCOM_OMITTED=["huge"]`) {
 		t.Errorf("huge upstream must be named as omitted; got %v", env)
 	}
+}
+
+func TestBuildEnvWritesTheUpstreamMapPastTheEnvLimitToAFile(t *testing.T) {
+	// With an XComDir, the map that does not fit is written whole to a file the
+	// runtime reads instead, so the huge upstream is delivered, not refused
+	// (#2455). The env keeps the fitting part and the omitted list for a runtime
+	// older than the file.
+	big := `"` + strings.Repeat("x", maxUpstreamXComMapBytes) + `"`
+	client := &fakeClient{
+		spec: &agentv1.TaskSpec{Operator: "airflow_operator", OperatorClass: "x.Y", DependsOn: []string{"small", "huge"}},
+		xcom: map[string]*agentv1.FetchXComResponse{
+			"small": {Value: []byte(`1`)},
+			"huge":  {Value: []byte(big)},
+		},
+	}
+	r := newRunner(client, &fakeCmd{}, &recordingSink{})
+	r.XComDir = filepath.Join(t.TempDir(), "xcom")
+
+	env, err := r.buildEnv(context.Background(), client.spec)
+	if err != nil {
+		t.Fatalf("buildEnv: %v", err)
+	}
+	path := envValue(env, upstreamXComFileEnv)
+	if path == "" || filepath.Dir(path) != r.XComDir {
+		t.Fatalf("%s = %q, want a file in %s; env %v", upstreamXComFileEnv, path, r.XComDir, env)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var whole map[string]json.RawMessage
+	if err := json.Unmarshal(data, &whole); err != nil {
+		t.Fatalf("map file: %v", err)
+	}
+	if string(whole["small"]) != "1" || string(whole["huge"]) != big {
+		t.Errorf("map file has keys %v; want small and huge with their values", slices.Sorted(maps.Keys(whole)))
+	}
+	if envValue(env, upstreamXComOmittedEnv) != `["huge"]` {
+		t.Errorf("the omitted list must stay for an older runtime; env %v", env)
+	}
+}
+
+func TestBuildEnvDeliversALargeInputAsAFile(t *testing.T) {
+	// A bound input over maxXComEnvValueBytes, here 1 MiB, goes to a file named by
+	// LEOFLOW_XCOMFILE_<PARAM> instead of an env var the exec would refuse with
+	// E2BIG (#2455). A small one stays in the environment.
+	big := `"` + strings.Repeat("y", 1<<20) + `"`
+	client := &fakeClient{
+		spec: &agentv1.TaskSpec{
+			Operator: "python",
+			XcomInputMapping: map[string]*agentv1.XComUpstreams{
+				"rows": {TaskIds: []string{"extract"}},
+				"n":    {TaskIds: []string{"count"}},
+			},
+		},
+		xcom: map[string]*agentv1.FetchXComResponse{
+			"extract": {Value: []byte(big)},
+			"count":   {Value: []byte(`3`)},
+		},
+	}
+	r := newRunner(client, &fakeCmd{}, &recordingSink{})
+	r.XComDir = filepath.Join(t.TempDir(), "xcom")
+
+	env, err := r.buildEnv(context.Background(), client.spec)
+	if err != nil {
+		t.Fatalf("buildEnv: %v", err)
+	}
+	if envValue(env, "LEOFLOW_XCOM_ROWS") != "" {
+		t.Fatal("the 1 MiB input is still in the environment")
+	}
+	path := envValue(env, xcomFileEnvPrefix+"ROWS")
+	data, err := os.ReadFile(path)
+	if err != nil || string(data) != big {
+		t.Fatalf("file %q: %d bytes, err %v; want the 1 MiB value", path, len(data), err)
+	}
+	if fi, serr := os.Stat(path); serr != nil || fi.Mode().Perm() != 0o600 {
+		t.Errorf("stat %q: %v; want mode 0600", path, serr)
+	}
+	if envValue(env, "LEOFLOW_XCOM_N") != "3" {
+		t.Errorf("the small input must stay in the environment; env %v", env)
+	}
+
+	// Without an XComDir nothing changes: the input stays in the environment.
+	r.XComDir = ""
+	env, err = r.buildEnv(context.Background(), client.spec)
+	if err != nil {
+		t.Fatalf("buildEnv: %v", err)
+	}
+	if envValue(env, "LEOFLOW_XCOM_ROWS") != big {
+		t.Error("without an XComDir the input must stay in the environment")
+	}
+}
+
+// envValue is the value of key in env, or "" when it is not set.
+func envValue(env []string, key string) string {
+	for _, kv := range env {
+		if v, ok := strings.CutPrefix(kv, key+"="); ok {
+			return v
+		}
+	}
+	return ""
 }
 
 func TestRunnerPushesCustomXComs(t *testing.T) {

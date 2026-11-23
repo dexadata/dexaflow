@@ -1765,11 +1765,23 @@ environment:
     group: task
     description: >-
       JSON array of upstreams whose value was too large for
-      `DEXAFLOW_UPSTREAM_XCOM`; `ti.xcom_pull` raises for them.
+      `DEXAFLOW_UPSTREAM_XCOM`; `ti.xcom_pull` raises for them unless
+      `DEXAFLOW_UPSTREAM_XCOM_FILE` is set.
+  - name: UPSTREAM_XCOM_FILE
+    group: task
+    description: >-
+      Path of a file in the attempt's scratch holding the whole upstream map,
+      set when it does not fit in `DEXAFLOW_UPSTREAM_XCOM` (#2455).
   - name: XCOM_<NAME>
     group: task
     description: >-
       One XCom input bound to the operator parameter `<name>`, as JSON.
+  - name: XCOMFILE_<NAME>
+    group: task
+    description: >-
+      Path of a file in the attempt's scratch holding the XCom input bound to
+      `<name>`, set instead of `DEXAFLOW_XCOM_<NAME>` when the value is over
+      96 KiB (#2455).
   - name: PROJECT_CONFIG_JSON
     group: task
     description: >-
