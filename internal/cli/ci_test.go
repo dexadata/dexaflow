@@ -642,7 +642,7 @@ var ciDocBlockRe = regexp.MustCompile("(?s)<!-- ci-init: ([a-z-]+) -->\n```(?:ya
 // what `ci init` writes: each block marked <!-- ci-init: <case> --> must be
 // the golden file of that case, with the version as vX.Y.Z.
 func TestCIRecipesMatchGenerated(t *testing.T) {
-	page, err := os.ReadFile(filepath.Join("..", "..", "website", "content", "operate", "cicd-deploy.md"))
+	page, err := os.ReadFile(filepath.Join("..", "..", "website", "content", "operate", "cicd-deploy", "pipelines.md"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -662,14 +662,14 @@ func TestCIRecipesMatchGenerated(t *testing.T) {
 			continue
 		}
 		if body != want {
-			t.Errorf("the recipe %s (%s) in cicd-deploy.md is not what ci init writes; paste testdata/ci/%s/%s with %s as vX.Y.Z, %s as <sha> and %s as sha256:<digest>:\n%s",
+			t.Errorf("the recipe %s (%s) in cicd-deploy/pipelines.md is not what ci init writes; paste testdata/ci/%s/%s with %s as vX.Y.Z, %s as <sha> and %s as sha256:<digest>:\n%s",
 				path, name, name, path, ciGoldenVersion, ciGoldenCommit, ciGoldenImageDigest, body)
 		}
 		seen[name+"/"+path] = true
 	}
 	for _, want := range []string{"github/.github/workflows/dexaflow-deploy.yaml", "gitlab/.gitlab-ci.yml", "cloudbuild/cloudbuild.yaml", "generic/" + ciScriptPath} {
 		if !seen[want] {
-			t.Errorf("cicd-deploy.md shows no generated %s", want)
+			t.Errorf("cicd-deploy/pipelines.md shows no generated %s", want)
 		}
 	}
 }

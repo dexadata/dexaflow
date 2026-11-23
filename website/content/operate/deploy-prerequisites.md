@@ -90,7 +90,7 @@ Error: server returned 400: {..."detail":"image \"ghcr.io/acme/etl:v1\" is not p
 **Fix:** give the CLI a credential that can read the registry, register with
 `dexaflow deploy`, or pass `--image <repository>@sha256:<digest>` (sha256
 only) to `dexaflow push`. See
-[Require images pinned by digest](/operate/cicd-deploy/#require-images-pinned-by-digest).
+[Require images pinned by digest](/operate/cicd-deploy/workflows/#require-images-pinned-by-digest).
 
 ### 3. Supported task types only
 
@@ -284,7 +284,7 @@ and which labels it has registered:
   after reverting to code deployed earlier: deploy stops before building and
   says so, naming the command that makes that version current again:
   `dexaflow rollback <dag_id> --to <label>` (see
-  [Rolling back](/operate/cicd-deploy/#rolling-back)). To register the same
+  [Rolling back](/operate/cicd-deploy/workflows/#rolling-back)). To register the same
   content as a new version instead, pass a new `--dag-version`.
 - **The label is unknown**, the DAG has never been registered (`404`), or it
   has no current version: deploy builds and registers as usual, unless the

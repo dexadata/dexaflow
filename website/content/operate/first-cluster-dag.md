@@ -400,7 +400,7 @@ New runs use 1a2b3c4 (#1) from the next scheduler tick; runs already created kee
 The rollback reuses the image the older version was registered with, applies
 its schedule, and leaves runs already created on their own version and the
 pause state as it is. `--to` picks another version by label or number. See
-[Rolling back](/operate/cicd-deploy/#rolling-back) for the details.
+[Rolling back](/operate/cicd-deploy/workflows/#rolling-back) for the details.
 
 ## Build in one CI job, deploy in another
 

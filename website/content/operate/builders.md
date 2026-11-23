@@ -759,7 +759,7 @@ buildah, with no daemon, in a pipeline pod. kaniko takes other arguments and
 runs only in its own image, so it is not a `--builder`: a pipeline builds a
 project's own Dockerfile with it and registers the digest it pushed. Both
 are under
-[Recipes for Argo Workflows, Tekton, Jenkins, buildah and kaniko](/operate/cicd-deploy/#recipes-for-argo-workflows-tekton-jenkins-buildah-and-kaniko).
+[Recipes for Argo Workflows, Tekton, Jenkins, buildah and kaniko](/operate/cicd-deploy/recipes/#recipes-for-argo-workflows-tekton-jenkins-buildah-and-kaniko).
 
 Ctrl-C (or SIGTERM) during the build or the push interrupts the tool, which
 cancels it, and the CLI kills it if it has not exited 10 seconds later. The

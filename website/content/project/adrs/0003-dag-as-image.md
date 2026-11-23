@@ -122,7 +122,7 @@ Each contains:
 > retagging changes nothing for a registered version, and re-registering an older
 > `dag.json` is a no-op that leaves the newer version current. Rolling back today
 > means registering the old code as a new version on the old digest; see
-> [Rolling back](/operate/cicd-deploy/#rolling-back). A rollback command is
+> [Rolling back](/operate/cicd-deploy/workflows/#rolling-back). A rollback command is
 > tracked in #1702. The sentence is kept because a decision record states what
 > was decided.
 
@@ -131,7 +131,7 @@ Each contains:
 > control plane already holds current again, with the image digest that
 > version was registered with, so a rollback needs no rebuild, no new
 > registration and no registry change; see
-> [Rolling back](/operate/cicd-deploy/#rolling-back).
+> [Rolling back](/operate/cicd-deploy/workflows/#rolling-back).
 
 ## Consequences
 

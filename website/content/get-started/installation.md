@@ -92,7 +92,7 @@ picks the highest path available**; without Docker it uses subprocess. Run
    human-friendly password, **shown once** at the end (only its hash is stored).
    Recover it with `dexaflow lite reset-password`. An install created before
    the rename keeps its `admin@leoflow.local`
-   ([upgrade note](/operate/upgrades/#what-changes-in-054-without-a-flag)).
+   ([upgrade note](/operate/upgrades/version-notes/#what-changes-in-054-without-a-flag)).
 
 {{% alert title="Lite is for trusted networks" color="warning" %}}
 The admin password is short by design and there is no SSO/RBAC — run Lite

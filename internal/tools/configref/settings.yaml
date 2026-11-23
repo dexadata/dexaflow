@@ -568,7 +568,7 @@ settings:
       mapping `claims` patterns to a `role` and optional `scopes`. The tenant never
       comes from a claim. In the configuration file, or as a JSON array of the same
       objects in this variable, which wins over the file. Empty (the default) leaves
-      the exchange off. See [CI OIDC](/operate/cicd-deploy/#deploying-without-a-stored-token-ci-oidc).
+      the exchange off. See [CI OIDC](/operate/cicd-deploy/credentials/#deploying-without-a-stored-token-ci-oidc).
       Helm: `auth.ciOidc.issuers`.
   auth.ci_oidc.session_ttl_seconds:
     edition: both
@@ -1513,7 +1513,7 @@ settings:
       path, so start with `warn` to find those pipelines. Any other value fails boot;
       in a config file a YAML `false` means `off`. Config key `deploy.require_digest`.
       Helm: `deploy.requireDigest`. See [Require images pinned by
-      digest](/operate/cicd-deploy/#require-images-pinned-by-digest).
+      digest](/operate/cicd-deploy/workflows/#require-images-pinned-by-digest).
   observability.log_level:
     edition: both
     description: >-
@@ -1862,7 +1862,7 @@ environment:
       ci-token` exchanges for a short-lived deploy session. Pipelines written
       by `dexaflow ci init` set it when the control plane offers a CI OIDC
       issuer. See [Deploying without a stored token (CI
-      OIDC)](/operate/cicd-deploy/#deploying-without-a-stored-token-ci-oidc).
+      OIDC)](/operate/cicd-deploy/credentials/#deploying-without-a-stored-token-ci-oidc).
   - name: TRUSTED_WORKSPACES
     group: cli
     description: >-

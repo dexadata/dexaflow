@@ -48,7 +48,7 @@ The rules are in [`migrations/AGENTS.md`](https://github.com/dexadata/dexaflow/b
    [upgrades](/operate/upgrades/) when it takes noticeable time or needs an
    action, and a changelog fragment. Every migration also gets its row in
    the recovery table of
-   [an interrupted migration](/operate/upgrades/#an-interrupted-migration):
+   [an interrupted migration](/operate/upgrades/version-notes/#an-interrupted-migration):
    the version left dirty, what to do before `force`, and the version to
    force (the one whose schema the database holds once the file was cut
    short).

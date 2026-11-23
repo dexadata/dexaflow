@@ -229,5 +229,5 @@ transaction that was open in the database when it started, so the Job can take
 longer than usual behind a session idle in transaction or a long query. Upgrade
 in a window without long-running transactions. If the Job is interrupted, every
 retry stops at "Dirty database version N. Fix and force version."; the recovery
-runbook is at https://dexaflow.dexadata.ai/operate/upgrades/#an-interrupted-migration
+runbook is at https://dexaflow.dexadata.ai/operate/upgrades/version-notes/#an-interrupted-migration
 {{- end }}

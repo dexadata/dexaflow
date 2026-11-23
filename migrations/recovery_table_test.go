@@ -14,12 +14,12 @@ import (
 const firstRecoveryRow = 27
 
 // TestEveryMigrationHasARecoveryRow keeps the interrupted-migration table in
-// website/content/operate/upgrades.md complete (#1619): an operator whose
+// website/content/operate/upgrades/version-notes.md complete (#1619): an operator whose
 // migration was cut needs the row for that file to know what to clean up and
 // which version to force. 047 shipped without one, so a new migration now
 // fails here until its row is written.
 func TestEveryMigrationHasARecoveryRow(t *testing.T) {
-	doc, err := os.ReadFile("../website/content/operate/upgrades.md")
+	doc, err := os.ReadFile("../website/content/operate/upgrades/version-notes.md")
 	if err != nil {
 		t.Fatalf("reading the upgrade guide: %v", err)
 	}
@@ -65,7 +65,7 @@ func TestEveryMigrationHasARecoveryRow(t *testing.T) {
 			t.Fatalf("%s: %v", e.Name(), err)
 		}
 		if v >= firstRecoveryRow && !covered[v] {
-			t.Errorf("%s has no row in the interrupted-migration table of website/content/operate/upgrades.md: add what an interrupted run leaves behind and which version to force", e.Name())
+			t.Errorf("%s has no row in the interrupted-migration table of website/content/operate/upgrades/version-notes.md: add what an interrupted run leaves behind and which version to force", e.Name())
 		}
 	}
 }

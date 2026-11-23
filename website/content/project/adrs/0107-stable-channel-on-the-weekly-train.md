@@ -77,7 +77,7 @@ upgrade.
      version.
    - **Schema step:** migrations with down files that lose nothing; rolling
      back is `helm rollback` after running the down migrations to the
-     previous schema, as `operate/upgrades.md` describes for that version
+     previous schema, as `operate/upgrades/version-notes.md` describes for that version
      (Lite has no down command and restores its snapshot instead).
    - **Restore:** a migration the previous version cannot run on, or one whose
      down loses data; rolling back is restoring the pre-upgrade backup

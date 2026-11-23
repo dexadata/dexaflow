@@ -123,7 +123,7 @@ raised Kubernetes client limits with a separate maintenance client,
 someone follows an attempt (`logs.tail.publish: on_demand`, from 0.5.10). An upgrade keeps the profile the release
 was installed with, so releases from before 0.5.10 stay on `legacy` until you
 set `profile: cluster`. The HA overlay below is independent of it. See
-[Upgrading to 0.5.10](/operate/upgrades/#upgrading-to-0510-the-install-profile).
+[Upgrading to 0.5.10](/operate/upgrades/version-notes/#upgrading-to-0510-the-install-profile).
 
 ### One switch: the HA profile
 

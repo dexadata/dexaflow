@@ -217,7 +217,7 @@ before upgrading (#1557), then the per kind lists:
 2. **Breaking changes**, from the `Breaking` entries, or "None.".
 3. **Action required**, from the `Upgrade` entries (a migration and its
    expected duration, a new required setting, a removed flag, each linking
-   its section of `operate/upgrades.md`), or "None.", followed by a link to
+   its section of `operate/upgrades/version-notes.md`), or "None.", followed by a link to
    the upgrades guide.
 
 An entry is printed once: the three kinds above are not repeated in the lists

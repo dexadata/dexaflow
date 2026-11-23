@@ -67,7 +67,7 @@ of it (`chown`) or trust its folder:
 | `dexaflow deploy --all` | The workspace root; without a workspace file, the current folder when it is a DAG project (a workspace of one). Inside a git repository with no workspace file it refuses rather than deploy every DAG of the repository; outside one it keeps the Lite workspace |
 | `dexaflow deploy` with no argument | The current folder when it is a project; at the workspace root itself, every DAG of the workspace. Any other folder is an error that suggests `deploy <dag_id>` or `deploy --all` |
 | `dexaflow status` | As `deploy`: with no argument, the current folder when it is a project, else the DAGs `deploy --all` reads; a `dag_id` argument is looked up as for `deploy <dag_id>` |
-| `dexaflow sync <dir>` | Every DAG project under `<dir>`, and the workspace file around `<dir>` for the targets, whatever the current folder; a folder with no project is refused. See [Syncing a target with the workspace](/operate/cicd-deploy/#syncing-a-target-with-the-workspace-gitops) |
+| `dexaflow sync <dir>` | Every DAG project under `<dir>`, and the workspace file around `<dir>` for the targets, whatever the current folder; a folder with no project is refused. See [Syncing a target with the workspace](/operate/cicd-deploy/workflows/#syncing-a-target-with-the-workspace-gitops) |
 | `dexaflow lite` with no argument | The workspace root; `~/dexaflow` (or the config's `workspace:`) only when no workspace file is found |
 
 Deploy prints the workspace it read and why (`workspace: <root> (from
@@ -149,7 +149,7 @@ each control plane gets `--from-token` or `--to-token`, else the token saved
 for its server. The `--from` token needs read on dags (an API token, the
 `read` scope); the `--to` token needs only deploy. It registers on the `--to`
 target the version the `--from` target runs, with the same image digest
-([Promoting between environments](/operate/cicd-deploy/#promoting-between-environments)).
+([Promoting between environments](/operate/cicd-deploy/workflows/#promoting-between-environments)).
 
 ## Registry, platforms and base image
 

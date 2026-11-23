@@ -48,7 +48,7 @@ applies too; the step by step is in the
   without defaults take place in a contract step at least one minor release
   later, after all supported binaries no longer read the old schema structure.
 - **Every migration has a recovery row.** Add it to the table under
-  "An interrupted migration" in `website/content/operate/upgrades.md`: the
+  "An interrupted migration" in `website/content/operate/upgrades/version-notes.md`: the
   version left dirty, what to do before `force`, and the version to force,
   which is the one whose schema the database holds when the file is cut
   short. Read it off the file: a single transaction rolls back, a

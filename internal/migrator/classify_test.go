@@ -95,7 +95,7 @@ func TestClassify(t *testing.T) {
 			name: "dirty schema",
 			err:  migrate.ErrDirty{Version: 27},
 			kind: KindDirty, code: ExitDirty,
-			contains: []string{"dirty at version 27", "/operate/upgrades/#an-interrupted-migration", "force"},
+			contains: []string{"dirty at version 27", "/operate/upgrades/version-notes/#an-interrupted-migration", "force"},
 		},
 		{
 			name: "unparseable DSN keeps the password out",

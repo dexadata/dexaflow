@@ -39,7 +39,7 @@ changeFormat: '- {{.Body}}'
 # - Breaking: what stops working as before, and what to do about it.
 # - Upgrade: what an operator must do before or after upgrading: a migration
 #   and its expected duration, a new required setting, a removed flag. Link
-#   the matching section of operate/upgrades.md.
+#   the matching section of operate/upgrades/version-notes.md.
 #
 # `Security` is kept even though it is rarely used: a security fix filed as
 # `Fixed` is a security fix nobody greps for.
