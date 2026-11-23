@@ -547,15 +547,21 @@ issue.
 - **Task arguments Dexaflow does not honor**, refused at compile from 0.5.11
   when set on a task or in `default_args` to anything but their default:
   `email` (use an `alerts:` block; `email_on_failure` and `email_on_retry` do
-  nothing without it and still compile), `retry_exponential_backoff` and
-  `max_retry_delay` (planned in
-  [#2454](https://github.com/dexadata/dexaflow/issues/2454)), `retry_policy`,
+  nothing without it and still compile), `retry_policy`,
   `sla` (removed in Airflow 3), `executor_config`, `resources` and `queue`
   (set `size:` or `resources:` in `dexaflow.yaml`), `executor`,
   `run_as_user`, `weight_rule`, `pre_execute`, `post_execute`,
   `on_execute_callback` and `on_skipped_callback`. Each was dropped without a
   word before.
+- **Retry backoff** (from 0.5.12): `retry_exponential_backoff` and
+  `max_retry_delay` work as in Airflow 3. The delay before try N is
+  `retry_delay` times the multiplier to the power N minus 2, plus a jitter of
+  up to the same amount again, capped by `max_retry_delay` and by one day.
+  `True` means a multiplier of 2, and `0` or `1` keeps the delay constant. As
+  in Airflow, `max_retry_delay` only caps a delay that grows. They were refused
+  at compile in 0.5.11.
 - **`default_args` in `dag.py`**: `retries`, `retry_delay`,
+  `retry_exponential_backoff`, `max_retry_delay` (from 0.5.12),
   `execution_timeout`, `pool`, `pool_slots`, `trigger_rule` (from 0.5.11) and
   `on_failure_callback` are applied to every task that does not set its own
   ([the callback](/author-dags/alerting/#the-airflow-on_failure_callback) was

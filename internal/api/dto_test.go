@@ -127,3 +127,20 @@ func TestToTaskResponseReportsPoolAndSlots(t *testing.T) {
 		t.Errorf("pool = %q, pool_slots = %d, want default_pool and 1", got.Pool, got.PoolSlots)
 	}
 }
+
+// TestToTaskResponseReportsTheRetrySettings (#2454): the task definition
+// reports the task's own retry_delay and backoff multiplier, and Airflow's
+// 300s default when the task sets no delay.
+func TestToTaskResponseReportsTheRetrySettings(t *testing.T) {
+	delay := 90000
+	task := domain.TaskSpec{TaskID: "load", Type: domain.TaskTypePython, RetryDelaySeconds: &delay, RetryExponentialBackoff: 2}
+	got := toTaskResponse(domain.DAGSpec{DagID: "etl", Tasks: []domain.TaskSpec{task}}, task)
+	if got.RetryDelay.Days != 1 || got.RetryDelay.Seconds != 3600 || got.RetryExponentialBackoff != 2 {
+		t.Errorf("retry_delay = %+v, retry_exponential_backoff = %v, want 1 day 3600s and 2", got.RetryDelay, got.RetryExponentialBackoff)
+	}
+	plain := domain.TaskSpec{TaskID: "extract", Type: domain.TaskTypePython}
+	got = toTaskResponse(domain.DAGSpec{DagID: "etl", Tasks: []domain.TaskSpec{plain}}, plain)
+	if got.RetryDelay.Seconds != 300 || got.RetryExponentialBackoff != 0 {
+		t.Errorf("retry_delay = %+v, retry_exponential_backoff = %v, want 300s and 0", got.RetryDelay, got.RetryExponentialBackoff)
+	}
+}

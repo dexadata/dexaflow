@@ -97,6 +97,13 @@ type RunState struct {
 	// declared backoff (issue #201). Absent entries mean no cooldown applies.
 	EndedAt           map[string]*time.Time
 	RetryDelaySeconds map[string]int
+	// RetryBackoff is Airflow's retry_exponential_backoff per task: the
+	// multiplier applied to the delay once per earlier try (#2454). Zero or one
+	// (and an absent entry) keeps the delay constant.
+	RetryBackoff map[string]float64
+	// MaxRetryDelaySeconds caps a backoff delay (Airflow's max_retry_delay).
+	// Absent or zero means only the global cap, MaxRetryDelay, applies.
+	MaxRetryDelaySeconds map[string]int
 	// RescheduleAt holds the next-poke time per task (only meaningful for tasks in
 	// up_for_reschedule). The planner re-dispatches such a task once Now >=
 	// reschedule_at, without consuming retry budget (#380). Absent/zero entries
