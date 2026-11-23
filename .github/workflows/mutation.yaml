@@ -112,7 +112,29 @@ jobs:
       - name: Mutate the package
         env:
           PACKAGE: ${{ matrix.package }}
-        run: scripts/mutation.sh run "$PACKAGE"
+        run: |
+          # The runner itself died mid-run on several packages ("The runner has
+          # received a shutdown signal"), with nothing in the log to say why.
+          # Print the runner's memory, disk and biggest processes while the
+          # run goes, so a dying runner leaves its last state in this log.
+          ( while sleep 30; do
+              printf 'runner: mem used %s MiB of %s, disk / free %s, tmp %s\n' \
+                "$(free -m | awk '/Mem/{print $3}')" "$(free -m | awk '/Mem/{print $2}')" \
+                "$(df -h / | awk 'NR==2{print $4}')" "$(du -sh /tmp 2>/dev/null | cut -f1)"
+              ps -eo rss=,etimes=,args= --sort=-rss | head -3 | cut -c1-160 | sed 's/^/  /'
+            done ) &
+          watch=$!
+          # The jobs that died ended with "The runner has received a shutdown
+          # signal": a mutant (an allocation loop that no longer ends) took a
+          # test binary to 6.5 GB within seconds and, with the second worker,
+          # the runner ran out of memory and lost its VM. Cap each process's
+          # address space so such a mutant dies alone (gremlins counts it as
+          # killed), run at the lowest priority, and leave the runner a core.
+          ulimit -v $((5 * 1024 * 1024))
+          rc=0
+          GOMAXPROCS=3 nice -n 19 scripts/mutation.sh run "$PACKAGE" || rc=$?
+          kill "$watch" 2>/dev/null || true
+          exit "$rc"
       - name: Name the report
         if: always()
         id: name
