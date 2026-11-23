@@ -82,6 +82,19 @@ jobs:
         env:
           CHAOS_LOG_DIR: ${{ runner.temp }}/chaos-logs
         run: bash test/e2e/chaos-runtime.sh
+      - name: Print the role logs
+        # The artifact below needs a download to read; the job log is where a
+        # failure is triaged first, so the end of each role log goes there too.
+        if: failure()
+        env:
+          LOG_DIR: ${{ runner.temp }}/chaos-logs
+        run: |
+          for f in "$LOG_DIR"/*; do
+            [ -f "$f" ] || continue
+            echo "::group::$(basename "$f") (last 400 lines)"
+            tail -n 400 "$f"
+            echo "::endgroup::"
+          done
       - name: Upload the role logs
         if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
