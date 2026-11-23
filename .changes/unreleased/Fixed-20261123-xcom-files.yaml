@@ -1,3 +1,0 @@
-kind: Fixed
-body: '**Large XCom values reach the task** (#2455): an upstream value over 96 KiB, bound to an argument or pulled with `ti.xcom_pull`, used to fail the exec with "argument list too long" (Linux caps one environment variable at 128 KiB) or be refused by `ti.xcom_pull`. The agent now writes it to a file in the attempt''s scratch, readable by the task only, and the runtime reads it from there; smaller values still ride in the environment. A task image built with an older runtime does not read the file, so rebuild it with `dexaflow build`.'
-time: 2026-11-23T15:00:00.000000+00:00
