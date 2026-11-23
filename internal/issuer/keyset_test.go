@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -312,5 +313,16 @@ func TestHandoffKeyOutageIsUnavailable(t *testing.T) {
 
 	if !errors.Is(err, ErrKeysUnavailable) || errors.Is(err, ErrInvalidToken) {
 		t.Fatalf("err = %v, want ErrKeysUnavailable and not ErrInvalidToken", err)
+	}
+}
+
+// TestJSONSerializedTokenIsMalformed: a bearer is a JWT, so only the compact
+// serialization is parsed. A JWS in the JSON serialization is refused before
+// any key is looked up or downloaded.
+func TestJSONSerializedTokenIsMalformed(t *testing.T) {
+	ks := newCachedKeySet("http://127.0.0.1:1/jwks", []string{"RS256"}, time.Now)
+	raw := `{"payload":"e30","protected":"eyJhbGciOiJSUzI1NiJ9","signature":"c2ln"}`
+	if _, err := ks.VerifySignature(context.Background(), raw); err == nil || !strings.Contains(err.Error(), "malformed jwt") {
+		t.Fatalf("want a malformed jwt error, got %v", err)
 	}
 }

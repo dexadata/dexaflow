@@ -95,7 +95,7 @@ func newCachedKeySet(url string, algs []string, now func() time.Time) *cachedKey
 // VerifySignature checks raw's signature against the cached keys, and
 // downloads the JWKS again when none verifies and the cooldown allows it.
 func (ks *cachedKeySet) VerifySignature(ctx context.Context, raw string) ([]byte, error) {
-	jws, err := jose.ParseSigned(raw, ks.algs)
+	jws, err := jose.ParseSignedCompact(raw, ks.algs)
 	if err != nil {
 		return nil, fmt.Errorf("malformed jwt: %w", err)
 	}
