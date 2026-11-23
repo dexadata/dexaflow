@@ -315,7 +315,7 @@ A zero or negative value is not a faster refresh: the server falls back to the
 default, so a misconfigured value cannot drop the interval to 0. The default
 moved from 30 to 5 seconds in v0.5.9
 ([#1196](https://github.com/dexadata/dexaflow/issues/1196)); see the
-[upgrade note](/operate/upgrades/#upgrading-to-060-the-ui-refreshes-every-5-seconds).
+[upgrade note](/operate/upgrades/version-notes/#upgrading-to-059-the-ui-refreshes-every-5-seconds).
 
 ## Memory limit for the Go runtime
 
@@ -337,7 +337,7 @@ goMemLimit:
 A fresh install has it on through the `cluster` install profile whenever a
 memory limit is set; a release installed before 0.5.10 keeps it off until you
 turn it on or set `profile: cluster` (see
-[Upgrading to 0.5.10](/operate/upgrades/#upgrading-to-0510-the-install-profile)).
+[Upgrading to 0.5.10](/operate/upgrades/version-notes/#upgrading-to-0510-the-install-profile)).
 `goMemLimit.enabled: false` turns it off under either profile. It applies to
 both Deployments in split mode. The value is computed in
 whole MiB from any Kubernetes byte quantity (`512Mi`, `1.5Gi`, `1e9`). The render

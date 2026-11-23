@@ -30,7 +30,7 @@ set -euo pipefail
 
 # The oldest release the upgrade guide supports upgrading from in one step:
 # the first GA of the previous minor. Move it when a minor ships, with the
-# "Supported upgrade paths" section of website/content/operate/upgrades.md.
+# "Supported upgrade paths" section of website/content/operate/upgrades/_index.md.
 OLDEST_SUPPORTED=v0.5.0
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"

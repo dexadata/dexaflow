@@ -1,204 +1,13 @@
 ---
-# --- AUTO redirect aliases (build_redirects.py) — do not edit by hand ---
-aliases:
-  - /upgrades.html
-# --- end AUTO redirect aliases ---
-title: Upgrades
-weight: 40
-description: "Upgrade a Dexaflow control plane safely, edition by edition."
+title: "Version notes"
+linkTitle: "Version notes"
+weight: 10
+description: "What changes when a Cluster control plane upgrades to each 0.5.x release, and what to do about it."
 ---
 
-This page is the canonical answer to "I'm on `v0.x.y` and want to install a
-newer tag: what happens to my state?" Before upgrading your cluster, your
-database or a DAG's Python line, check the
-[compatibility](/reference/compatibility/) page as well.
+One section per release: what changes when a Cluster control plane [upgrades](/operate/upgrades/) to it, and what to do. Read the sections between your version and the target before a `helm upgrade`.
 
-{{% alert title="Upgrade contract" color="info" %}}
-The upgrade contract below is honored by the Lite edition; we test it on
-every release. We will not knowingly ship a release that breaks it without a
-clear migration note. On the `v0.x` line we do not yet promise
-forward/backward compatibility across major versions — that is a v1
-concern.
-{{% /alert %}}
-
-## Lite — what is preserved across upgrades
-
-Reinstalling (running the new `install.sh`, or `brew upgrade dexaflow` once
-that ships) over an existing Lite install **preserves all of these by
-default**:
-
-| What | Where | Notes |
-|---|---|---|
-| **Workspace** | The path under `workspace:` in `~/.dexaflow/config.yaml` (default `~/dexaflow`) | Your `dag.py`, `dexaflow.yaml`, and any other project files. The installer does not touch this directory. |
-| **Datastore** | `~/.dexaflow/managed-postgres/data/` (managed Postgres) **or** the `leoflow-data-*` Docker volume (Docker Postgres) | Includes DAG history, runs, task instances, XCom, Variables, Connections. The new binary applies any pending SQL migrations on first start. |
-| **Admin login** | `~/.dexaflow/config.yaml` (`admin_email`, `admin_password_hash`) | Your password is not regenerated. Use `dexaflow lite reset-password` if you forgot it. |
-| **JWT signing secret** | `~/.dexaflow/config.yaml` (`jwt_secret`) | Browser sessions survive the upgrade (no forced re-login). |
-| **Parser + runtime venv** | `~/.dexaflow/venv/` | Project dependencies are reinstalled lazily as needed (the marker at `~/.dexaflow/venv/.leoflow-deps` triggers a refresh when the project's deps change). |
-
-## What changes
-
-| What | Why |
-|---|---|
-| The `dexaflow` / `dexaflow-server` / `dexaflow-agent` binaries on `PATH` (and their `leoflow*` links) | Replaced by `install.sh`. |
-| `~/.dexaflow/python/` (managed CPython) | Pinned per release; replaced if the new release pins a different version. |
-| The SQL schema | The new binary applies any missing migrations on first start. |
-| `~/.dexaflow/docker-compose.yaml` (the Docker Postgres definition of a binary-only install) | The next `dexaflow lite` replaces it with the one the new binary ships and prints `↻ refreshed the managed compose (binary upgrade)`, as long as nobody edited it (a checksum of what was written is kept in `docker-compose.yaml.sha256`). An edited file is kept as is: Lite writes the new one beside it as `docker-compose.yaml.new` and warns once; merge what you need, or delete `docker-compose.yaml` and the next `dexaflow lite` writes the new one. A file written before the checksum existed is treated as edited unless it already equals the new one. |
-
-## Drift detection
-
-If you somehow run an **older** `dexaflow` binary against a database a **newer**
-binary has already migrated, the older binary refuses to start with:
-
-```
-database is at schema version 18 but this binary only knows up to 15;
-an older `dexaflow` is being run against a newer database.
-Upgrade the binary, or run `dexaflow uninstall --purge` to start over
-(this WIPES your data)
-```
-
-This is the safe behavior: continuing with a stale schema would corrupt
-rows the older binary does not understand. Upgrade, or wipe — never both.
-
-## Fresh start
-
-If you want a clean slate without the prior history:
-
-```sh
-dexaflow uninstall --purge
-```
-
-`--purge` removes the binaries, `~/.dexaflow/` (config + datastore + parser
-sources), and the workspace directory. Without `--purge`, uninstall keeps the
-datastore and workspace so a future reinstall picks up where you left off
-(this is also the contract upgrades rely on).
-
-## How to test an upgrade safely (recommended)
-
-Before installing a newer tag on a Lite install you depend on:
-
-1. **Back up first.** See [Backup and restore](/operate/backup-restore/):
-   ```sh
-   dexaflow lite backup --output ~/snap-before-upgrade.tar.gz
-   ```
-2. Install the new version. The drift detector protects you from the worst
-   downgrade case.
-3. If anything looks off, restore from the tarball.
-
-## Cluster: upgrade path
-
-The Cluster control plane upgrades with the standard Helm flow: re-run
-`helm upgrade` against the same release, pointing the pinned image tag at the
-newer version.
-
-```sh
-# OCI chart (the primary install path, see Installation):
-helm upgrade dexaflow oci://ghcr.io/dexadata/charts/dexaflow --version <VERSION> \
-  -n leoflow --reset-then-reuse-values
-
-# Or pin the image tags explicitly:
-helm upgrade dexaflow oci://ghcr.io/dexadata/charts/dexaflow --version <VERSION> \
-  -n leoflow --reset-then-reuse-values \
-  --set image.tag=<VERSION> \
-  --set migrations.image.tag=<VERSION>
-```
-
-A release installed before the rename was installed from the chart named
-`leoflow`, and the chart name is part of its Deployment selector, which
-Kubernetes does not let an upgrade change. Keep upgrading it with
-`charts/leoflow`, the same chart published under its old name:
-
-```sh
-helm upgrade <release> oci://ghcr.io/dexadata/charts/leoflow --version <VERSION> \
-  -n leoflow --reset-then-reuse-values
-```
-
-### Supported upgrade paths
-
-You do not have to take every patch. One `helm upgrade` may skip any number
-of releases, as long as it starts from a supported release:
-
-| Upgrading to | Supported from, in one step |
-|---|---|
-| any 0.6.x | 0.5.0 or later |
-| any 0.5.x | 0.5.0 or later |
-
-Every migration in between then runs in the one migration Job, in order. The
-[skip-version upgrade test](https://github.com/dexadata/dexaflow/blob/main/test/upgrade/skip-version.sh)
-holds every release candidate to this, weekly and on each rc tag
-([#2311](https://github.com/dexadata/dexaflow/issues/2311)): it seeds a
-database at 0.5.0 with 1,000 DAGs, 1 million runs, 5 million task
-instances, 500,000 archived tries and 1 million audit rows, upgrades it to
-the candidate in one step, and checks that every migration finished within
-5 minutes, that no index was left `INVALID`, that the schema equals a fresh
-install's (`pg_dump --schema-only`), and that the control plane becomes
-ready and runs a new DAG while it still serves the old runs.
-
-Read the "Upgrading to" sections of every release you skip, in order: their
-steps still apply, and the migrations of all of them run in that one Job, so
-size its `activeDeadlineSeconds` and Helm's `--timeout` for their sum. Upgrade
-from a release older than the table in two steps, through the oldest
-supported one.
-
-### Use `--reset-then-reuse-values`, not `--reuse-values`
-
-`--reuse-values` does **not** merge the new chart's defaults. Helm rebuilds the
-previous release's coalesced values and assigns them as the new chart's values,
-so every key the new chart added is absent and every default the new chart
-changed is still at its old value. The upgrade is rendered by new templates
-against an old chart's value tree, which is a shape neither version was tested
-against.
-
-That is not theoretical for this chart. Upgrading a 0.4.6 release to 0.4.7 with
-`--reuse-values` fails to render on two counts: `probes.startup` does not exist
-in a 0.4.6 value tree, and `config.server.cors.allowedOrigins` is still at
-0.4.6's documented `["*"]`, which 0.4.7 refuses at render time.
-
-`--reset-then-reuse-values` is the flag that means what most operators think
-`--reuse-values` means: start from the new chart's defaults, lay the previous
-release's *user-supplied* values over them, then apply `--set` and `-f`. New keys
-arrive with their defaults, changed defaults take effect, and anything you
-actually configured is preserved. Prefer it for every cross-version upgrade.
-Keeping a values file under version control and passing `-f` is better still.
-
-The chart runs a **pre-upgrade migrations Job** (`golang-migrate` against
-`database.url`) before the new `dexaflow-server` rolls out, so the schema is
-brought to parity before any new binary serves traffic. The same startup
-**drift detector** described above protects a Cluster control plane from being run
-against a database a newer binary already migrated. Use `--version <VERSION>`
-with the chart version — the [latest release](https://github.com/dexadata/dexaflow/releases)
-tag with the leading `v` stripped.
-
-### The migration Job's pod is not part of the control plane
-
-The hook pod runs under its own application name —
-`app.kubernetes.io/name: <chart name>-migrate`, with
-`app.kubernetes.io/component: migrate` — deliberately *not* the control plane's
-`app.kubernetes.io/name`. A Service selector matches every pod whose labels
-contain it, so a hook pod carrying the control plane's own selector labels is
-selected by the control-plane Service and PodDisruptionBudget for as long as it
-runs, and a Job pod has no readiness probe: it counts as `Ready` from the instant
-its container starts. On `helm upgrade` — the one path where those objects
-already exist while the hook runs — that put a pod that serves nothing into the
-control plane's endpoint set and into its disruption budget's healthy count.
-
-Two consequences for your own tooling:
-
-- **Do not select control-plane pods by `app.kubernetes.io/instance` alone.**
-  That label is still on the hook pod on purpose, so
-  `kubectl -n <ns> get pods -l app.kubernetes.io/instance=<release>` finds a
-  wedged migration. Add `app.kubernetes.io/name=<chart name>` (or, in
-  `split.enabled` installs, `app.kubernetes.io/component=api|scheduler`) when you
-  mean the control plane.
-- **With `networkPolicy.enabled`, the hook pod is governed by no policy** — on
-  `helm install` and on `helm upgrade` alike. Egress is allow-all by default, so
-  a default install is unaffected. If your namespace carries a default-deny
-  policy from a platform team, give the migration pod its own egress allowance to
-  Postgres (match on `app.kubernetes.io/component: migrate`), and create it
-  outside the release or as a hook with a negative `helm.sh/hook-weight` — a
-  policy the chart creates normally does not exist yet when the *pre-install*
-  hook runs.
-
-### Upgrading to 0.5.4: the task namespace default
+## Upgrading to 0.5.4: the task namespace default
 
 Charts before 0.5.4 defaulted `taskNamespace` to the literal `leoflow`, whatever
 namespace the release was installed in. A `helm install -n dexaflow` without
@@ -236,7 +45,7 @@ Installs that do not use the chart are unaffected: the server's own default for
 `executor.task_namespace` (`DEXAFLOW_EXECUTOR_TASK_NAMESPACE` or
 `LEOFLOW_EXECUTOR_TASK_NAMESPACE`) is still `leoflow`.
 
-### Upgrading to 0.5.1: finish the rollout promptly
+## Upgrading to 0.5.1: finish the rollout promptly
 
 0.5.1 fences each task execution by an attempt epoch carried in the agent's
 token ([ADR 0051](/project/adrs/0051-separate-orchestration-and-execution-state-machines/),
@@ -280,7 +89,7 @@ they show again once 0.5.1 serves the API. Logs written before the upgrade keep
 `{try}.log` and stay readable by both versions. If you read log objects or files
 directly, expect both names.
 
-### What the 0.5.1 migrations do
+## What the 0.5.1 migrations do
 
 0.5.0 left the schema at migration 026. 0.5.1 applies 027 to 040. Nine of
 them change indexes or the page layout of `task_instances`, which is what makes
@@ -373,7 +182,7 @@ retry. A retried `helm upgrade` deletes the previous Job and its pod before it
 creates a new one (`before-hook-creation`), and killing a build in progress
 is exactly the interrupted case below.
 
-### An interrupted migration
+## An interrupted migration
 
 A hook pod evicted or drained mid-statement, a database connection cut, a
 retried `helm upgrade` that deleted a running Job, a `dexaflow lite` process
@@ -520,7 +329,7 @@ number of the interrupted down file (the state the database is in: the index
 absent), and run the down again. A retried down without that cleanup fails
 the same way a retried up does.
 
-### Rolling back 0.5.1 to 0.5.0
+## Rolling back 0.5.1 to 0.5.0
 
 **Cluster.** `helm rollback <release> <revision>` rolls the chart and the images
 back and leaves the schema where 0.5.1 left it. That is supported: the 0.5.0
@@ -542,7 +351,7 @@ down migration first. What the section above says about a rollback (the logs
 **Lite.** `dexaflow lite` 0.5.0 refuses to start against a database above 026
 (`database is at schema version 40 but this binary only knows up to 26`), and
 no `dexaflow` command runs a down migration. The supported path is the
-snapshot from [How to test an upgrade safely](#how-to-test-an-upgrade-safely-recommended):
+snapshot from [How to test an upgrade safely](/operate/upgrades/#how-to-test-an-upgrade-safely-recommended):
 `dexaflow uninstall --purge`, reinstall 0.5.0, `dexaflow lite restore`. The
 backup page has the
 [worked example](/operate/backup-restore/#worked-example-roll-back-a-botched-upgrade).
@@ -589,7 +398,7 @@ and after, with 036 checked separately.
   infra failures that exist at that time as confirmed again. The per-tenant
   limits of 040 are lost with it.
 
-### What changes in 0.5.1 without a flag
+## What changes in 0.5.1 without a flag
 
 The performance work in 0.5.1 is gated where it changes behaviour (next
 section). These changes are not, and an operator sees them on upgrade:
@@ -671,7 +480,7 @@ section). These changes are not, and an operator sees them on upgrade:
   date are now ordered by run id as well, so paging with `offset` no longer
   repeats or skips one of them. The response body is unchanged.
 
-### New opt-in settings in 0.5.1
+## New opt-in settings in 0.5.1
 
 Every setting below defaults to the 0.5.0 behaviour; the
 [configuration reference](/reference/configuration/) has the full entry for
@@ -717,7 +526,7 @@ or 1 MiB bound, so a follower of a chatty task receives every line that
 arrived after it subscribed (#1442). Both settings are new in 0.5.1 and off
 by default; an install that does not set them sees no change.
 
-### Upgrading to 0.5.2
+## Upgrading to 0.5.2
 
 0.5.2 applies one migration, `041_tenant_max_task_pool_slots`. It adds
 `tenants.max_task_pool_slots` (`INTEGER NOT NULL DEFAULT 0`, with a `>= 0`
@@ -734,7 +543,7 @@ proceeding` and never reads the new column. As with 0.5.1, prefer it to a
 `no migration found for version 41`; if you must use that upgrade, pass
 `--set migrations.enabled=false` or run the down migration first. On Lite,
 `dexaflow lite` 0.5.1 refuses a database above 040, so the way back is the
-snapshot from [How to test an upgrade safely](#how-to-test-an-upgrade-safely-recommended),
+snapshot from [How to test an upgrade safely](/operate/upgrades/#how-to-test-an-upgrade-safely-recommended),
 or the down migration with the 0.5.2 CLI or migrate image:
 
 ```sh
@@ -744,7 +553,7 @@ migrate -path migrations -database "$DATABASE_URL" goto 40
 The down drops the column, so any `max_task_pool_slots` an operator set is lost
 and every tenant is unlimited again. Rows in every table are preserved.
 
-### What changes in 0.5.2 without a flag
+## What changes in 0.5.2 without a flag
 
 - **A DAG can no longer set `leoflow.io/` labels or annotations on its pods**
   (#1376). `dexaflow.yaml` validation, `dexaflow compile` and registration
@@ -764,7 +573,7 @@ and every tenant is unlimited again. Rows in every table are preserved.
   endpoint by scheme and host only, without the webhook URL (#1370), and a
   tenant schema error no longer names the server's working directory (#1402).
 
-### New opt-in settings in 0.5.2
+## New opt-in settings in 0.5.2
 
 Every setting below is off or neutral by default; the
 [configuration reference](/reference/configuration/) has the full entry for
@@ -779,7 +588,7 @@ pool slots and a resource unit (#1466).
 | `scheduler.pool_starvation_threshold` (Helm `config.scheduler.poolStarvationThreshold`) | `60s` | Reserves a pool for a task of more than one slot that has waited longer than this, so smaller tasks cannot keep it out. Pools without sized tasks are never reserved. `0s` disables it. | #1482 |
 | `max_task_pool_slots` on `PUT /api/v2/service/tenants/{tenant}` | `0` (unlimited) | Refuses at registration, with a 403, a task whose size is above the tenant's limit. Uses migration 041. | #1483 |
 
-### Upgrading to 0.5.3
+## Upgrading to 0.5.3
 
 0.5.3 applies one migration, `042_task_instance_pool_slots`. It adds
 `task_instances.pool_slots` (`INTEGER NOT NULL DEFAULT 1`) so the Pools screen
@@ -805,7 +614,7 @@ whose migration Job fails with `no migration found for version 42`; if you must
 use that upgrade, pass `--set migrations.enabled=false` or run the down
 migration first. On Lite, `dexaflow lite` 0.5.2 refuses a database above 041,
 so the way back is the snapshot from
-[How to test an upgrade safely](#how-to-test-an-upgrade-safely-recommended),
+[How to test an upgrade safely](/operate/upgrades/#how-to-test-an-upgrade-safely-recommended),
 or the down migration with the 0.5.3 CLI or migrate image:
 
 ```sh
@@ -814,7 +623,7 @@ migrate -path migrations -database "$DATABASE_URL" goto 41
 
 The down drops the column and its check. No other data changes.
 
-### Upgrading to 0.5.4
+## Upgrading to 0.5.4
 
 0.5.4 applies four migrations, 043 to 046.
 
@@ -849,7 +658,7 @@ The down drops the column and its check. No other data changes.
 - **`046_dag_versions_build_info`** runs in one transaction, which took about
   10 ms. It adds the nullable `dag_versions.build_info` column, where the
   register records where a version was built
-  ([Where a version was built](/operate/cicd-deploy/#where-a-version-was-built)).
+  ([Where a version was built](/operate/cicd-deploy/workflows/#where-a-version-was-built)).
   The column has no default, so Postgres adds it to the catalog without
   rewriting or scanning `dag_versions`, and every version registered before
   the upgrade reads as having no build info. Adding it takes an `ACCESS
@@ -873,7 +682,7 @@ As with earlier patches, prefer it to a `helm upgrade` that points at chart
 you must use that upgrade, pass `--set migrations.enabled=false` or run the
 down migrations first. On Lite, `dexaflow lite` 0.5.3 refuses a database above
 042, so the way back is the snapshot from
-[How to test an upgrade safely](#how-to-test-an-upgrade-safely-recommended),
+[How to test an upgrade safely](/operate/upgrades/#how-to-test-an-upgrade-safely-recommended),
 or the down migrations with the 0.5.4 CLI or migrate image:
 
 ```sh
@@ -931,7 +740,7 @@ leaves encrypted rows encrypted and readable by 0.5.4; only `decrypt` makes
 them readable by 0.5.3. A backup taken while it is on holds ciphertext: restore
 it with the same key, as for connections.
 
-### What changes in 0.5.4 without a flag
+## What changes in 0.5.4 without a flag
 
 **New DAGs start paused** (#1705). 0.5.4 follows Airflow: a DAG registered for
 the first time starts paused, so its schedule creates no run, catchup
@@ -1040,7 +849,7 @@ back to 0.5.3 needs nothing on an existing install or on Lite, whose
 bootstrap email gets a second admin, `admin@leoflow.local`, from the same
 bootstrap password when it starts on 0.5.3.
 
-### Upgrading to 0.5.5: three unused tables are no longer touched
+## Upgrading to 0.5.5: three unused tables are no longer touched
 
 `scheduler_loops`, `replicas` and `task_state_history` (migrations 003 and
 004) were never written by any release (#1186). 0.5.5 stops touching them:
@@ -1063,7 +872,7 @@ for this change.
   CLI or migrate image; the file says what the previous release does with a
   `removed` task instance.
 
-### Upgrading to 0.5.6
+## Upgrading to 0.5.6
 
 0.5.6 applies two migrations, 048 and 049.
 
@@ -1112,7 +921,7 @@ That rolls back 049 and 048. A task that was
 waiting on an unavailable Kubernetes API at that moment falls back onto the
 dispatch-attempt budget of the previous release. No other data changes.
 
-### Upgrading to 0.5.7: platform resource defaults fill per dimension
+## Upgrading to 0.5.7: platform resource defaults fill per dimension
 
 `executor.defaults.resources.cpu` and `executor.defaults.resources.memory` used
 to apply only to a task that declared no `resources` at all. A task that
@@ -1133,7 +942,7 @@ the platform default is too large for them. Nothing changes for a task with a
 resource unit (`executor.unit`), which sizes every task as before. Rolling
 back to 0.5.6 restores the old behavior with no other step.
 
-### Upgrading to 0.5.7: malformed placement fields are refused
+## Upgrading to 0.5.7: malformed placement fields are refused
 
 A task's `tolerations`, `affinity`, `topology_spread_constraints`,
 `resource_claims` and `resources.claims` used to be accepted as written and
@@ -1153,7 +962,7 @@ through the placement fields of your DAGs for keys that do not use the
 Kubernetes spelling. Rolling back to 0.5.6 restores the old behavior with no
 other step.
 
-### Upgrading to 0.5.8
+## Upgrading to 0.5.8
 
 0.5.8 applies seven migrations, 050 to 056.
 
@@ -1211,7 +1020,7 @@ other step.
   (default 30). A new table that nothing else reads: no lock on a table in
   use.
 
-#### Three unused tables are dropped
+### Three unused tables are dropped
 
 Migration **`051_drop_unwritten_tables`** drops `scheduler_loops`, `replicas`
 and `task_state_history`, with their indexes, sequences and the
@@ -1279,7 +1088,7 @@ the same database. Rows deleted by the upgrade do not come back. Rolling back
 further, to 0.5.4 with `retention.dag_runs_days` set, needs that down
 migration too, so its retention finds `task_state_history` again.
 
-### Upgrading to 0.5.9
+## Upgrading to 0.5.9
 
 0.5.9 applies one migration, 057.
 
@@ -1307,7 +1116,7 @@ migrate -path migrations -database "$DATABASE_URL" goto 56
 That restores `gen_random_uuid()` as the default and drops the function. Ids
 already made as UUIDv7 stay as they are and keep working.
 
-### Upgrading to 0.5.9: the UI refreshes every 5 seconds
+## Upgrading to 0.5.9: the UI refreshes every 5 seconds
 
 The bundled UI now polls DAG, run and task-instance state every 5 seconds
 instead of 30 when `ui.autoRefreshIntervalSeconds` is unset
@@ -1327,7 +1136,7 @@ ui:
 
 Rolling back to 0.5.8 or earlier restores 30 seconds unless the value is set.
 
-### Upgrading to 0.5.10: the install profile
+## Upgrading to 0.5.10: the install profile
 
 0.5.10 adds a chart value, `profile`
 ([#2323](https://github.com/dexadata/dexaflow/issues/2323)). Under `cluster`,
@@ -1362,7 +1171,7 @@ heartbeats could stall while the reapers kept running on their own pool; the
 agent pool and the heartbeat reaper's mass-silence hold close that
 ([#1624](https://github.com/dexadata/dexaflow/issues/1624)).
 
-### Upgrading to 0.5.10: row level security policies
+## Upgrading to 0.5.10: row level security policies
 
 0.5.10 applies one migration, 059.
 
@@ -1386,7 +1195,7 @@ policy:
 migrate -path migrations -database "$DATABASE_URL" goto 58
 ```
 
-### Upgrading to 0.5.10: a trigger at max_active_runs is queued
+## Upgrading to 0.5.10: a trigger at max_active_runs is queued
 
 A manual trigger of a DAG that already has `max_active_runs` runs queued or
 running is now accepted with the run in `queued`, as Airflow does
@@ -1402,7 +1211,7 @@ before triggering (`GET /api/v2/dags/{dag_id}/dagRuns?state=queued&state=running
 Scheduled runs are unchanged: the schedule still creates none while the DAG is
 at the cap. The tenant's `max_runs_per_day` still refuses a trigger with 403.
 
-### Upgrading to 0.5.10: max_active_tasks is compiled, per DAG run
+## Upgrading to 0.5.10: max_active_tasks is compiled, per DAG run
 
 `max_active_tasks` on `DAG(...)` or `@dag(...)` now reaches the scheduler
 ([#2427](https://github.com/dexadata/dexaflow/issues/2427)). Until 0.5.10 the
@@ -1421,7 +1230,7 @@ running at once.
 The UI and `GET /api/v2/dags/{dag_id}/details` show the DAG's own value, or
 nothing when it sets none, instead of a constant 16.
 
-### Upgrading to 0.5.10: the live log tail is published on demand
+## Upgrading to 0.5.10: the live log tail is published on demand
 
 Under the `cluster` profile, `logs.tail.publish` now renders `on_demand` when
 it is unset ([#2356](https://github.com/dexadata/dexaflow/issues/2356)): a
@@ -1440,38 +1249,3 @@ since the last check are replayed when it is noticed, at most a second later.
 Every log stream also publishes from its own queue now, in batches of up to
 256 lines per Redis round trip, so a follower costs a chatty task far less
 receive rate than before, under either mode.
-
-## Ephemeral database loss (emptyDir Postgres)
-
-When evaluating Dexaflow with an in-cluster Postgres running on `emptyDir`
-storage (such as in local clusters or evaluation setups), the datastore has no
-persistence guarantees. Any pod recreation, node reboot, node drain, or
-Spot/preemptible reclamation destroys the database volume completely.
-
-Since 0.5.6 a Cluster release notices it
-([ADR 0090](/project/adrs/0090-database-replaced-under-a-running-release/)):
-the database no longer carries the release's installation id, so the migration
-Job refuses to migrate it, a booting control plane waits not ready, and one that
-was serving exits and restarts into that wait
-([a replaced database](/operate/troubleshooting/#a-replaced-database)). Nothing
-recreates an empty schema in its place, and nothing brings the data back: only
-a restore from a backup of this installation does.
-
-`helm install` and `helm upgrade` print a warning in the release notes when
-`database.url` points at an in-cluster Postgres Service, since the chart cannot
-see whether that Postgres has a volume.
-
-To prevent data loss:
-- Never run production control planes against `emptyDir` datastores.
-- For in-cluster Postgres, always back the deployment with a
-  PersistentVolumeClaim (PVC).
-- For production environments, point `database.url` at managed services such as
-  AWS RDS, GCP Cloud SQL, or Azure Database for PostgreSQL.
-- Regularly exercise database backup and restore drills (see
-  [Backup and restore](/operate/backup-restore/#regular-restore-drills)).
-
-## Related issues
-
-- #136 — this contract.
-- #137 — `dexaflow lite backup` / `restore` commands.
-- #60 / #61 — embed migrations + single binary (Lite distribution shape).

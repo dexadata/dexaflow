@@ -72,7 +72,7 @@ Each reason and its fix are in
 | `database.url` now points at another installation's database, on purpose | `database replaced: another installation id` | Adopt it: the same `helm upgrade` with `--set installation.id=<the id it carries>` (`psql "$DATABASE_URL" -c 'SELECT id FROM installation'`). |
 | `database.url` now points at the wrong database, by mistake | `database replaced: ...` | Point `database.url` back at the right database. The pods start once the id matches. |
 | The release was uninstalled and installed again into the same namespace against an empty database | `database replaced: no schema` | `helm uninstall` leaves the ConfigMap in place. Accept the fresh start with a new id as above, or delete the ConfigMap before installing. |
-| A migration was interrupted (a drained node, a cut connection) | `schema dirty at vN`, or boot stops with `schema is dirty at vN, the version this binary requires` | Follow the recovery table in [an interrupted migration](/operate/upgrades/#an-interrupted-migration), one row per migration file, then upgrade again. |
+| A migration was interrupted (a drained node, a cut connection) | `schema dirty at vN`, or boot stops with `schema is dirty at vN, the version this binary requires` | Follow the recovery table in [an interrupted migration](/operate/upgrades/version-notes/#an-interrupted-migration), one row per migration file, then upgrade again. |
 | The rollout ran before its migration Job, or the Job failed | `schema behind vN, requires vM`; new pods unready while the old ones keep serving | Fix what the Job's log names ([the migration Job](/operate/troubleshooting/#the-migration-job)), then run the same `helm upgrade`. |
 
 Changing `installation.id` accepts one replacement: the Job migrates the
@@ -118,7 +118,7 @@ case.
 | The datastore under `~/.dexaflow` was deleted or lost | `dexaflow lite` starts on a new, empty database. To get the data back, stop it and restore a backup: `dexaflow lite restore --input <archive> --force`, then `dexaflow lite` ([backup and restore](/operate/backup-restore/#restore)). |
 | A backup was restored, older than the binary | Nothing: `dexaflow lite` applies the missing migrations as it starts. An archive newer than the binary is refused by the restore. |
 | A server run on its own reports `schema absent` or `schema behind` | `dexaflow db migrate`, or restart `dexaflow lite`. |
-| A migration was interrupted | Follow [an interrupted migration](/operate/upgrades/#an-interrupted-migration), then start `dexaflow lite` again. |
+| A migration was interrupted | Follow [an interrupted migration](/operate/upgrades/version-notes/#an-interrupted-migration), then start `dexaflow lite` again. |
 
 ## Avoid it
 

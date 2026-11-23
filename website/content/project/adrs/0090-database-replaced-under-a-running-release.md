@@ -82,7 +82,7 @@ read off its role.
      process as boot does today and becomes ready.
    - A dirty version equal to the binary's latest still refuses to boot,
      as today: the migration this binary needs is half applied and needs a
-     person ([upgrades](/operate/upgrades/#an-interrupted-migration)). A
+     person ([upgrades](/operate/upgrades/version-notes/#an-interrupted-migration)). A
      dirty version below or above it waits like a behind schema, because a
      migration may be in flight; if it is stuck, the reason says dirty.
    - A clean schema ahead of the binary is accepted, with the warning boot
@@ -223,5 +223,5 @@ read off its role.
 - Docs: one operate page for a database that was lost, restored or
   repointed, covering Helm and Lite (#154), linked from every reason of
   decision 2; and the interrupted-migration table in
-  [upgrades](/operate/upgrades/#an-interrupted-migration) stays the
+  [upgrades](/operate/upgrades/version-notes/#an-interrupted-migration) stays the
   reference for a dirty version (#1619).

@@ -131,10 +131,10 @@ The owner's roles must allow what the scope does, or the create answers `403`.
   routes and screen and refuses every API token, for platforms that decide
   access at each sign-in.
 
-The [CI deploy guide](/operate/cicd-deploy/#credentials-for-the-control-plane)
+The [CI deploy guide](/operate/cicd-deploy/credentials/#credentials-for-the-control-plane)
 walks through a service user with the `deployer` role and its deploy token. A
 CI job can also skip stored tokens and exchange its own identity token
-([CI OIDC](/operate/cicd-deploy/#deploying-without-a-stored-token-ci-oidc)).
+([CI OIDC](/operate/cicd-deploy/credentials/#deploying-without-a-stored-token-ci-oidc)).
 
 ## Tokens from a trusted issuer
 

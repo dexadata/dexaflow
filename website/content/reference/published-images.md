@@ -16,7 +16,7 @@ tag is the part people get wrong.
 | `ghcr.io/dexadata/dexaflow-migrate` | schema migrations, run as a Helm pre-install and pre-upgrade hook | the chart's migration Job |
 | `ghcr.io/dexadata/dexaflow-runtime` | the task base image, one per supported Python line; plus a `data` variant on Python 3.11 with connector providers and dbt | your DAG image's `FROM`, at `dexaflow compile --build`; the data variant, a [source mode](/operate/source-mode/) runtime |
 | `ghcr.io/dexadata/dexaflow-mcp` | the [MCP server](/mcp/), for running it as a service with `--transport http` | your own Deployment or `docker run` |
-| `ghcr.io/dexadata/dexaflow-cli` | the `dexaflow` CLI with Python 3.13, git and uv, no Docker (from `v0.5.4`) | [pipelines that run a job in a container](/operate/cicd-deploy/#the-dexaflow-cli-image): GitLab CI, an Argo CD hook |
+| `ghcr.io/dexadata/dexaflow-cli` | the `dexaflow` CLI with Python 3.13, git and uv, no Docker (from `v0.5.4`) | [pipelines that run a job in a container](/operate/cicd-deploy/credentials/#the-dexaflow-cli-image): GitLab CI, an Argo CD hook |
 | `oci://ghcr.io/dexadata/charts/dexaflow` | the Helm chart | `helm install` / `helm upgrade` |
 
 ### Names from before the rename

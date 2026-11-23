@@ -106,7 +106,7 @@ func DeterministicExitCodes() []int {
 // Documentation the messages point at.
 const (
 	docsBase       = "https://dexaflow.dexadata.ai"
-	docsDirty      = docsBase + "/operate/upgrades/#an-interrupted-migration"
+	docsDirty      = docsBase + "/operate/upgrades/version-notes/#an-interrupted-migration"
 	docsJob        = docsBase + "/operate/troubleshooting/#the-migration-job"
 	docsReplaced   = docsBase + "/operate/troubleshooting/#a-replaced-database"
 	readmeBase     = "https://github.com/dexadata/dexaflow/blob/main/helm/dexaflow/README.md"

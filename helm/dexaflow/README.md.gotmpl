@@ -219,7 +219,7 @@ every tag), which bundles the Dexaflow `migrations/` at `migrations.path`. The
 binary is Dexaflow's own wrapper over the golang-migrate library (#1020),
 compiled onto distroless static and running as UID 65532; it takes the
 golang-migrate CLI's `up`, `version`, `force N` and `goto N`, so the recovery
-steps of the [upgrade guide](https://dexaflow.dexadata.ai/operate/upgrades/#an-interrupted-migration)
+steps of the [upgrade guide](https://dexaflow.dexadata.ai/operate/upgrades/version-notes/#an-interrupted-migration)
 run in it unchanged.
 Override `migrations.image` to use your own, or set `migrations.enabled=false`
 to migrate out of band.

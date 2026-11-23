@@ -26,7 +26,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CHANGELOG="${LEOFLOW_CHANGELOG:-$ROOT/CHANGELOG.md}"
 REPO_URL="https://github.com/dexadata/dexaflow"
-UPGRADES_URL="https://dexaflow.dexadata.ai/operate/upgrades/"
+UPGRADES_URL="https://dexaflow.dexadata.ai/operate/upgrades/version-notes/"
 
 # section <changelog-file> <heading>: print the body under `## <heading>`, up to
 # the next `## ` heading. A pure filter, so the self-test needs no git and no

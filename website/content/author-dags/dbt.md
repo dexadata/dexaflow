@@ -506,7 +506,7 @@ A pinned manifest is used **as-is** (see `loadDbtManifest` — no local dbt
 required at all from that point on); regenerate it in the container whenever
 you change models. This is the same trick CI runners use when their base image
 doesn't carry a compatible Python for every adapter — see [Python on the
-runner](/operate/cicd-deploy/#python-on-the-runner) for the CI-side version of
+runner](/operate/cicd-deploy/credentials/#python-on-the-runner) for the CI-side version of
 this problem.
 
 ---

@@ -43,7 +43,7 @@ var (
 // test checks the `dexaflow` commands in them.
 func TestCIRecipesParse(t *testing.T) {
 	t.Parallel()
-	page, err := os.ReadFile(filepath.Join("..", "..", "website", "content", "operate", "cicd-deploy.md"))
+	page, err := os.ReadFile(filepath.Join("..", "..", "website", "content", "operate", "cicd-deploy", "recipes.md"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -74,7 +74,7 @@ func TestCIRecipesParse(t *testing.T) {
 	}
 	for name := range ciRecipeWants {
 		if !seen[name] {
-			t.Errorf("cicd-deploy.md shows no %s recipe", name)
+			t.Errorf("cicd-deploy/recipes.md shows no %s recipe", name)
 		}
 	}
 }
