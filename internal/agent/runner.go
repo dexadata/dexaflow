@@ -66,6 +66,11 @@ type Runner struct {
 	// ReschedulePath is the file a reschedule-mode sensor writes its next-poke time
 	// to before exiting with rescheduleExitCode; empty disables reschedule (#380).
 	ReschedulePath string
+	// XComDir is the per-attempt directory an XCom input too large for the
+	// environment is written to, and the runtime reads it from there (#2455).
+	// Empty keeps every input in the environment, where a value over 128 KiB
+	// fails the exec.
+	XComDir string
 	// TmpDir, when set, is exported to the task as TMPDIR so the child's temp files
 	// land in a per-attempt directory the caller wipes between attempts, instead of
 	// the pod's real /tmp. The warm worker points this at a subdir of its scratch

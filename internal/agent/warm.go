@@ -786,6 +786,8 @@ func (w *WarmRunner) attemptRunner(sink LogSink) *Runner {
 		LinksPath:      filepath.Join(w.ScratchDir, "extra_links.json"),
 		PushesPath:     filepath.Join(w.ScratchDir, "xcom_pushes.json"),
 		ReschedulePath: filepath.Join(w.ScratchDir, "reschedule.txt"),
+		// Large XCom inputs, wiped with the scratch like the rest (#2455).
+		XComDir: filepath.Join(w.ScratchDir, "xcom"),
 		// Per-attempt TMPDIR under the scratch resetScratch wipes, so the child's
 		// temp files never persist into the next attempt on this warm worker (#728).
 		TmpDir:             filepath.Join(w.ScratchDir, "tmp"),

@@ -98,8 +98,10 @@ variables and small files** — there is no shared Airflow object. The agent's
 | `DEXAFLOW_OPERATOR_ARGS` | agent | `run_operator` | JSON of the operator's constructor args |
 | `DEXAFLOW_CALL_ARGS_JSON` | agent | `_resolve_kwargs` | literal args written at a `@task(...)` call (#115) |
 | `DEXAFLOW_XCOM_<PARAM>` | agent | `_resolve_kwargs` / `_merge_operator_xcom` | one upstream task's `return_value`, keyed by param |
+| `DEXAFLOW_XCOMFILE_<PARAM>` | agent | `leoflow_runtime.xcom.read_raw` | the path of a file with that value, when it is over 96 KiB (#2455) |
 | `DEXAFLOW_UPSTREAM_XCOM` | agent | `_load_xcom_by_task` | map of `{task_id: value}` for `ti.xcom_pull` |
-| `DEXAFLOW_UPSTREAM_TASK_IDS` / `_XCOM_OMITTED` | agent | `_StandaloneTaskInstance` | the declared upstreams, and those too large to deliver (#2452) |
+| `DEXAFLOW_UPSTREAM_XCOM_FILE` | agent | `_load_xcom_by_task` | the path of a file with the whole map, when it is over 96 KiB (#2455) |
+| `DEXAFLOW_UPSTREAM_TASK_IDS` / `_XCOM_OMITTED` | agent | `_StandaloneTaskInstance` | the declared upstreams, and those left out of the map in the environment (#2452) |
 | `DEXAFLOW_TASK_ID` / `_DAG_ID` / `_RUN_ID` / `_TRY_NUMBER` | agent | context + ti shim | run identity |
 | `DEXAFLOW_TS` / `DEXAFLOW_DS` | agent | `_operator_context` | logical date as ISO timestamp / `YYYY-MM-DD` |
 | `DEXAFLOW_DATA_INTERVAL_START` / `_END` | agent | `_operator_context` | the run's data interval |
@@ -248,10 +250,14 @@ return `None` and let the task run on with the wrong data
 
 - a task that is not an upstream of this one: add the edge (`a >> b`);
 - a custom `key=` of an upstream: return the value from the upstream instead;
-- `dag_id=` of another DAG: share the value through storage both DAGs read;
-- an upstream value too large for the environment (about 96 KiB): store the
-  data outside XCom and return its location
-  ([#2455](https://github.com/dexadata/dexaflow/issues/2455)).
+- `dag_id=` of another DAG: share the value through storage both DAGs read.
+
+An upstream value too large for the environment (over 96 KiB, where Linux
+caps one variable at 128 KiB) reaches the task through a file in its
+per-attempt scratch from 0.5.12, for a bound argument and for
+`ti.xcom_pull` alike ([#2455](https://github.com/dexadata/dexaflow/issues/2455)).
+A task image built with an older runtime does not read that file: rebuild it
+with `dexaflow build`.
 
 On the control-plane side, the agent only delivers an upstream's value when the
 task actually declares the dependency: `FetchXCom` is guarded by the task's

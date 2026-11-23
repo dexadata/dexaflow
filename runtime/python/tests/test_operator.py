@@ -852,3 +852,31 @@ def test_ti_xcom_pull_raises_for_what_is_not_delivered(monkeypatch, call, match)
     ti = _ti_with_upstreams(monkeypatch, ["extract", "huge"], {"extract": 1}, omitted=["huge"])
     with pytest.raises(runner.XComNotDeliveredError, match=match):
         call(ti)
+
+
+def test_run_operator_merges_a_file_xcom(tmp_path, monkeypatch):
+    """A param-bound upstream value delivered as a file reaches the operator's
+    kwarg like one delivered in the environment (#2455)."""
+    out = tmp_path / "rv.json"
+    monkeypatch.setenv("LEOFLOW_RETURN_VALUE_PATH", str(out))
+    sql = "SELECT " + "1, " * 60_000 + "1"
+    path = tmp_path / "sql.json"
+    path.write_text(json.dumps(sql))
+    monkeypatch.setenv("LEOFLOW_XCOMFILE_SQL", str(path))
+    mod = _write_operator_module(tmp_path, monkeypatch)
+
+    runner.run_operator(f"{mod}.EchoOperator", {"bucket": "b1"})
+
+    assert json.loads(out.read_text())["kwargs"] == {"bucket": "b1", "sql": sql}
+
+
+def test_ti_xcom_pull_reads_the_upstream_map_file(monkeypatch, tmp_path):
+    """With the upstream map in a file, a value too large for the environment
+    is pulled instead of refused (#2455)."""
+    huge = ["x" * 1000] * 200
+    path = tmp_path / "upstream.json"
+    path.write_text(json.dumps({"extract": 1, "huge": huge}))
+    monkeypatch.setenv("LEOFLOW_UPSTREAM_XCOM_FILE", str(path))
+    ti = _ti_with_upstreams(monkeypatch, ["extract", "huge"], {"extract": 1}, omitted=["huge"])
+    assert ti.xcom_pull("huge") == huge
+    assert ti.xcom_pull("extract") == 1

@@ -137,7 +137,7 @@ func emitTaskBoot(sink LogSink, argv, env []string) {
 			if eq := strings.IndexByte(kv, '='); eq > 0 {
 				vars = append(vars, kv[:eq])
 			}
-		case strings.HasPrefix(kv, "LEOFLOW_XCOM_"):
+		case strings.HasPrefix(kv, "LEOFLOW_XCOM_"), strings.HasPrefix(kv, xcomFileEnvPrefix):
 			if eq := strings.IndexByte(kv, '='); eq > 0 {
 				xcoms = append(xcoms, kv[:eq])
 			}

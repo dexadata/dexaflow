@@ -551,6 +551,21 @@ def test_run_resolves_xcom_input_arguments(tmp_path, monkeypatch):
     assert json.loads(out.read_text()) == 42
 
 
+def test_run_resolves_a_file_xcom_input(tmp_path, monkeypatch):
+    """An input too large for the environment arrives as LEOFLOW_XCOMFILE_<param>
+    and binds like one in LEOFLOW_XCOM_<param> (#2455): here 1 MiB."""
+    out = tmp_path / "rv.json"
+    monkeypatch.setenv("LEOFLOW_RETURN_VALUE_PATH", str(out))
+    path = tmp_path / "blob.json"
+    path.write_text(json.dumps("a" * (1 << 20)))
+    monkeypatch.setenv("LEOFLOW_XCOMFILE_BLOB", str(path))
+    mod = _write_module(tmp_path, monkeypatch, "def size(blob):\n    return len(blob)\n")
+
+    runner.run(f"{mod}:size")
+
+    assert json.loads(out.read_text()) == 1 << 20
+
+
 def test_run_leaves_unbound_params_to_defaults(tmp_path, monkeypatch):
     """A parameter with no injected XCom falls back to its default (no crash)."""
     out = tmp_path / "rv.json"
