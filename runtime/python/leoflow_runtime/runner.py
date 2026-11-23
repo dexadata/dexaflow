@@ -11,7 +11,6 @@ import shlex
 import sys
 from datetime import datetime
 
-from leoflow_runtime.xcom import XCOM_ENV_PREFIX
 from leoflow_runtime.xcom import input_names as xcom_input_names
 from leoflow_runtime.xcom import read_raw as read_xcom_raw
 

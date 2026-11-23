@@ -630,8 +630,8 @@ func TestBuildEnvDeliversALargeInputAsAFile(t *testing.T) {
 	if err != nil || string(data) != big {
 		t.Fatalf("file %q: %d bytes, err %v; want the 1 MiB value", path, len(data), err)
 	}
-	if fi, err := os.Stat(path); err != nil || fi.Mode().Perm() != 0o600 {
-		t.Errorf("file mode %v, err %v; want 0600", fi.Mode().Perm(), err)
+	if fi, serr := os.Stat(path); serr != nil || fi.Mode().Perm() != 0o600 {
+		t.Errorf("stat %q: %v; want mode 0600", path, serr)
 	}
 	if envValue(env, "LEOFLOW_XCOM_N") != "3" {
 		t.Errorf("the small input must stay in the environment; env %v", env)

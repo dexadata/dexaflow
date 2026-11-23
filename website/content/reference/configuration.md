@@ -1704,8 +1704,10 @@ when debugging a task; do not set them yourself.
 | `DEXAFLOW_WARM_ATTEMPT_HOME` | _(empty)_ | `1` gives every attempt on a warm worker its own `HOME` under the scratch directory, set when `execution.warm_read_only_root_filesystem` is on. |
 | `DEXAFLOW_UPSTREAM_XCOM` | _(empty)_ | JSON map of upstream task id to return value, read by the runtime's `ti.xcom_pull`. Set for provider operators and Python tasks. |
 | `DEXAFLOW_UPSTREAM_TASK_IDS` | _(empty)_ | JSON array of the task's declared upstreams; with it, `ti.xcom_pull` raises for a task that is not one of them. |
-| `DEXAFLOW_UPSTREAM_XCOM_OMITTED` | _(empty)_ | JSON array of upstreams whose value was too large for `DEXAFLOW_UPSTREAM_XCOM`; `ti.xcom_pull` raises for them. |
+| `DEXAFLOW_UPSTREAM_XCOM_OMITTED` | _(empty)_ | JSON array of upstreams whose value was too large for `DEXAFLOW_UPSTREAM_XCOM`; `ti.xcom_pull` raises for them unless `DEXAFLOW_UPSTREAM_XCOM_FILE` is set. |
+| `DEXAFLOW_UPSTREAM_XCOM_FILE` | _(empty)_ | Path of a file in the attempt's scratch holding the whole upstream map, set when it does not fit in `DEXAFLOW_UPSTREAM_XCOM` (#2455). |
 | `DEXAFLOW_XCOM_<NAME>` | _(empty)_ | One XCom input bound to the operator parameter `<name>`, as JSON. |
+| `DEXAFLOW_XCOMFILE_<NAME>` | _(empty)_ | Path of a file in the attempt's scratch holding the XCom input bound to `<name>`, set instead of `DEXAFLOW_XCOM_<NAME>` when the value is over 96 KiB (#2455). |
 | `DEXAFLOW_PROJECT_CONFIG_JSON` | _(empty)_ | The project's `dexaflow.yaml`, as JSON, passed by `dexaflow compile` to the DAG parser. |
 
 <!-- END GENERATED configref -->
