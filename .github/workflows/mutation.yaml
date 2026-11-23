@@ -112,7 +112,22 @@ jobs:
       - name: Mutate the package
         env:
           PACKAGE: ${{ matrix.package }}
-        run: scripts/mutation.sh run "$PACKAGE"
+        run: |
+          # The runner itself died mid-run on several packages ("The runner has
+          # received a shutdown signal"), with nothing in the log to say why.
+          # Print the runner's memory, disk and biggest processes while the
+          # run goes, so a dying runner leaves its last state in this log.
+          ( while sleep 30; do
+              printf 'runner: mem used %s MiB of %s, disk / free %s, tmp %s\n' \
+                "$(free -m | awk '/Mem/{print $3}')" "$(free -m | awk '/Mem/{print $2}')" \
+                "$(df -h / | awk 'NR==2{print $4}')" "$(du -sh /tmp 2>/dev/null | cut -f1)"
+              ps -eo rss=,etimes=,args= --sort=-rss | head -3 | cut -c1-160 | sed 's/^/  /'
+            done ) &
+          watch=$!
+          rc=0
+          scripts/mutation.sh run "$PACKAGE" || rc=$?
+          kill "$watch" 2>/dev/null || true
+          exit "$rc"
       - name: Name the report
         if: always()
         id: name
