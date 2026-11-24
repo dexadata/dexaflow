@@ -6,6 +6,8 @@ adhere to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+## [0.5.12] - 2026-11-24
+
 ### Added
 
 - **Retry backoff** (#2454): `retry_exponential_backoff` and `max_retry_delay`, on a task or in `default_args`, now compile into dag.json and the scheduler waits as Airflow 3 does: `retry_delay` times the multiplier to the power of the failed try minus one, plus a deterministic jitter, capped by `max_retry_delay` and by one day. `True` is a multiplier of 2. 0.5.11 refused both at compile. The task details in the UI now show the task's own `retry_delay` and multiplier instead of a fixed 300 seconds.
