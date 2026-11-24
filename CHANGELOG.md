@@ -6,6 +6,22 @@ adhere to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Added
+
+- **Retry backoff** (#2454): `retry_exponential_backoff` and `max_retry_delay`, on a task or in `default_args`, now compile into dag.json and the scheduler waits as Airflow 3 does: `retry_delay` times the multiplier to the power of the failed try minus one, plus a deterministic jitter, capped by `max_retry_delay` and by one day. `True` is a multiplier of 2. 0.5.11 refused both at compile. The task details in the UI now show the task's own `retry_delay` and multiplier instead of a fixed 300 seconds.
+
+### Changed
+
+- **The CI/CD and upgrade guides are split into shorter pages** (#2152): "CI/CD & deploy" keeps the deploy itself and gains pages for change, rollback and promotion, credentials and the CLI in CI, the `dexaflow ci init` pipelines, and the Argo, Tekton, Jenkins, buildah and kaniko recipes; "Upgrades" keeps the procedure and moves the per-release notes to "Version notes". Old links, including links to a moved section, land on the page that now holds it.
+
+### Fixed
+
+- **Large XCom values reach the task** (#2455): an upstream value over 96 KiB, bound to an argument or pulled with `ti.xcom_pull`, used to fail the exec with "argument list too long" (Linux caps one environment variable at 128 KiB) or be refused by `ti.xcom_pull`. The agent now writes it to a file in the attempt's scratch, readable by the task only, and the runtime reads it from there; smaller values still ride in the environment. A task image built with an older runtime does not read the file, so rebuild it with `dexaflow build`.
+
+### Security
+
+- **Go dependencies updated** (#2476): golang.org/x/crypto 0.59.0, go-jose 4.1.9, grpc 1.85.0, pgx 5.13.0, client-go 0.37.2, the AWS and Google Cloud SDKs and their transitive modules. Bearer tokens from an external issuer are now parsed only in the JWS compact serialization, which is the only form a JWT takes; a JSON-serialized JWS is refused as malformed. pflag stays on 1.0.10, because 1.1.0 changes how every boolean flag prints in `--help`.
+
 ## [0.5.11] - 2026-11-20
 
 ### Changed

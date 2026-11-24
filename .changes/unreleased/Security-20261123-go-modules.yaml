@@ -1,3 +1,0 @@
-kind: Security
-body: '**Go dependencies updated** (#2476): golang.org/x/crypto 0.59.0, go-jose 4.1.9, grpc 1.85.0, pgx 5.13.0, client-go 0.37.2, the AWS and Google Cloud SDKs and their transitive modules. Bearer tokens from an external issuer are now parsed only in the JWS compact serialization, which is the only form a JWT takes; a JSON-serialized JWS is refused as malformed. pflag stays on 1.0.10, because 1.1.0 changes how every boolean flag prints in `--help`.'
-time: 2026-11-23T14:00:00.000000+00:00
