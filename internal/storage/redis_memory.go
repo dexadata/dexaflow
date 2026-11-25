@@ -8,7 +8,10 @@ import (
 	"log/slog"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
+
+	"github.com/redis/go-redis/v9"
 )
 
 // RedisSafeEvictionPolicy is the only maxmemory-policy under which Redis never
@@ -36,13 +39,45 @@ func (i RedisMemoryInfo) EvictionSafe() bool {
 // MemoryInfo reads the eviction policy, the used memory and the evicted keys
 // from INFO, which managed services allow where CONFIG GET is blocked. The
 // sections are read one call each because Redis before 7 takes one section
-// per INFO.
+// per INFO. On a Cluster the policy is a setting of each node, so every master
+// is read: the first unsafe policy found is reported, and memory and
+// evictions are summed.
 func (r *Redis) MemoryInfo(ctx context.Context) (RedisMemoryInfo, error) {
-	mem, err := r.Client.Info(ctx, "memory").Result()
+	cc, ok := r.Client.(*redis.ClusterClient)
+	if !ok {
+		return nodeMemoryInfo(ctx, r.Client)
+	}
+	var (
+		mu    sync.Mutex
+		total RedisMemoryInfo
+	)
+	err := cc.ForEachMaster(ctx, func(ctx context.Context, n *redis.Client) error {
+		info, err := nodeMemoryInfo(ctx, n)
+		if err != nil {
+			return fmt.Errorf("master %s: %w", n.Options().Addr, err)
+		}
+		mu.Lock()
+		defer mu.Unlock()
+		if total.Policy == "" || (total.EvictionSafe() && !info.EvictionSafe()) {
+			total.Policy = info.Policy
+		}
+		total.UsedMemory += info.UsedMemory
+		total.EvictedKeys += info.EvictedKeys
+		return nil
+	})
+	if err != nil {
+		return RedisMemoryInfo{}, err
+	}
+	return total, nil
+}
+
+// nodeMemoryInfo reads INFO memory and stats from the one node c reaches.
+func nodeMemoryInfo(ctx context.Context, c redis.Cmdable) (RedisMemoryInfo, error) {
+	mem, err := c.Info(ctx, "memory").Result()
 	if err != nil {
 		return RedisMemoryInfo{}, fmt.Errorf("redis INFO memory: %w", err)
 	}
-	stats, err := r.Client.Info(ctx, "stats").Result()
+	stats, err := c.Info(ctx, "stats").Result()
 	if err != nil {
 		return RedisMemoryInfo{}, fmt.Errorf("redis INFO stats: %w", err)
 	}
