@@ -22,15 +22,15 @@ import (
 // short by the per-tick cap), the time is at or before now and the DAG is
 // listed on the next tick.
 func nextDueAt(d ScheduledDAG, now time.Time) (time.Time, bool) {
-	schedule, err := domain.ParseCron(d.Schedule)
+	schedule, err := domain.ParseCronIn(d.Schedule, d.Timezone)
 	if err != nil {
 		return time.Time{}, false
 	}
 	if every, ok := schedule.(cron.ConstantDelaySchedule); ok {
 		return nextEveryDueAt(every, d, now)
 	}
-	// UTC at the boundary, like dueScheduledSlots: Next evaluates the cron
-	// fields in the argument's location.
+	// UTC at the boundary, like dueScheduledSlots, so the stored time is in
+	// UTC; ParseCronIn already reads the fields in the DAG's zone.
 	cursor := now.UTC()
 	if d.LastLogical != nil {
 		cursor = d.LastLogical.UTC()

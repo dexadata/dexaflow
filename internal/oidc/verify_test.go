@@ -34,6 +34,12 @@ type fakeIDP struct {
 	// tokenResp, when set, is the JSON body the /token endpoint returns; it lets a
 	// flow test drive Exchange against a controlled response.
 	tokenResp map[string]any
+
+	// endSession, when true, publishes end_session_endpoint in discovery, the
+	// way Entra, Okta and Keycloak do and Google does not.
+	endSession bool
+	// endSessionRaw, when set, is published as end_session_endpoint verbatim.
+	endSessionRaw string
 }
 
 func newFakeIDP(t *testing.T) *fakeIDP {
@@ -62,7 +68,7 @@ func (f *fakeIDP) handleToken(w http.ResponseWriter, _ *http.Request) {
 }
 
 func (f *fakeIDP) handleDiscovery(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, map[string]any{
+	doc := map[string]any{
 		"issuer":                                f.issuer,
 		"authorization_endpoint":                f.issuer + "/authorize",
 		"token_endpoint":                        f.issuer + "/token",
@@ -70,7 +76,14 @@ func (f *fakeIDP) handleDiscovery(w http.ResponseWriter, _ *http.Request) {
 		"response_types_supported":              []string{"code"},
 		"subject_types_supported":               []string{"public"},
 		"id_token_signing_alg_values_supported": []string{"RS256"},
-	})
+	}
+	if f.endSession {
+		doc["end_session_endpoint"] = f.issuer + "/logout?tenant=t1"
+	}
+	if f.endSessionRaw != "" {
+		doc["end_session_endpoint"] = f.endSessionRaw
+	}
+	writeJSON(w, doc)
 }
 
 func (f *fakeIDP) handleJWKS(w http.ResponseWriter, _ *http.Request) {

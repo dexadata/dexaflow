@@ -65,8 +65,8 @@ func TestLatestDueSlotEveryHonorsTheStartDate(t *testing.T) {
 	future := now.Add(time.Hour)
 
 	// Act
-	fromPast := dueScheduledSlots("@every 1h", nil, &past, now, false, maxCatchupSlotsPerTick)
-	fromFuture := dueScheduledSlots("@every 1h", nil, &future, now, false, maxCatchupSlotsPerTick)
+	fromPast := dueScheduledSlots("@every 1h", "", nil, &past, now, false, maxCatchupSlotsPerTick)
+	fromFuture := dueScheduledSlots("@every 1h", "", nil, &future, now, false, maxCatchupSlotsPerTick)
 
 	// Assert
 	if want := time.Date(2026, 10, 26, 10, 0, 0, 0, time.UTC); len(fromPast) != 1 || !fromPast[0].Equal(want) {

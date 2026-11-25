@@ -38,6 +38,9 @@ type fakeIDP struct {
 
 	mu     sync.Mutex
 	staged map[string]stagedCode
+
+	// endSession publishes end_session_endpoint in discovery (#1165).
+	endSession bool
 }
 
 type stagedCode struct {
@@ -63,7 +66,7 @@ func newFakeIDP(t *testing.T) *fakeIDP {
 }
 
 func (f *fakeIDP) handleDiscovery(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, map[string]any{
+	doc := map[string]any{
 		"issuer":                                f.issuer,
 		"authorization_endpoint":                f.issuer + "/authorize",
 		"token_endpoint":                        f.issuer + "/token",
@@ -71,7 +74,11 @@ func (f *fakeIDP) handleDiscovery(w http.ResponseWriter, _ *http.Request) {
 		"response_types_supported":              []string{"code"},
 		"subject_types_supported":               []string{"public"},
 		"id_token_signing_alg_values_supported": []string{"RS256"},
-	})
+	}
+	if f.endSession {
+		doc["end_session_endpoint"] = f.issuer + "/logout"
+	}
+	writeJSON(w, doc)
 }
 
 func (f *fakeIDP) handleJWKS(w http.ResponseWriter, _ *http.Request) {
@@ -300,6 +307,7 @@ func testOIDCSettings(c config.OIDCSection) OIDCSettings {
 		BreakGlassEmails: c.BreakGlassEmails,
 		JITProvisioning:  c.JITProvisioning,
 		AutoRedirect:     c.AutoRedirect,
+		Logout:           c.Logout,
 	}
 }
 

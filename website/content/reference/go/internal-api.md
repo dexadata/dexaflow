@@ -908,7 +908,7 @@ type Metrics interface {
 ```
 
 <a name="OIDCSettings"></a>
-## type [OIDCSettings](<https://github.com/dexadata/dexaflow/blob/main/internal/api/oidc_handler.go#L65-L84>)
+## type [OIDCSettings](<https://github.com/dexadata/dexaflow/blob/main/internal/api/oidc_handler.go#L65-L87>)
 
 OIDCSettings are the auth.oidc settings the login flow and the credential gate read; the ID token checks live in the oidc.Flow.
 
@@ -932,6 +932,9 @@ type OIDCSettings struct {
     // AutoRedirect is auth.oidc.auto_redirect: start the login flow on the
     // sign-in page instead of rendering it.
     AutoRedirect bool
+    // Logout is auth.oidc.logout: "idp" (or empty) also ends the IdP session
+    // on sign-out, "local" ends only this server's (#1165).
+    Logout string
 }
 ```
 

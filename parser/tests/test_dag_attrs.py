@@ -173,3 +173,63 @@ def test_concurrency_is_refused_naming_max_active_tasks(monkeypatch, tmp_path):
     assert "concurrency" in message
     assert "max_active_tasks" in message
     assert "Airflow 3" in message
+
+
+@pytest.mark.parametrize(("start", "zone"), [
+    # Airflow 3's docs: pendulum, which the compile shims with zoneinfo.
+    ('pendulum.datetime(2026, 1, 1, tz="America/Sao_Paulo")', "America/Sao_Paulo"),
+    ('datetime(2026, 1, 1, tzinfo=ZoneInfo("Europe/Lisbon"))', "Europe/Lisbon"),
+    # A tzinfo with no zone name keeps its offset.
+    ("datetime(2026, 1, 1, tzinfo=timezone(timedelta(hours=-3)))", "-03:00"),
+    ("datetime(2026, 1, 1, tzinfo=timezone(timedelta(hours=5, minutes=30)))", "+05:30"),
+])
+def test_schedule_timezone_comes_from_the_start_date(monkeypatch, tmp_path, start, zone):
+    # Airflow reads a DAG's cron in the zone of its start_date (#2453).
+    spec = _compile(monkeypatch, tmp_path, f"""
+        from datetime import datetime, timedelta, timezone
+        from zoneinfo import ZoneInfo
+        import pendulum
+        from airflow.sdk import DAG, task
+        @task
+        def a() -> None: ...
+        with DAG("g", schedule="0 6 * * *", start_date={start}):
+            a()
+    """)
+    assert spec["schedule_timezone"] == zone
+
+
+@pytest.mark.parametrize("start", [
+    "datetime(2026, 1, 1)",  # naive: Airflow's default zone, UTC
+    "datetime(2026, 1, 1, tzinfo=timezone.utc)",
+    'pendulum.datetime(2026, 1, 1, tz="UTC")',
+    "datetime(2026, 1, 1, tzinfo=timezone(timedelta(0)))",
+    'datetime(2026, 1, 1, tzinfo=ZoneInfo("Etc/UTC"))',
+    None,
+])
+def test_schedule_timezone_omitted_for_utc(monkeypatch, tmp_path, start):
+    # UTC is the server default, so a UTC DAG keeps its compiled shape.
+    arg = f", start_date={start}" if start else ""
+    spec = _compile(monkeypatch, tmp_path, f"""
+        from datetime import datetime, timedelta, timezone
+        from zoneinfo import ZoneInfo
+        import pendulum
+        from airflow.sdk import DAG, task
+        @task
+        def a() -> None: ...
+        with DAG("g", schedule="0 6 * * *"{arg}):
+            a()
+    """)
+    assert "schedule_timezone" not in spec
+
+
+def test_schedule_timezone_from_default_args(monkeypatch, tmp_path):
+    spec = _compile(monkeypatch, tmp_path, """
+        import pendulum
+        from airflow.sdk import DAG, task
+        @task
+        def a() -> None: ...
+        with DAG("g", schedule="@daily",
+                 default_args={"start_date": pendulum.datetime(2026, 1, 1, tz="Asia/Tokyo")}):
+            a()
+    """)
+    assert spec["schedule_timezone"] == "Asia/Tokyo"

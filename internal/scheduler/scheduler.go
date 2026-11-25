@@ -191,9 +191,13 @@ type RunState struct {
 type ScheduledDAG struct {
 	// TenantID is the UUID of the tenant that owns the DAG. A dag_id is unique
 	// only within its tenant, so every per-DAG decision keys on the pair (#209).
-	TenantID    string
-	DagID       string
-	Schedule    string
+	TenantID string
+	DagID    string
+	Schedule string
+	// Timezone is the zone the cron fields of Schedule are read in, the DAG's
+	// schedule_timezone, which the parser takes from the start_date (#2453).
+	// Empty means UTC.
+	Timezone    string
 	LastLogical *time.Time
 	StartDate   *time.Time
 	Catchup     bool

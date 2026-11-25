@@ -2121,7 +2121,7 @@ func (q *Queries) ListRunningTasks(ctx context.Context, arg ListRunningTasksPara
 }
 
 const listScheduledDags = `-- name: ListScheduledDags :many
-SELECT d.tenant_id, d.dag_id, d.schedule, d.catchup, d.start_date, d.max_active_runs,
+SELECT d.tenant_id, d.dag_id, d.schedule, d.schedule_timezone, d.catchup, d.start_date, d.max_active_runs,
   d.next_run_at, d.schedule_epoch,
   (SELECT max(dr.logical_date) FROM dag_runs dr WHERE dr.dag_id = d.id) AS last_logical
 FROM dags d
@@ -2133,15 +2133,16 @@ WHERE d.is_active = true AND d.is_paused = false
 `
 
 type ListScheduledDagsRow struct {
-	TenantID      pgtype.UUID        `json:"tenant_id"`
-	DagID         string             `json:"dag_id"`
-	Schedule      *string            `json:"schedule"`
-	Catchup       bool               `json:"catchup"`
-	StartDate     pgtype.Timestamptz `json:"start_date"`
-	MaxActiveRuns int32              `json:"max_active_runs"`
-	NextRunAt     pgtype.Timestamptz `json:"next_run_at"`
-	ScheduleEpoch int64              `json:"schedule_epoch"`
-	LastLogical   interface{}        `json:"last_logical"`
+	TenantID         pgtype.UUID        `json:"tenant_id"`
+	DagID            string             `json:"dag_id"`
+	Schedule         *string            `json:"schedule"`
+	ScheduleTimezone *string            `json:"schedule_timezone"`
+	Catchup          bool               `json:"catchup"`
+	StartDate        pgtype.Timestamptz `json:"start_date"`
+	MaxActiveRuns    int32              `json:"max_active_runs"`
+	NextRunAt        pgtype.Timestamptz `json:"next_run_at"`
+	ScheduleEpoch    int64              `json:"schedule_epoch"`
+	LastLogical      interface{}        `json:"last_logical"`
 }
 
 // Returns each cron-scheduled DAG with the bits the scheduler needs to decide
@@ -2167,6 +2168,7 @@ func (q *Queries) ListScheduledDags(ctx context.Context, now pgtype.Timestamptz)
 			&i.TenantID,
 			&i.DagID,
 			&i.Schedule,
+			&i.ScheduleTimezone,
 			&i.Catchup,
 			&i.StartDate,
 			&i.MaxActiveRuns,

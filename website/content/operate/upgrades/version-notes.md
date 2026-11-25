@@ -1250,6 +1250,41 @@ Every log stream also publishes from its own queue now, in batches of up to
 256 lines per Redis round trip, so a follower costs a chatty task far less
 receive rate than before, under either mode.
 
+## Upgrading to 0.6.0: cron schedules run in the DAG's time zone
+
+A cron schedule is now read in the time zone of the DAG's `start_date`, as
+Airflow does ([#2453](https://github.com/dexadata/dexaflow/issues/2453)).
+`start_date=pendulum.datetime(2026, 1, 1, tz="America/Sao_Paulo")` with
+`schedule="0 6 * * *"` runs at 06:00 in Sao Paulo (09:00 UTC). Until 0.6.0
+every schedule was read in UTC, so the same DAG ran at 06:00 UTC, 03:00 in
+Sao Paulo. `dexaflow compile` writes the zone to `dag.json` as
+`schedule_timezone`; the UI shows it on the DAG's details.
+
+| Your DAG | What the upgrade does |
+|---|---|
+| `start_date` in UTC, naive (no tzinfo), or not set | Nothing changes. |
+| `start_date` with another zone | After its next compile and deploy, runs move to that zone's wall clock, daylight saving time included. The version already deployed keeps its UTC times until then. |
+| `start_date` with a fixed offset (`timezone(timedelta(hours=-3))`) | Runs move to that offset, with no daylight saving time. |
+| A `CRON_TZ=` prefix in the schedule | Nothing changes: the prefix wins over the `start_date` zone. |
+| `@every` | Nothing changes: it has no wall clock. |
+
+The deploy that moves a DAG to its zone does not skip a slot: the next run is
+the first local slot after the last run, so the gap between those two runs is
+shorter or longer than usual once. With `catchup=True` the slots of that gap
+are created as usual.
+
+To keep a DAG at the UTC time it ran at before, give it a UTC `start_date`,
+or move the hour in the cron expression to its local equivalent.
+
+On the two days a year the clocks change, a daily time is read on the wall
+clock, as Airflow does: a time in the hour that repeats runs once, in its
+first pass, and a time in the hour that is skipped runs one hour later
+(02:30 becomes 03:30). A schedule that fires in every hour, such as
+`0 * * * *`, keeps its steady cadence instead: it runs in both passes of the
+repeated hour and not in the skipped one.
+
+An unknown zone is refused when the version is registered.
+
 ## Upgrading to 0.6.0: trigger rules follow Airflow 3
 
 The scheduler now evaluates trigger rules as Airflow 3 does
@@ -1334,6 +1369,21 @@ and every other destination. See
 The policy only takes effect on a CNI that enforces NetworkPolicy. On Cilium,
 GKE Dataplane V2 included, also set `taskNetworkPolicy.blockPrivateNetworks: true`,
 as the task pod hardening page explains.
+
+## Upgrading to 0.6.0: SSO sign-out ends the identity provider session
+
+Under `auth.provider: oidc`, sign-out now also ends the session at the identity
+provider ([#1165](https://github.com/dexadata/dexaflow/issues/1165),
+[ADR 0110](/project/adrs/0110-sso-sign-out-ends-the-idp-session/)), so the
+sign-in button no longer signs the user straight back in.
+
+| Your install | What the upgrade does |
+|---|---|
+| SSO with Entra, Okta, Keycloak or another issuer that publishes `end_session_endpoint` | Sign-out goes through the IdP, which shows its own signed-out page. Set `auth.oidc.postLogoutRedirectUrl` (and register it with the IdP) to come back to Dexaflow instead. Sessions opened before the upgrade sign out locally once. |
+| SSO with Google or Cognito (no `end_session_endpoint`) | Nothing changes. The server logs a warning at boot; set `auth.oidc.logout: local` to acknowledge it. |
+| Several applications share the IdP session and sign-out must not end it | Set `auth.oidc.logout: local`. |
+| `auth.externalSignoutUrl` is set | Nothing changes: it still decides where sign-out goes. |
+| No SSO | Nothing changes. |
 
 ## Upgrading to 0.6.0: the chart renders DEXAFLOW_* variables
 

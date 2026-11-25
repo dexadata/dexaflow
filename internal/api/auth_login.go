@@ -7,6 +7,8 @@ import (
 	"strings"
 
 	"github.com/gin-gonic/gin"
+
+	"github.com/dexadata/dexaflow/internal/oidc"
 )
 
 // The Airflow 3.2.1 UI sends an unauthenticated user to GET /api/v2/auth/login.
@@ -289,20 +291,32 @@ func loginPageHandler(o loginPageOpts) gin.HandlerFunc {
 // one is configured (#1288). It clears through the same helper both login
 // paths set through, so the deletion can never disagree with the cookie it is
 // deleting.
-func logoutHandler(session sessionCookieSpec, externalSignOut string) gin.HandlerFunc {
+//
+// idp, when set, is the flow whose end_session_endpoint ends the IdP session
+// too (#1165): a session that came from SSO is sent there, so the sign-in
+// button does not sign the user straight back in. An external sign-out wins,
+// because the operator's own flow is then the one in charge of the IdP.
+func logoutHandler(session sessionCookieSpec, externalSignOut string, idp *oidc.Flow) gin.HandlerFunc {
 	return func(c *gin.Context) {
 		// Both halves are needed and they are about different things. The helper
 		// is how the deletion can never disagree with the cookie it deletes.
 		clearSessionCookie(c, session)
+		hint, sso := takeIDTokenCookie(c, session.insecure)
 		if externalSignOut != "" {
 			c.Redirect(http.StatusFound, externalSignOut)
 			return
 		}
+		if idp != nil && sso {
+			if target, ok := idp.EndSessionURL(hint); ok {
+				c.Redirect(http.StatusFound, target)
+				return
+			}
+		}
 		// The PAGE, not the flow. With auto_redirect on, the bare sign-in URL is
-		// itself a redirect to the IdP, and our sign-out does not touch the IdP
-		// session, so a user who signed out would be signed straight back in and
-		// the button would appear to do nothing. The marker that reaches the form
-		// is the same one break-glass uses.
+		// itself a redirect to the IdP, and a local sign-out does not touch the
+		// IdP session, so a user who signed out would be signed straight back in
+		// and the button would appear to do nothing. The marker that reaches the
+		// form is the same one break-glass uses.
 		c.Redirect(http.StatusFound, "/api/v2/auth/login?"+loginLocalParam+"=1")
 	}
 }
