@@ -1,6 +1,6 @@
 //go:build integration
 
-package scheduler_test
+package storage_test
 
 import (
 	"context"
@@ -10,7 +10,6 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/dexadata/dexaflow/internal/config"
-	"github.com/dexadata/dexaflow/internal/scheduler"
 	"github.com/dexadata/dexaflow/internal/storage"
 )
 
@@ -35,7 +34,7 @@ func TestLeaderHealthReaderReflectsLockPresence(t *testing.T) {
 		t.Fatalf("reader pool: %v", err)
 	}
 	t.Cleanup(pg.Close)
-	reader := scheduler.NewLeaderHealthReader(pg.Pool)
+	reader := storage.NewLeaderHealthReader(pg.Pool)
 
 	// No leader holds the lock yet → the api must report the scheduler unhealthy,
 	// NOT fake-healthy.
@@ -49,7 +48,7 @@ func TestLeaderHealthReaderReflectsLockPresence(t *testing.T) {
 		t.Fatalf("leader pool: %v", err)
 	}
 	t.Cleanup(leaderPool.Close)
-	leader := scheduler.NewLeader(leaderPool)
+	leader := storage.NewSchedulerLease(leaderPool)
 	acquired, err := leader.TryAcquire(ctx)
 	if err != nil || !acquired {
 		t.Fatalf("acquire leadership lock: acquired=%v err=%v", acquired, err)
@@ -86,7 +85,7 @@ func TestLeaderHealthReaderIgnoresLockInAnotherDatabase(t *testing.T) {
 		t.Fatalf("reader pool: %v", err)
 	}
 	t.Cleanup(pg.Close)
-	reader := scheduler.NewLeaderHealthReader(pg.Pool)
+	reader := storage.NewLeaderHealthReader(pg.Pool)
 
 	// Another install's scheduler: same server, the always-present "postgres"
 	// database, holding the same leadership lock on its own session.
@@ -103,7 +102,7 @@ func TestLeaderHealthReaderIgnoresLockInAnotherDatabase(t *testing.T) {
 		t.Fatalf("connect to the other database: %v", err)
 	}
 	t.Cleanup(func() { _ = conn.Close(ctx) })
-	if _, err := conn.Exec(ctx, `SELECT pg_advisory_lock($1)`, scheduler.LockID); err != nil {
+	if _, err := conn.Exec(ctx, `SELECT pg_advisory_lock($1)`, storage.SchedulerLockID); err != nil {
 		t.Fatalf("hold the leadership lock in the other database: %v", err)
 	}
 

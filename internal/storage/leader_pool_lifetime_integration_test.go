@@ -10,7 +10,6 @@ import (
 	"time"
 
 	"github.com/dexadata/dexaflow/internal/config"
-	"github.com/dexadata/dexaflow/internal/scheduler"
 	"github.com/dexadata/dexaflow/internal/storage"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -58,7 +57,7 @@ func TestLeaderPoolKeepsItsSessionAndItsLock(t *testing.T) {
 	// And the behavior, which is what the configuration is for. A pool whose
 	// lifetime is zero satisfies "is not one hour" and fails here on the first
 	// iteration.
-	leader := scheduler.NewLeader(pool)
+	leader := storage.NewSchedulerLease(pool)
 	acquired, err := leader.TryAcquire(ctx)
 	if err != nil {
 		t.Fatalf("acquire: %v", err)

@@ -1,6 +1,6 @@
 //go:build integration
 
-package scheduler_test
+package storage_test
 
 import (
 	"context"
@@ -10,7 +10,7 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/dexadata/dexaflow/internal/scheduler"
+	"github.com/dexadata/dexaflow/internal/storage"
 )
 
 func singleConnPool(t *testing.T, url string) *pgxpool.Pool {
@@ -40,8 +40,8 @@ func TestLeaderElectionMutualExclusion(t *testing.T) {
 	poolB := singleConnPool(t, url)
 	defer poolB.Close()
 
-	a := scheduler.NewLeader(poolA)
-	b := scheduler.NewLeader(poolB)
+	a := storage.NewSchedulerLease(poolA)
+	b := storage.NewSchedulerLease(poolB)
 
 	gotA, err := a.TryAcquire(ctx)
 	if err != nil || !gotA {
@@ -73,7 +73,7 @@ func TestLeaderHoldsLockReflectsOwnership(t *testing.T) {
 
 	poolA := singleConnPool(t, url)
 	defer poolA.Close()
-	a := scheduler.NewLeader(poolA)
+	a := storage.NewSchedulerLease(poolA)
 
 	// Before acquiring, this session does not hold the lock.
 	if held, err := a.HoldsLock(ctx); err != nil || held {
@@ -89,7 +89,7 @@ func TestLeaderHoldsLockReflectsOwnership(t *testing.T) {
 	// A different session does not see itself as the holder (pid-scoped check).
 	poolB := singleConnPool(t, url)
 	defer poolB.Close()
-	if held, err := scheduler.NewLeader(poolB).HoldsLock(ctx); err != nil || held {
+	if held, err := storage.NewSchedulerLease(poolB).HoldsLock(ctx); err != nil || held {
 		t.Fatalf("a non-holding session must report held=false: held=%v err=%v", held, err)
 	}
 	// After releasing, it no longer holds it.

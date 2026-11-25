@@ -13,7 +13,7 @@ Package scheduler implements the Dexaflow scheduling state machine and loop.
 ## Index
 
 - [Constants](<#constants>)
-- [func CampaignAndRun\(ctx context.Context, leader \*Leader, sched \*Scheduler, logger \*slog.Logger\)](<#CampaignAndRun>)
+- [func CampaignAndRun\(ctx context.Context, leader Lease, sched \*Scheduler, logger \*slog.Logger\)](<#CampaignAndRun>)
 - [func CanTransition\(from, to domain.TaskState\) bool](<#CanTransition>)
 - [func CanTransitionDagRun\(from, to domain.DagRunState\) bool](<#CanTransitionDagRun>)
 - [func DagRunTransitions\(\) \[\]\[2\]domain.DagRunState](<#DagRunTransitions>)
@@ -30,14 +30,7 @@ Package scheduler implements the Dexaflow scheduling state machine and loop.
   - [func \(a \*AsyncDispatchFailures\) MarkTaskDispatchFailed\(ctx context.Context, runID, taskID, reason string\) error](<#AsyncDispatchFailures.MarkTaskDispatchFailed>)
 - [type AsyncDispatchStore](<#AsyncDispatchStore>)
 - [type Dispatcher](<#Dispatcher>)
-- [type Leader](<#Leader>)
-  - [func NewLeader\(pool \*pgxpool.Pool\) \*Leader](<#NewLeader>)
-  - [func \(l \*Leader\) HoldsLock\(ctx context.Context\) \(bool, error\)](<#Leader.HoldsLock>)
-  - [func \(l \*Leader\) Release\(ctx context.Context\) error](<#Leader.Release>)
-  - [func \(l \*Leader\) TryAcquire\(ctx context.Context\) \(bool, error\)](<#Leader.TryAcquire>)
-- [type LeaderHealthReader](<#LeaderHealthReader>)
-  - [func NewLeaderHealthReader\(pool \*pgxpool.Pool\) \*LeaderHealthReader](<#NewLeaderHealthReader>)
-  - [func \(r \*LeaderHealthReader\) Heartbeat\(\) \(healthy bool, last time.Time\)](<#LeaderHealthReader.Heartbeat>)
+- [type Lease](<#Lease>)
 - [type PlannedTransition](<#PlannedTransition>)
   - [func PlanRun\(run RunState\) \[\]PlannedTransition](<#PlanRun>)
 - [type PoolReservation](<#PoolReservation>)
@@ -93,12 +86,6 @@ const DefaultDispatchTickBudget = 5 * time.Second
 const InfraConfirmMaxWait = 2 * time.Minute
 ```
 
-<a name="LockID"></a>LockID is the fixed Postgres advisory\-lock id gating scheduler leadership \("LeoFlow" in hex\), per ADR 0009.
-
-```go
-const LockID int64 = 0x4C656F466C6F77
-```
-
 <a name="MaxRetryDelay"></a>MaxRetryDelay is the ceiling of a backoff delay whatever the multiplier and the try, Airflow's \[core\] max\_task\_retry\_delay default \(one day\).
 
 ```go
@@ -106,10 +93,10 @@ const MaxRetryDelay = 24 * time.Hour
 ```
 
 <a name="CampaignAndRun"></a>
-## func [CampaignAndRun](<https://github.com/dexadata/dexaflow/blob/main/internal/scheduler/leadership.go#L56>)
+## func [CampaignAndRun](<https://github.com/dexadata/dexaflow/blob/main/internal/scheduler/leadership.go#L68>)
 
 ```go
-func CampaignAndRun(ctx context.Context, leader *Leader, sched *Scheduler, logger *slog.Logger)
+func CampaignAndRun(ctx context.Context, leader Lease, sched *Scheduler, logger *slog.Logger)
 ```
 
 CampaignAndRun acquires scheduler leadership \(polling every leaderCheckInterval\) and runs the loop only while leader, so a single replica schedules at a time \(ADR 0009\). If leadership is lost mid\-run \(the advisory lock dropped because the connection blipped, was idle\-reaped, or recycled\), it steps down and re\-campaigns rather than scheduling alongside the new leader. It returns when ctx is done.
@@ -285,83 +272,20 @@ type Dispatcher interface {
 }
 ```
 
-<a name="Leader"></a>
-## type [Leader](<https://github.com/dexadata/dexaflow/blob/main/internal/scheduler/leader.go#L17-L19>)
+<a name="Lease"></a>
+## type [Lease](<https://github.com/dexadata/dexaflow/blob/main/internal/scheduler/leadership.go#L29-L35>)
 
-Leader acquires and releases the advisory lock that restricts the scheduler loop to a single replica. It must run on a dedicated single\-connection pool so the session holding the lock is stable.
+leadershipAcquirer tries to take leadership without blocking. Lease is the leadership the scheduler campaigns for: the advisory lock of ADR 0009, taken and checked on a session of its own. internal/storage implements it \(SchedulerLease\) and internal/serverapp wires it, so the decision layer holds no database pool \(\#2329\).
 
 ```go
-type Leader struct {
-    // contains filtered or unexported fields
+type Lease interface {
+
+    // Release gives up leadership, so a follower can take it at once instead
+    // of after the session drops.
+    Release(ctx context.Context) error
+    // contains filtered or unexported methods
 }
 ```
-
-<a name="NewLeader"></a>
-### func [NewLeader](<https://github.com/dexadata/dexaflow/blob/main/internal/scheduler/leader.go#L22>)
-
-```go
-func NewLeader(pool *pgxpool.Pool) *Leader
-```
-
-NewLeader builds a Leader over a dedicated \(single\-connection\) pool.
-
-<a name="Leader.HoldsLock"></a>
-### func \(\*Leader\) [HoldsLock](<https://github.com/dexadata/dexaflow/blob/main/internal/scheduler/leader.go#L50>)
-
-```go
-func (l *Leader) HoldsLock(ctx context.Context) (bool, error)
-```
-
-HoldsLock reports whether this leader's session still holds the advisory lock. The lock is session\-scoped, so if the dedicated connection dropped \(network blip, idle reap, lifetime recycle\) and was replaced, the new session does not hold it and another replica may have taken over — this returns false, letting the caller step down instead of running on as a stale leader \(the split\-brain guard\). A query error \(connection down\) is surfaced so the caller treats it as lost leadership too.
-
-<a name="Leader.Release"></a>
-### func \(\*Leader\) [Release](<https://github.com/dexadata/dexaflow/blob/main/internal/scheduler/leader.go#L36>)
-
-```go
-func (l *Leader) Release(ctx context.Context) error
-```
-
-Release frees the scheduler advisory lock.
-
-<a name="Leader.TryAcquire"></a>
-### func \(\*Leader\) [TryAcquire](<https://github.com/dexadata/dexaflow/blob/main/internal/scheduler/leader.go#L27>)
-
-```go
-func (l *Leader) TryAcquire(ctx context.Context) (bool, error)
-```
-
-TryAcquire attempts to take the scheduler advisory lock without blocking.
-
-<a name="LeaderHealthReader"></a>
-## type [LeaderHealthReader](<https://github.com/dexadata/dexaflow/blob/main/internal/scheduler/leader_health.go#L24-L29>)
-
-LeaderHealthReader answers "is a live scheduler leading?" from shared DB state, for a process that does NOT run the scheduler itself — the split api role \(ADR 0049\), whose /api/v2/monitor/health must not report a fake\-healthy scheduler from a nil in\-process handle \(finding F1\). A live scheduler leader holds the leadership advisory lock \(ADR 0009\) on its own session; when its process dies the session drops and the lock releases, so lock presence is a real cross\-process liveness signal with no extra heartbeat table.
-
-It intentionally does NOT filter by pg\_backend\_pid \(that is Leader.HoldsLock's job, confirming THIS session's own hold\) — here any live holder means a scheduler is up. Limitation: it detects a dead/absent leader, not a leader that is alive but stalled \(lock held, loop wedged\); the in\-process Heartbeat still covers stalls in the all/scheduler role. Tick\-accurate cross\-process health would need a persisted heartbeat \(future work\).
-
-```go
-type LeaderHealthReader struct {
-    // contains filtered or unexported fields
-}
-```
-
-<a name="NewLeaderHealthReader"></a>
-### func [NewLeaderHealthReader](<https://github.com/dexadata/dexaflow/blob/main/internal/scheduler/leader_health.go#L32>)
-
-```go
-func NewLeaderHealthReader(pool *pgxpool.Pool) *LeaderHealthReader
-```
-
-NewLeaderHealthReader builds a reader over the given \(api\-role\) pool.
-
-<a name="LeaderHealthReader.Heartbeat"></a>
-### func \(\*LeaderHealthReader\) [Heartbeat](<https://github.com/dexadata/dexaflow/blob/main/internal/scheduler/leader_health.go#L40>)
-
-```go
-func (r *LeaderHealthReader) Heartbeat() (healthy bool, last time.Time)
-```
-
-Heartbeat implements api.Heartbeater. healthy is true iff some live session holds the scheduler leadership lock. The timestamp is best\-effort "now" when healthy \(the reader has no cross\-process tick time\); it is unused by the handler when the status is unhealthy.
 
 <a name="PlannedTransition"></a>
 ## type [PlannedTransition](<https://github.com/dexadata/dexaflow/blob/main/internal/scheduler/plan.go#L13-L16>)

@@ -83,7 +83,7 @@ func (p *freezeProxy) pipe(dst, src net.Conn) {
 
 // blackholedLeader returns a scheduler leader that holds the lock over a
 // session routed through a freezeProxy, and the proxy.
-func blackholedLeader(t *testing.T) (*scheduler.Leader, *freezeProxy) {
+func blackholedLeader(t *testing.T) (*storage.SchedulerLease, *freezeProxy) {
 	t.Helper()
 	dsn := os.Getenv("DATABASE_URL")
 	if dsn == "" {
@@ -103,7 +103,7 @@ func blackholedLeader(t *testing.T) (*scheduler.Leader, *freezeProxy) {
 	// Closing a pool whose session is frozen can block on the terminate
 	// message, so it is closed in the background.
 	t.Cleanup(func() { go pool.Close() })
-	leader := scheduler.NewLeader(pool)
+	leader := storage.NewSchedulerLease(pool)
 	if ok, err := leader.TryAcquire(ctx); err != nil || !ok {
 		t.Fatalf("acquire: ok=%v err=%v", ok, err)
 	}
@@ -121,7 +121,7 @@ func blackholedLeader(t *testing.T) (*scheduler.Leader, *freezeProxy) {
 			WHERE locktype = 'advisory' AND objsubid = 1
 			  AND classid::bigint = $1 AND objid::bigint = $2 AND pid <> pg_backend_pid()
 			  AND database = (SELECT oid FROM pg_database WHERE datname = current_database())`,
-			scheduler.LockID>>32, scheduler.LockID&0xFFFFFFFF)
+			storage.SchedulerLockID>>32, storage.SchedulerLockID&0xFFFFFFFF)
 	})
 	return leader, p
 }
