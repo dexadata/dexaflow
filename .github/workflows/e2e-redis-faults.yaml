@@ -1,0 +1,95 @@
+name: E2E Redis faults
+
+# Redis fault injection on a running DAG (#2307): test/e2e/redis-faults.sh
+# restarts the Redis primary with AOF on, fails over to a promoted replica
+# behind the same endpoint, and flushes it, each while an XCom value waits to
+# be read, and records what each fault cost the run. operate/redis.md cites
+# those measured outcomes (#2378). It needs a k3d cluster, so it runs here:
+# every week against main, on demand, and on pull requests that change it. A
+# failed run on main is reported by the branch red watch (branch-red.yaml).
+on:
+  schedule:
+    - cron: "45 5 * * 2"
+  workflow_dispatch: {}
+  pull_request:
+    branches: [main, "release-*"]
+    paths:
+      - "test/e2e/redis-faults.sh"
+      - ".github/workflows/e2e-redis-faults.yaml"
+
+permissions:
+  contents: read
+
+# A newer push to the same pull request supersedes this run; every other run gets
+# a group of its own (see e2e-replaced-database.yaml for why a shared group
+# cancels a waiting run).
+concurrency:
+  group: ${{ github.event_name == 'pull_request' && format('{0}-pr-{1}', github.workflow, github.event.pull_request.number) || format('{0}-run-{1}', github.workflow, github.run_id) }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  GOPROXY: https://proxy.golang.org|direct
+  GO_VERSION: "1.26.11"
+  PYTHON_VERSION: "3.11"
+
+jobs:
+  redis-faults:
+    name: k3d, Redis restart, failover and flush
+    runs-on: ubuntu-26.04
+    timeout-minutes: 45
+    services:
+      postgres:
+        image: mirror.gcr.io/library/postgres:16
+        env:
+          POSTGRES_USER: leoflow
+          POSTGRES_PASSWORD: leoflow
+          POSTGRES_DB: leoflow
+        ports: [5432:5432]
+        options: >-
+          --health-cmd pg_isready --health-interval 5s --health-timeout 3s --health-retries 10
+    env:
+      LEOFLOW_E2E_HOST_ADDR: host.k3d.internal
+      PYTHONPATH: parser
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/docker-hub-mirror
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache: true
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+      - name: Install k3d + kubectl + migrate
+        run: |
+          set -euo pipefail
+          bash scripts/ci-install-k3d-kubectl.sh
+          go install -tags 'postgres' github.com/golang-migrate/migrate/v4/cmd/migrate@v4.20.1
+      - name: Apply migrations
+        run: ~/go/bin/migrate -path migrations -database "postgres://leoflow:leoflow@localhost:5432/leoflow?sslmode=disable" up
+      - name: Build binaries
+        run: make build
+      - name: Run the Redis fault scenarios
+        env:
+          REDIS_FAULTS_LOG_DIR: ${{ runner.temp }}/redis-faults-logs
+          REDIS_FAULTS_RESULTS: ${{ runner.temp }}/redis-faults-results.md
+        run: bash test/e2e/redis-faults.sh
+      - name: Publish the measured outcomes
+        if: always()
+        env:
+          RESULTS: ${{ runner.temp }}/redis-faults-results.md
+        run: |
+          [ -f "$RESULTS" ] && cat "$RESULTS" >>"$GITHUB_STEP_SUMMARY" || echo "no results file" >>"$GITHUB_STEP_SUMMARY"
+      - name: Print the control plane log
+        if: failure()
+        env:
+          LOG_DIR: ${{ runner.temp }}/redis-faults-logs
+        run: |
+          for f in "$LOG_DIR"/*; do
+            [ -f "$f" ] || continue
+            echo "::group::$(basename "$f") (last 400 lines)"
+            tail -n 400 "$f"
+            echo "::endgroup::"
+          done

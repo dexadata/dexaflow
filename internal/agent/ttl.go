@@ -32,3 +32,11 @@ func AttemptTokenTTL(interval time.Duration) time.Duration {
 	}
 	return ttl
 }
+
+// DefaultMaxFailedHeartbeats is how many heartbeats in a row may go unanswered
+// before the agent stops its task (Runner.MaxFailedHeartbeats, #2430): as many
+// as span the attempt token TTL. By then the bearer has lapsed unrenewed, so
+// the attempt can never report again, and the agent-lost reaper failed it long
+// before. A control plane outage shorter than that, a restart or a failover
+// that the reapers' settling grace forgives, stops nothing.
+var DefaultMaxFailedHeartbeats = int((AttemptTokenTTL(DefaultHeartbeatInterval) + DefaultHeartbeatInterval - 1) / DefaultHeartbeatInterval)

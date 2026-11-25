@@ -884,7 +884,7 @@ settings:
       Kubernetes namespace the server creates task pods and per-run staging PVCs in.
       MUST match the namespace the Helm chart grants the executor Role in (chart
       `taskNamespace`); a mismatch 403s every dispatch (#480). The Helm chart always
-      sets it (to the release namespace by default, #1682), so the `leoflow` default
+      sets it (to the release namespace by default, #1682), so the `dexaflow` default (`leoflow` before 0.6.0, #2155)
       applies only to installs that do not use the chart.
   executor.agent_control_plane_addr:
     edition: both
@@ -908,7 +908,9 @@ settings:
   executor.task_secret_mount_path:
     edition: Cluster
     description: >-
-      Where `DEXAFLOW_EXECUTOR_TASK_SECRET_NAME` is mounted in the task pod.
+      Where `DEXAFLOW_EXECUTOR_TASK_SECRET_NAME` is mounted in the task pod. At
+      the default, the Secret is also mounted at `/etc/leoflow/secrets`, the
+      default before 0.6.0, so a DAG that reads that path keeps working (#2155).
   executor.task_service_account:
     edition: Cluster
     description: >-
@@ -933,8 +935,9 @@ settings:
   executor.agent_path:
     edition: dev-only
     description: >-
-      The agent binary the subprocess executor runs (`leoflow-agent`, a link to
-      `dexaflow-agent`, so agents from before the rename are found too).
+      The agent binary the subprocess executor runs. Left at the default on a
+      host that has `leoflow-agent` on `PATH` and no `dexaflow-agent`, the
+      server runs `leoflow-agent` and logs a warning (#2155).
   executor.subprocess_workdir:
     edition: dev-only
     description: >-
@@ -942,6 +945,7 @@ settings:
       the project's `dag.py`). Empty keeps the server's working directory.
   executor.http.user_agent:
     edition: both
+    default_note: "where `dev` is the server's version"
     description: >-
       Default `User-Agent` header for HTTP requests a task image may make on the
       platform's behalf.
@@ -1240,7 +1244,9 @@ settings:
   logs.dir:
     edition: both
     description: >-
-      Task-log sink directory (used by the default `disk` backend).
+      Task-log sink directory (used by the default `disk` backend). Left at the
+      default on a host where only `/var/log/leoflow` exists (the default before
+      0.6.0), the server keeps writing there and logs a warning (#2155).
   logs.backend:
     edition: Cluster
     description: >-

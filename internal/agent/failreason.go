@@ -24,6 +24,9 @@ const (
 	reasonControlPlaneUnavailable = "the control plane, its database or its Redis did not answer the agent " +
 		"before the task's code ran, so the attempt is re-placed without spending a task retry; " +
 		"check the control plane's health."
+	reasonControlPlaneLost = "the agent could not reach the control plane for longer than the attempt's " +
+		"credential lives, so it stopped the task: the attempt could no longer report, and the control " +
+		"plane had already failed it. Check the network between the task pods and the control plane."
 )
 
 // errSecretResolution marks a buildEnv failure that came from the external secret

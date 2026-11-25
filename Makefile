@@ -172,6 +172,10 @@ e2e: ## Run the k3d end-to-end smoke test (needs k3d, kubectl, docker, jq; run m
 chaos-runtime: ## Runtime fault-injection chaos e2e (#231 Phase 2): kill scheduler/task pod, assert at-most-once + recovery. Run inside Lima. Destructive.
 	bash test/e2e/chaos-runtime.sh
 
+.PHONY: redis-faults
+redis-faults: ## Redis restart, failover and flush on a running DAG (#2307), k3d. Destructive.
+	bash test/e2e/redis-faults.sh
+
 .PHONY: soak
 soak: ## Long-running resilience soak (test/soak): 30 min by default, local Postgres + Lite, asserts invariants continuously. Bounded and safe to leave unattended.
 	bash test/soak/soak.sh

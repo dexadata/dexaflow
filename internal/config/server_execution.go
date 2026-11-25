@@ -20,13 +20,14 @@ type ExecutorSection struct {
 	// TaskNamespace is the Kubernetes namespace the server creates task pods and
 	// per-run staging PVCs in. It MUST match the namespace the Helm chart grants
 	// the executor Role in (chart `taskNamespace` → LEOFLOW_EXECUTOR_TASK_NAMESPACE);
-	// a mismatch 403s every dispatch (#480). Defaults to "leoflow".
+	// a mismatch 403s every dispatch (#480). Defaults to "dexaflow" (DefaultTaskNamespace).
 	TaskNamespace string `mapstructure:"task_namespace"`
 	// Type selects the pod-path executor: "kubernetes" (default, pod-per-task) or
 	// "subprocess" (dev only, runs the agent on the host without isolation, used
 	// by `dexaflow lite`).
 	Type string `mapstructure:"type"`
-	// AgentPath is the leoflow-agent binary the subprocess executor runs (dev only).
+	// AgentPath is the agent binary the subprocess executor runs (dev only).
+	// Defaults to dexaflow-agent (DefaultAgentPath).
 	AgentPath string `mapstructure:"agent_path"`
 	// SubprocessWorkDir is the working directory the subprocess executor runs the
 	// agent in, so it can import the project's dag.py (dev only). Empty keeps the

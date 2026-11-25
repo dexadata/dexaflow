@@ -1,0 +1,6 @@
+schema_version: "1.0"
+dag_id: quiet_cron
+description: "Load Experiment 10: the quiet tenant's every-minute DAG, whose schedule delay must not move."
+owner: load
+tags:
+  - load

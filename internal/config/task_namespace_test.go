@@ -11,8 +11,9 @@ func TestExecutorTaskNamespace(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadServer() error = %v", err)
 	}
-	if c.Executor.TaskNamespace != "leoflow" {
-		t.Errorf("default executor.task_namespace = %q, want %q", c.Executor.TaskNamespace, "leoflow")
+	// "dexaflow" since 0.6.0 (#2155); it was "leoflow" before.
+	if c.Executor.TaskNamespace != "dexaflow" {
+		t.Errorf("default executor.task_namespace = %q, want %q", c.Executor.TaskNamespace, "dexaflow")
 	}
 	t.Setenv("LEOFLOW_EXECUTOR_TASK_NAMESPACE", "data-platform")
 	c, err = LoadServer("", nil)

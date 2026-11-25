@@ -74,6 +74,21 @@ func TestDispatchSetsAgentTLSCAConfigMap(t *testing.T) {
 	}
 }
 
+// TestDispatchSetsTaskSecretAlias: the task Secret's second mount path reaches
+// the executor request with its name and first path (#2155).
+func TestDispatchSetsTaskSecretAlias(t *testing.T) {
+	exec := &fakeExecutor{}
+	d := newDispatcher(&fakeResolver{}, &fakeIssuer{token: "t"}, exec)
+	d.SetTaskSecret("creds", "/etc/dexaflow/secrets")
+	d.SetTaskSecretAlias("/etc/leoflow/secrets")
+	if _, err := d.Dispatch(context.Background(), "r", "etl", "", pythonTask()); err != nil {
+		t.Fatalf("Dispatch: %v", err)
+	}
+	if exec.req.TaskSecretName != "creds" || exec.req.TaskSecretMountPath != "/etc/dexaflow/secrets" || exec.req.TaskSecretAliasPath != "/etc/leoflow/secrets" {
+		t.Errorf("task secret = %q at %q and %q", exec.req.TaskSecretName, exec.req.TaskSecretMountPath, exec.req.TaskSecretAliasPath)
+	}
+}
+
 // TestDispatchSkipsWarmForStagingRun pins ADR 0058 D5: a staging attempt is
 // never offered to a warm worker (which carries no per-run /staging mount). Even
 // with a placer that WOULD accept, the staging run must take the dedicated path
