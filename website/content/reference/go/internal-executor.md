@@ -65,7 +65,12 @@ Package executor runs task instances via Kubernetes, Docker, or a subprocess.
   - [func ResilienceLadderWarnings\(l ResilienceLadder\) \[\]LadderWarning](<#ResilienceLadderWarnings>)
 - [type OrphanStopper](<#OrphanStopper>)
 - [type OutcomeReporter](<#OutcomeReporter>)
+- [type PendingOutcomeReporter](<#PendingOutcomeReporter>)
+- [type PendingSettle](<#PendingSettle>)
 - [type PodCreationRecorder](<#PodCreationRecorder>)
+- [type PodEventSettler](<#PodEventSettler>)
+  - [func NewPodEventSettler\(rec \*Reconciler, pods \*PodInformer, leading func\(\) bool, mu sync.Locker\) \*PodEventSettler](<#NewPodEventSettler>)
+  - [func \(s \*PodEventSettler\) Run\(ctx context.Context\)](<#PodEventSettler.Run>)
 - [type PodIdentity](<#PodIdentity>)
   - [func ParseAgentIdentity\(raw string\) \(PodIdentity, error\)](<#ParseAgentIdentity>)
 - [type PodInformer](<#PodInformer>)
@@ -108,10 +113,13 @@ Package executor runs task instances via Kubernetes, Docker, or a subprocess.
   - [func NewReconciler\(clientset kubernetes.Interface, namespace string, reporter OutcomeReporter\) \*Reconciler](<#NewReconciler>)
   - [func \(r \*Reconciler\) LastSweepCompletedAt\(\) time.Time](<#Reconciler.LastSweepCompletedAt>)
   - [func \(r \*Reconciler\) Reconcile\(ctx context.Context\) error](<#Reconciler.Reconcile>)
+  - [func \(r \*Reconciler\) SetDecisionRecorder\(d DecisionRecorder\)](<#Reconciler.SetDecisionRecorder>)
   - [func \(r \*Reconciler\) SetInfraConfirmer\(c InfraConfirmer\)](<#Reconciler.SetInfraConfirmer>)
   - [func \(r \*Reconciler\) SetInfraOverrideObservers\(rec InfraOverrideRecorder, sink logSink\)](<#Reconciler.SetInfraOverrideObservers>)
+  - [func \(r \*Reconciler\) SetPendingTimeout\(d time.Duration\)](<#Reconciler.SetPendingTimeout>)
   - [func \(r \*Reconciler\) SetPodSnapshotter\(s PodSnapshotter\)](<#Reconciler.SetPodSnapshotter>)
   - [func \(r \*Reconciler\) SetSettledRunCollection\(c SettledRunChecker\)](<#Reconciler.SetSettledRunCollection>)
+  - [func \(r \*Reconciler\) SettleFromEvent\(ctx context.Context, pod \*corev1.Pod, present bool\) \(bool, error\)](<#Reconciler.SettleFromEvent>)
 - [type Request](<#Request>)
 - [type ResilienceLadder](<#ResilienceLadder>)
 - [type RunRef](<#RunRef>)
@@ -880,7 +888,7 @@ type OrphanStopper interface {
 ```
 
 <a name="OutcomeReporter"></a>
-## type [OutcomeReporter](<https://github.com/dexadata/dexaflow/blob/main/internal/executor/reconcile.go#L541-L550>)
+## type [OutcomeReporter](<https://github.com/dexadata/dexaflow/blob/main/internal/executor/reconcile.go#L544-L553>)
 
 OutcomeReporter records a terminal task\-instance outcome the reconciler recovered from a pod \(its durable outcome record, or its phase\). Every method is guarded by the attempt \(try\_number and attempt\_epoch, from the pod's labels\) so a stale reconciler acting on a previous attempt's pod never clobbers a live retry or re\-place \(\#1130\), and is idempotent: a settle on an already\-terminal or superseded instance is a no\-op, not an error.
 
@@ -897,6 +905,43 @@ type OutcomeReporter interface {
 }
 ```
 
+<a name="PendingOutcomeReporter"></a>
+## type [PendingOutcomeReporter](<https://github.com/dexadata/dexaflow/blob/main/internal/executor/pending_bound.go#L88-L90>)
+
+PendingOutcomeReporter fails an attempt only while it has not started \(scheduled or queued\), as infra when infra is set, and reports what it found. The reconciler uses it for the Pending bounds when its reporter implements it; storage.ExecutionStore does.
+
+```go
+type PendingOutcomeReporter interface {
+    FailPendingTask(ctx context.Context, taskInstanceID string, tryNumber, attemptEpoch int, reason string, infra bool) (PendingSettle, error)
+}
+```
+
+<a name="PendingSettle"></a>
+## type [PendingSettle](<https://github.com/dexadata/dexaflow/blob/main/internal/executor/pending_bound.go#L69>)
+
+PendingSettle is what a Pending bound's settle found.
+
+```go
+type PendingSettle int
+```
+
+<a name="PendingSettled"></a>
+
+```go
+const (
+    // PendingSettled means the attempt had not started and is now failed.
+    PendingSettled PendingSettle = iota
+    // PendingStarted means the same attempt is running, or may be starting
+    // (a start committed while the settle ran), so its pod may be its live
+    // execution (placed, or its pull succeeded, since the snapshot) and must
+    // be left alone.
+    PendingStarted
+    // PendingGone means the attempt was superseded or settled already; its pod is
+    // a leftover the bound may still collect.
+    PendingGone
+)
+```
+
 <a name="PodCreationRecorder"></a>
 ## type [PodCreationRecorder](<https://github.com/dexadata/dexaflow/blob/main/internal/executor/kubernetes.go#L44-L48>)
 
@@ -909,6 +954,37 @@ type PodCreationRecorder interface {
     ObservePodCreation(dagID, result string, d time.Duration)
 }
 ```
+
+<a name="PodEventSettler"></a>
+## type [PodEventSettler](<https://github.com/dexadata/dexaflow/blob/main/internal/executor/pod_events.go#L40-L49>)
+
+PodEventSettler settles a task pod's attempt as soon as the pod informer sees it turn terminal \(\#2330\), instead of on the reconciler's next 30 s sweep: an OOMKilled container, an eviction or a pod the cluster stopped is recorded within the watch's latency. It is an accelerator, not a second source of truth: it runs the sweep's own per\-pod settle \(SettleFromEvent\), every settle stays attempt\- and state\-guarded \(ADR 0052\), and the sweep keeps running as the resync that repairs a missed or failed event.
+
+Every settle runs under the lock the maintenance cycle holds for its sweep and reap, so the order between the reconciler and the reapers is unchanged, and only while the replica leads; a follower drops the event, and the leader's first sweep covers it. It reads pods from the informer's cache only, so it adds no apiserver read: the watch is already open.
+
+```go
+type PodEventSettler struct {
+    // contains filtered or unexported fields
+}
+```
+
+<a name="NewPodEventSettler"></a>
+### func [NewPodEventSettler](<https://github.com/dexadata/dexaflow/blob/main/internal/executor/pod_events.go#L55>)
+
+```go
+func NewPodEventSettler(rec *Reconciler, pods *PodInformer, leading func() bool, mu sync.Locker) *PodEventSettler
+```
+
+NewPodEventSettler registers update and delete handlers on the informer's pods that queue a pod's key when it turns terminal. mu is the maintenance cycle's lock; leading gates every settle on leadership. Run starts the worker.
+
+<a name="PodEventSettler.Run"></a>
+### func \(\*PodEventSettler\) [Run](<https://github.com/dexadata/dexaflow/blob/main/internal/executor/pod_events.go#L128>)
+
+```go
+func (s *PodEventSettler) Run(ctx context.Context)
+```
+
+Run settles queued pods until ctx ends.
 
 <a name="PodIdentity"></a>
 ## type [PodIdentity](<https://github.com/dexadata/dexaflow/blob/main/internal/executor/kubernetes.go#L429-L440>)
@@ -1228,7 +1304,7 @@ type PodSecurity struct {
 ```
 
 <a name="PodSnapshotter"></a>
-## type [PodSnapshotter](<https://github.com/dexadata/dexaflow/blob/main/internal/executor/reconcile.go#L558-L563>)
+## type [PodSnapshotter](<https://github.com/dexadata/dexaflow/blob/main/internal/executor/reconcile.go#L561-L566>)
 
 PodSnapshotter supplies the reconciler's task\-pod set from a local cache instead of a live LIST every tick \(PR\-10\). It is safe here without a live confirm: the signal the reconciler acts on is presence of a terminal pod, which is monotonic \(a pod that reached Failed/Succeeded stays terminal\), and every settle is attempt\- and state\-guarded \(ADR 0052\), so at worst cache lag delays a settle by a tick. A nil snapshotter \(Lite/subprocess, or a cold start\) keeps the live LIST.
 
@@ -1494,7 +1570,7 @@ type ReaperStore interface {
 ```
 
 <a name="Reconciler"></a>
-## type [Reconciler](<https://github.com/dexadata/dexaflow/blob/main/internal/executor/reconcile.go#L586-L614>)
+## type [Reconciler](<https://github.com/dexadata/dexaflow/blob/main/internal/executor/reconcile.go#L589-L625>)
 
 Reconciler detects task pods whose task instance was never settled by the agent \(a pod killed before or during its report\) and records the true outcome — from the pod's durable outcome record where present, else its phase — so retries and run finalization proceed instead of stranding the task. It also garbage\-collects finished pods once they age out.
 
@@ -1507,7 +1583,7 @@ type Reconciler struct {
 ```
 
 <a name="NewReconciler"></a>
-### func [NewReconciler](<https://github.com/dexadata/dexaflow/blob/main/internal/executor/reconcile.go#L617>)
+### func [NewReconciler](<https://github.com/dexadata/dexaflow/blob/main/internal/executor/reconcile.go#L628>)
 
 ```go
 func NewReconciler(clientset kubernetes.Interface, namespace string, reporter OutcomeReporter) *Reconciler
@@ -1516,7 +1592,7 @@ func NewReconciler(clientset kubernetes.Interface, namespace string, reporter Ou
 NewReconciler builds a Reconciler over the given cluster and outcome reporter.
 
 <a name="Reconciler.LastSweepCompletedAt"></a>
-### func \(\*Reconciler\) [LastSweepCompletedAt](<https://github.com/dexadata/dexaflow/blob/main/internal/executor/reconcile.go#L639>)
+### func \(\*Reconciler\) [LastSweepCompletedAt](<https://github.com/dexadata/dexaflow/blob/main/internal/executor/reconcile.go#L650>)
 
 ```go
 func (r *Reconciler) LastSweepCompletedAt() time.Time
@@ -1527,13 +1603,22 @@ LastSweepCompletedAt reports when the last COMPLETED sweep started: the task\-po
 A sweep that could not list pods records nothing. A sweep whose individual settle failed on a DB error still counts: that pod is retried next sweep, and the gate's grace leaves room for the retry before any reaper may act.
 
 <a name="Reconciler.Reconcile"></a>
-### func \(\*Reconciler\) [Reconcile](<https://github.com/dexadata/dexaflow/blob/main/internal/executor/reconcile.go#L650>)
+### func \(\*Reconciler\) [Reconcile](<https://github.com/dexadata/dexaflow/blob/main/internal/executor/reconcile.go#L661>)
 
 ```go
 func (r *Reconciler) Reconcile(ctx context.Context) error
 ```
 
 Reconcile lists managed task pods, records each terminal one's outcome against its task instance, and garbage\-collects finished pods older than the grace period. A completed sweep is stamped for LastSweepCompletedAt.
+
+<a name="Reconciler.SetDecisionRecorder"></a>
+### func \(\*Reconciler\) [SetDecisionRecorder](<https://github.com/dexadata/dexaflow/blob/main/internal/executor/pending_bound.go#L66>)
+
+```go
+func (r *Reconciler) SetDecisionRecorder(d DecisionRecorder)
+```
+
+SetDecisionRecorder counts the Pending bounds' settles as scheduler decisions: pending\_bound\_unschedulable and pending\_bound\_image\_pull, their \_started forms for an attempt that is running since the snapshot \(its pod is left alone\) and \_gone forms for one superseded or settled already \(its pod is collected\). Nil records nothing.
 
 <a name="Reconciler.SetInfraConfirmer"></a>
 ### func \(\*Reconciler\) [SetInfraConfirmer](<https://github.com/dexadata/dexaflow/blob/main/internal/executor/infra_confirm.go#L40>)
@@ -1553,8 +1638,17 @@ func (r *Reconciler) SetInfraOverrideObservers(rec InfraOverrideRecorder, sink l
 
 SetInfraOverrideObservers wires what makes an override visible: a counter by mark and the sink the system line is appended to. Either may be nil.
 
+<a name="Reconciler.SetPendingTimeout"></a>
+### func \(\*Reconciler\) [SetPendingTimeout](<https://github.com/dexadata/dexaflow/blob/main/internal/executor/pending_bound.go#L59>)
+
+```go
+func (r *Reconciler) SetPendingTimeout(d time.Duration)
+```
+
+SetPendingTimeout sets executor.pending\_timeout\_seconds: a task pod unschedulable for longer than d is deleted and its task failed. Zero or negative \(the default\) leaves such pods waiting, as before.
+
 <a name="Reconciler.SetPodSnapshotter"></a>
-### func \(\*Reconciler\) [SetPodSnapshotter](<https://github.com/dexadata/dexaflow/blob/main/internal/executor/reconcile.go#L624>)
+### func \(\*Reconciler\) [SetPodSnapshotter](<https://github.com/dexadata/dexaflow/blob/main/internal/executor/reconcile.go#L635>)
 
 ```go
 func (r *Reconciler) SetPodSnapshotter(s PodSnapshotter)
@@ -1570,6 +1664,15 @@ func (r *Reconciler) SetSettledRunCollection(c SettledRunChecker)
 ```
 
 SetSettledRunCollection turns on collecting a settled run's finished pods in one DeleteCollection. Nil \(the default\) keeps the age\-based GC only.
+
+<a name="Reconciler.SettleFromEvent"></a>
+### func \(\*Reconciler\) [SettleFromEvent](<https://github.com/dexadata/dexaflow/blob/main/internal/executor/reconcile.go#L764>)
+
+```go
+func (r *Reconciler) SettleFromEvent(ctx context.Context, pod *corev1.Pod, present bool) (bool, error)
+```
+
+SettleFromEvent is the sweep's settle for one pod, run when the pod informer sees the pod fail \(\#2330\): the same verdict, the same attempt\-guarded write, and the same immediate collection of a pod a Pending bound settled. Age\-based collection, the infra confirmation pass and the settled\-run collection stay with the sweep. present is false for the last state of a pod already deleted, which is settled but not collected. It reports whether it recorded an outcome; an error means the outcome was not recorded, and the caller may retry.
 
 <a name="Request"></a>
 ## type [Request](<https://github.com/dexadata/dexaflow/blob/main/internal/executor/executor.go#L35-L163>)
