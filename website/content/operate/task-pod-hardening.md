@@ -106,9 +106,10 @@ hybrid DAG whose dbt models materialized normally.
 ## Task-pod network policy
 
 `taskNetworkPolicy.enabled` renders a NetworkPolicy in the task namespace that
-selects every task pod by its `leoflow.io/run-id` label. It is off by default.
-Task pods run code your DAG authors wrote, and this is the network-layer
-control for it. Turned on, it:
+selects every task pod by its `leoflow.io/run-id` label. It is on by default
+since v0.6.0 ([#539](https://github.com/dexadata/dexaflow/issues/539)), and
+`enabled: false` opts out. Task pods run code your DAG authors wrote, and this
+is the network-layer control for it. It:
 
 - denies all ingress to task pods (the agent dials out, nothing dials in);
 - allows DNS and the agent's connection back to the control-plane gRPC port;
@@ -117,10 +118,10 @@ control for it. Turned on, it:
 
 ```yaml
 taskNetworkPolicy:
-  enabled: true
+  enabled: true   # the default; false opts out
 ```
 
-Check these before you turn it on:
+Check these on a new cluster, and before upgrading an install that had it off:
 
 - **Your CNI must enforce NetworkPolicy.** On one that does not, the object is
   created and changes nothing.
@@ -149,11 +150,10 @@ Check these before you turn it on:
 To verify, run a task that calls `http://169.254.169.254/` and one that calls a
 service it needs: the first must time out and the second must answer.
 
-The policy is planned to be on by default from v0.6.0, with `enabled: false`
-as the opt-out and an upgrade note
-([#539](https://github.com/dexadata/dexaflow/issues/539)). A patch release
-does not change it, so setting `enabled` explicitly now, either way, keeps an
-upgrade to v0.6.0 from changing what your tasks can reach.
+Before v0.6.0 the policy was off by default. An install that set `enabled`
+explicitly keeps its choice across the upgrade; one that left it unset gets
+the policy. See
+[Upgrading to 0.6.0: the task-pod network policy is on](/operate/upgrades/version-notes/#upgrading-to-060-the-task-pod-network-policy-is-on).
 
 ## Memory limits, and what happens without one
 

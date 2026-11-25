@@ -170,6 +170,7 @@ tests:
       auth.jwtSecret: jwt
       taskNamespace: leoflow-tasks
       networkPolicy.enabled: true
+      taskNetworkPolicy.enabled: false
     asserts:
       # Nothing in the task namespace: the task pods are uncontained.
       - hasDocuments:
@@ -238,6 +239,7 @@ tests:
       database.url: postgres://h/d
       redis.url: redis://h/0
       auth.jwtSecret: jwt
+      taskNetworkPolicy.enabled: false
     asserts:
       - matchRegexRaw:
           pattern: "WARNING: taskNetworkPolicy.enabled=false"
@@ -278,8 +280,24 @@ tests:
       redis.url: redis://h/0
       auth.jwtSecret: jwt
       networkPolicy.enabled: true
+      taskNetworkPolicy.enabled: false
     asserts:
       - matchRegexRaw:
+          pattern: "WARNING: taskNetworkPolicy.enabled=false"
+
+  # #539: the policy is on by default since 0.6.0, so a default install carries
+  # no warning about it.
+  - it: a default install renders no task-pod warning
+    template: NOTES.txt
+    capabilities:
+      majorVersion: 1
+      minorVersion: 30
+    set:
+      database.url: postgres://h/d
+      redis.url: redis://h/0
+      auth.jwtSecret: jwt
+    asserts:
+      - notMatchRegexRaw:
           pattern: "WARNING: taskNetworkPolicy.enabled=false"
 
   # #947 — autoscaling.minReplicas and maxReplicas are independent values with

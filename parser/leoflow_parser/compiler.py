@@ -21,12 +21,18 @@ from typing import Any
 # the Go side stays the single source of truth for the config schema.
 _CONFIG_ENV = "LEOFLOW_PROJECT_CONFIG_JSON"
 
+# The rules the Go scheduler evaluates, with Airflow 3 semantics (ADR 0064 D2).
+# one_done, all_skipped and the all_done_* variants are still refused.
 _SUPPORTED_TRIGGER_RULES = {
     "all_success",
     "all_failed",
     "all_done",
     "one_success",
     "one_failed",
+    "none_failed",
+    "none_failed_min_one_success",
+    "none_skipped",
+    "always",
 }
 
 

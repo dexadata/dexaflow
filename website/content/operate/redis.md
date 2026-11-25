@@ -64,18 +64,31 @@ of 2 KB each need about 3.7 GB; set `maxmemory` with headroom above that, since
 
 ## What a loss costs
 
-- **A restart with persistence on** keeps the XCom values written before the
-  last fsync.
-- **A failover** to a replica keeps what the replica had received; the writes
-  of the last moments before it may be lost, as with any asynchronous
-  replication.
-- **A flush, or an instance replaced without its data**, loses every XCom
-  value: runs in flight whose next task pulls one fail, and finished runs show
-  no XCom.
+The [Redis failure injection run](https://github.com/dexadata/dexaflow/blob/main/test/e2e/redis-faults.sh)
+(`make redis-faults`, weekly in CI as "E2E Redis faults") measures each case on
+a running DAG: `produce` pushes an XCom value, `hold` runs while the fault
+lands, and `consume` pulls the value after it. No task retries, so a lost value
+shows as a failure. First run, 2026-11-25:
 
-The measured outcome of each case on a running DAG, the reason the UI shows
-and the recovery step are recorded by the Redis failure injection runs
-(#2307), and this section will carry them once they ran.
+| Case | Setup in the run | What the run did | Control plane |
+|---|---|---|---|
+| **Restart with persistence on** | AOF, `appendfsync everysec`, restarted after one fsync period | The run succeeded: `consume` read the value written before the restart. Redis was back in about 1 s. | 0 failed Redis commands |
+| **Failover to a replica** | Replica caught up, primary stopped, replica promoted behind the same endpoint | The run succeeded. The endpoint was down about 1 s. | 2 failed Redis commands, no restart needed |
+| **Flush, or an instance replaced without its data** | `FLUSHALL` while `hold` runs | `produce` stays success; `consume` failed ("task exited non-zero") and the run failed, settled 52 s after the flush. The API shows no XCom value for `produce`. The next run succeeded, 57 s after the flush. | No restart needed |
+
+What follows from it:
+
+- With persistence on, a restart costs nothing a DAG can see; without it, a
+  restart is the flush row.
+- A failover keeps what the replica had received. The run waited until the
+  replica's replication offset matched the primary's before the switch; with
+  asynchronous replication, writes of the last moments before an unplanned
+  failover can still be lost, and then the failover behaves like a flush for
+  those values.
+- After a flush, the runs whose next task pulls a lost value fail, and only
+  those. Recovery is to clear the run from its producing task (the producer
+  pushes the value again) or to trigger a new run; nothing in the control
+  plane needs a restart. Finished runs show no XCom.
 
 ## Monitoring
 

@@ -1,0 +1,4 @@
+kind: Changed
+body: |-
+  Trigger rules follow Airflow 3, and `none_failed`, `none_failed_min_one_success`, `none_skipped` and `always` are accepted ([#2346](https://github.com/dexadata/dexaflow/issues/2346), ADR 0064). `one_success` and `one_failed` now start a task as soon as one upstream qualifies instead of waiting for every upstream; an `upstream_failed` upstream counts as a failure, so an `all_failed` or `one_failed` task runs after one instead of being marked `upstream_failed`; a `one_success` task whose upstreams all finished without a success is `upstream_failed` (was `skipped`); and `all_failed` skips as soon as one upstream succeeds or is skipped. See [Upgrading to 0.6.0: trigger rules follow Airflow 3](https://dexaflow.dexadata.ai/operate/upgrades/version-notes/#upgrading-to-060-trigger-rules-follow-airflow-3).
+time: 2026-11-25T15:00:00.000000+00:00

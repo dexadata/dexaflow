@@ -333,10 +333,10 @@ def test_unsupported_trigger_rule_in_default_args_is_refused(monkeypatch, tmp_pa
         from airflow.sdk import DAG, task
         @task
         def a(): ...
-        with DAG("g", default_args={"trigger_rule": "none_failed_min_one_success"}):
+        with DAG("g", default_args={"trigger_rule": "one_done"}):
             a()
     """)
-    assert "none_failed_min_one_success" in message
+    assert "one_done" in message
 
 
 _DROPPED_TASK_ARGS = [

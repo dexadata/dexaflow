@@ -65,7 +65,9 @@ scripts/release-check-public.sh
 scripts/release-ci-gate.sh
 scripts/release-data-image-scan.sh
 scripts/release-gap.sh
+scripts/release-image-plan.sh
 scripts/release-notes.sh
+scripts/release-promote-images.sh
 scripts/release-promote-plan.sh
 scripts/release-verify-images.sh
 scripts/trivy-report.py

@@ -91,25 +91,25 @@ sleep, or set deployment.preStopSleepSeconds=0 to stop asking for it.
 {{- end }}
 {{- if not .Values.taskNetworkPolicy.enabled }}
 
-WARNING: taskNetworkPolicy.enabled=false — task pods have NO network containment.
+WARNING: taskNetworkPolicy.enabled=false: task pods have NO network containment.
 Task pods run untrusted, author-supplied DAG code, and this chart always deploys
 the production edition, so the network layer is where "a task can reach cloud
 metadata, the apiserver, or any in-cluster service" is contained (ADR 0047/0048).
 networkPolicy.enabled does NOT cover task pods: it selects control-plane pods in
 namespace {{ .Release.Namespace }}, and its egress is a single empty rule
-(- {}), which matches every destination — it restricts ingress only. Nothing
+(- {}), which matches every destination, so it restricts ingress only. Nothing
 selects a task pod in namespace {{ include "leoflow.taskNamespace" . }} until you set:
      --set taskNetworkPolicy.enabled=true
-It is off by default on purpose, not by oversight: the policy always excludes
-169.254.0.0/16 from its allow-all egress rule, and that is where GKE Workload
-Identity and EKS Pod Identity serve
-keyless credentials, so enabling it can break external-secrets auth until you
-re-allow that one host with taskNetworkPolicy.allowMetadataEgress (a /32, e.g.
-169.254.169.254/32 on GKE, 169.254.170.23/32 for EKS Pod Identity). Also
+It is on by default since 0.6.0 (#539), so this install turned it off. The usual
+reason is keyless credentials: the policy always excludes 169.254.0.0/16 from
+its allow-all egress rule, and that is where GKE Workload Identity and EKS Pod
+Identity serve them. Instead of turning the policy off, re-allow that one host
+with taskNetworkPolicy.allowMetadataEgress (a /32, e.g. 169.254.169.254/32 on
+GKE, 169.254.170.23/32 for EKS Pod Identity). Also
 taskNetworkPolicy.blockPrivateNetworks=true additionally denies RFC1918 + the
 apiserver; that one stays opt-in because a DAG calling an internal service is a
 legitimate orchestration pattern. Both policies need a CNI that ENFORCES
-NetworkPolicy — kindnet enforces nothing and the AWS VPC CNI enforces only with
+NetworkPolicy: kindnet enforces nothing and the AWS VPC CNI enforces only with
 its network-policy agent enabled, so a rendered policy is not proof of
 enforcement. Verify on your CNI before relying on it.
 {{- end }}
