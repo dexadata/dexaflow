@@ -496,7 +496,8 @@
             "null"
           ],
           "pattern": "^(true|false)$"
-        }
+        },
+        "pendingTimeoutSeconds": {}
       },
       "additionalProperties": false
     },
