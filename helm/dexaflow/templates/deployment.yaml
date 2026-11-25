@@ -401,6 +401,9 @@ server's own message, so one render names everything that is missing.
 {{- if not (hasPrefix "https://" $oidc.issuer) -}}
 {{- fail (printf "auth.oidc.issuer must be an https:// URL (got %q): discovery and the JWKS fetch that verifies every ID token run over it, and the server rejects a non-https issuer at boot. Use the IdP's issuer exactly as published in its /.well-known/openid-configuration." $oidc.issuer) -}}
 {{- end -}}
+{{- if not (has (toString $oidc.logout) (list "" "idp" "local")) -}}
+{{- fail (printf "auth.oidc.logout must be idp or local (got %q): the server refuses any other value at boot (internal/config/server_auth.go validateOIDCLogout). idp ends the session at the identity provider on sign-out, local only clears the Dexaflow session." (toString $oidc.logout)) -}}
+{{- end -}}
 {{- /*
 extraEnv renders after the chart-managed block and last-wins, so an entry setting
 DEXAFLOW_CONFIG would repoint the server at a file that is not the mounted one,

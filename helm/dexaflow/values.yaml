@@ -506,6 +506,10 @@ auth:
     autoRedirect: false
     # -- Tolerance in seconds applied to the ID token's `exp`/`iat`/`nbf` checks, to absorb clock drift between the IdP and this server. The shipped 60 is the server's own default; raise it only if boot-time clock sync is genuinely unreliable, since it widens the window a replayed token stays valid.
     clockSkewSeconds: 60
+    # -- What "Sign out" does with the session at the IdP (`auth.oidc.logout`, ADR 0110). `idp` (the default) ends it too: the browser is sent to the IdP's `end_session_endpoint` with the ID token as `id_token_hint`, so the next sign-in asks for credentials again. `local` only clears the Dexaflow session and leaves the IdP signed in, so the next sign-in goes straight through. An IdP that publishes no `end_session_endpoint` (Google, Cognito) falls back to `local` and the server logs a WARN at boot.
+    logout: idp
+    # -- Where the IdP sends the browser after it ended its session (`auth.oidc.post_logout_redirect_url`), sent as `post_logout_redirect_uri`. Most IdPs only honour a URL registered with the client, so register it there too. Empty (the default) sends none and the IdP shows its own signed-out page. Used only with `logout: idp`.
+    postLogoutRedirectUrl: ""
 
 # Warm worker pools (ADR 0058) — reuse one task pod across many attempts of the
 # SAME dag_version, instead of one pod per attempt. OFF by default: every attempt

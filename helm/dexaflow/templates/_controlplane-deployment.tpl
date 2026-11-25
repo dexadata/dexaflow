@@ -910,6 +910,12 @@ spec:
               value: {{ .ctx.Values.auth.oidc.autoRedirect | quote }}
             - name: DEXAFLOW_AUTH_OIDC_CLOCK_SKEW_SECONDS
               value: {{ .ctx.Values.auth.oidc.clockSkewSeconds | quote }}
+            - name: DEXAFLOW_AUTH_OIDC_LOGOUT
+              value: {{ .ctx.Values.auth.oidc.logout | quote }}
+            {{- if .ctx.Values.auth.oidc.postLogoutRedirectUrl }}
+            - name: DEXAFLOW_AUTH_OIDC_POST_LOGOUT_REDIRECT_URL
+              value: {{ .ctx.Values.auth.oidc.postLogoutRedirectUrl | quote }}
+            {{- end }}
             {{- if .ctx.Values.auth.oidc.defaultRole }}
             # The three below are omitted when empty rather than stamped with a
             # blank: each has a meaning at its zero value that the server already

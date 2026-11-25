@@ -1433,6 +1433,24 @@
                 "null"
               ],
               "pattern": "^-?[0-9]+$"
+            },
+            "logout": {
+              "type": [
+                "string",
+                "number",
+                "integer",
+                "boolean",
+                "null"
+              ]
+            },
+            "postLogoutRedirectUrl": {
+              "type": [
+                "string",
+                "number",
+                "integer",
+                "boolean",
+                "null"
+              ]
             }
           },
           "additionalProperties": false
