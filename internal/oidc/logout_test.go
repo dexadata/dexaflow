@@ -68,3 +68,25 @@ func TestEndSessionURLWithoutEndpoint(t *testing.T) {
 		t.Errorf("EndSessionEndpoint = %q, want empty", flow.EndSessionEndpoint())
 	}
 }
+
+// TestEndSessionEndpointIsTheDiscoveredOne reports the published endpoint, for
+// the boot log and the warning.
+func TestEndSessionEndpointIsTheDiscoveredOne(t *testing.T) {
+	f := newFakeIDP(t)
+	f.endSession = true
+	if got, want := newTestFlow(t, baseOIDCConfig(f)).EndSessionEndpoint(), f.issuer+"/logout?tenant=t1"; got != want {
+		t.Errorf("EndSessionEndpoint = %q, want %q", got, want)
+	}
+}
+
+// TestNewFlowRefusesAMalformedEndSessionEndpoint fails boot on an endpoint no
+// browser could be sent to, rather than the first sign-out.
+func TestNewFlowRefusesAMalformedEndSessionEndpoint(t *testing.T) {
+	for _, raw := range []string{"/logout", "ftp://idp.example/logout", "https://"} {
+		f := newFakeIDP(t)
+		f.endSessionRaw = raw
+		if _, err := NewFlow(t.Context(), baseOIDCConfig(f), testFlowSecret); err == nil {
+			t.Errorf("end_session_endpoint %q: NewFlow = nil error, want a discovery failure", raw)
+		}
+	}
+}

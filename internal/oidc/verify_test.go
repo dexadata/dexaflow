@@ -38,6 +38,8 @@ type fakeIDP struct {
 	// endSession, when true, publishes end_session_endpoint in discovery, the
 	// way Entra, Okta and Keycloak do and Google does not.
 	endSession bool
+	// endSessionRaw, when set, is published as end_session_endpoint verbatim.
+	endSessionRaw string
 }
 
 func newFakeIDP(t *testing.T) *fakeIDP {
@@ -77,6 +79,9 @@ func (f *fakeIDP) handleDiscovery(w http.ResponseWriter, _ *http.Request) {
 	}
 	if f.endSession {
 		doc["end_session_endpoint"] = f.issuer + "/logout?tenant=t1"
+	}
+	if f.endSessionRaw != "" {
+		doc["end_session_endpoint"] = f.endSessionRaw
 	}
 	writeJSON(w, doc)
 }
