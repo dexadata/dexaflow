@@ -308,7 +308,7 @@ that people follow without naming a version.
 
 | What | Who follows it | Moved by | rc | GA, newest minor | GA, older minor |
 |---|---|---|---|---|---|
-| Binaries, `dexaflow-server`, `dexaflow-mcp`, `dexaflow-cli`, `dexaflow-migrate` at `vX.Y.Z` and `X.Y.Z`, `dexaflow-runtime:py3.N-vX.Y.Z` | pinned installs, the `setup-dexaflow` action, pipelines | `release`, `migrate-image`, `runtime-image` | yes | yes | yes |
+| Binaries, `dexaflow-server`, `dexaflow-mcp`, `dexaflow-cli`, `dexaflow-migrate` at `vX.Y.Z` and `X.Y.Z`, `dexaflow-runtime:py3.N-vX.Y.Z` | pinned installs, the `setup-dexaflow` action, pipelines | `release`, `migrate-image`, `runtime-image`, or `promote-images` for a GA that promotes its rc's images (ADR 0109) | yes | yes | yes |
 | GitHub release, public, not Latest | pinned `install.sh`, the smokes | GoReleaser (`make_latest: false`) | prerelease | yes | yes |
 | Helm chart `X.Y.Z` (`charts/dexaflow`, `charts/leoflow`) | `helm install`, `helm upgrade` | `promote` | yes | yes | yes |
 | `dexaflow-runtime:py3.N`, `leoflow-runtime:py3.N` | development builds, the docs | `promote` | no | yes | no |
@@ -562,9 +562,22 @@ From v0.5.11 on, the cut refuses a GA whose rcs have no complete record
 (`scripts/check-rc-validation.sh`, #1026): every header field filled, every row
 PASS, FAIL with the issue opened for it, or NOT VERIFIED when the cluster at
 hand cannot settle it. The run stays manual; only skipping it silently is gone.
-Today the GA tag
-rebuilds and re-runs the full gate matrix; lightening that to a build-once /
-promote-artifact model is tracked in #878.
+
+A GA publishes the container images its last green rc validated instead of
+building new ones
+([ADR 0109](https://dexaflow.dexadata.ai/project/adrs/0109-ga-promotes-the-rc-images/)),
+when the GA commit differs from that rc only in release metadata
+(`CHANGELOG.md`, `.changes/`, `helm/`, `test/`, `website/`, root `*.md`;
+`scripts/release-image-plan.sh`). The `image-plan` job decides and says why in
+the run summary. On the promote path, `promote-images` verifies each rc image's
+signature, scans the rc's data image with the day's database (ADR 0108),
+writes every image under the GA tags with a new configuration and the rc's
+layers (`internal/tools/imagepromote`, which fails on any layer difference) and
+signs the GA digests; the binaries in them report the GA version and "built as"
+the rc. GoReleaser still builds the GA archives. Every rc rehearses its own
+promotion (`promote-rehearsal`, part of the gate). To build the GA images
+anyway, cut with `scripts/cut-release.sh X.Y.Z --rebuild-images`, which writes
+`Rebuild-images: true` in the tag annotation.
 
 ## If something goes wrong
 

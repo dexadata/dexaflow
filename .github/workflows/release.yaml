@@ -65,6 +65,46 @@ jobs:
   # does not match the tag fails the run before GoReleaser publishes anything.
   # The full chart contract suite (helm unittest, template-checks,
   # rbac-covers-executor, kubeconform) runs per PR in helm-ci.yaml.
+  # ── Build the images, or publish the ones the last rc validated (ADR 0109) ──
+  # An rc builds. A GA whose commit differs from its newest green rc only in
+  # release metadata publishes that rc's images under the GA tags
+  # (promote-images) instead of building them; any other difference, or the
+  # tag line "Rebuild-images: true" (cut-release.sh --rebuild-images), builds
+  # as before. scripts/release-image-plan.sh has the rule and its self-test.
+  image-plan:
+    name: Build or promote the images
+    needs: ci-gate
+    runs-on: ubuntu-26.04
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      actions: read   # the Release runs of the rc tags
+    outputs:
+      mode: ${{ steps.plan.outputs.mode }}
+      rc: ${{ steps.plan.outputs.rc }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+
+      - name: Decide
+        id: plan
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          # The annotation of the pushed tag carries Rebuild-images; checkout
+          # may have fetched it as a lightweight ref.
+          git fetch --force origin "refs/tags/${TAG}:refs/tags/${TAG}"
+          bash scripts/release-image-plan.sh "$TAG" | tee -a "$GITHUB_OUTPUT"
+          {
+            echo "### Images"
+            echo
+            sed -n 's/^reason=//p' "$GITHUB_OUTPUT" | tail -n1
+          } >>"$GITHUB_STEP_SUMMARY"
+
   chart-preflight:
     name: Chart preflight (version, lint, contract)
     needs: ci-gate
@@ -114,7 +154,15 @@ jobs:
     # the rc. Nothing tagged is pushed before it, so a red scan leaves only
     # digests and the tag can be deleted and cut again instead of burning the
     # version (v0.5.10).
-    needs: [chart-preflight, runtime-data-image-build]
+    #
+    # A GA that promotes its rc's images (ADR 0109) skips the build jobs, so
+    # this waits for promote-images instead, and GoReleaser builds only the
+    # archives (--skip=docker): the images are already published.
+    needs: [chart-preflight, runtime-data-image-build, image-plan, promote-images]
+    if: >-
+      !cancelled() && needs.chart-preflight.result == 'success' &&
+      ((needs.image-plan.outputs.mode == 'build' && needs.runtime-data-image-build.result == 'success') ||
+       (needs.image-plan.outputs.mode == 'promote' && needs.promote-images.result == 'success'))
     runs-on: ubuntu-26.04
     timeout-minutes: 30
     permissions:
@@ -168,7 +216,7 @@ jobs:
           # silences the "using latest" warning and keeps releases reproducible
           # against a known major line (no surprise v3 jump).
           version: "~> v2"
-          args: release --clean
+          args: release --clean${{ needs.image-plan.outputs.mode == 'promote' && ' --skip=docker' || '' }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
@@ -228,7 +276,8 @@ jobs:
   migrate-image:
     name: Build + push dexaflow-migrate image
     # Waits for the data image scan; see the release job.
-    needs: [chart-preflight, runtime-data-image-build]
+    needs: [chart-preflight, runtime-data-image-build, image-plan]
+    if: needs.image-plan.outputs.mode == 'build'
     runs-on: ubuntu-26.04
     timeout-minutes: 30
     permissions:
@@ -340,7 +389,8 @@ jobs:
     name: Build dexaflow-runtime base (py${{ matrix.python }}, ${{ matrix.arch }})
     # Builds from the tag's source and uses nothing GoReleaser produces, so it
     # starts after the chart preflight, not after the release job (#1686).
-    needs: chart-preflight
+    needs: [chart-preflight, image-plan]
+    if: needs.image-plan.outputs.mode == 'build'
     # Each platform builds on a runner of its own architecture. The arm64 half
     # used to build under QEMU on amd64 and took 13 to 18 minutes per Python,
     # the critical path of every release run (#1686). ubuntu-24.04-arm is the
@@ -561,7 +611,8 @@ jobs:
     name: Build dexaflow-runtime data (py3.11, ${{ matrix.arch }})
     # Builds from the tag's source and uses nothing GoReleaser produces, so it
     # starts after the chart preflight, not after the release job (#1686).
-    needs: chart-preflight
+    needs: [chart-preflight, image-plan]
+    if: needs.image-plan.outputs.mode == 'build'
     # Each platform builds on a runner of its own architecture. The arm64 half
     # used to build under QEMU on amd64 and took 13 to 18 minutes per Python,
     # the critical path of every release run (#1686). ubuntu-24.04-arm is the
@@ -713,8 +764,12 @@ jobs:
   # deadline. Nothing needs this job: it reports, it never holds the release.
   data-scan-report:
     name: Report HIGH findings in the data image (GA)
-    needs: runtime-data-image-build
-    if: ${{ !contains(github.ref_name, '-rc.') }}
+    # The HIGH reports come from the data image's build job, or from
+    # promote-images when the GA publishes its rc's images (ADR 0109).
+    needs: [runtime-data-image-build, promote-images]
+    if: >-
+      !cancelled() && !contains(github.ref_name, '-rc.') &&
+      (needs.runtime-data-image-build.result == 'success' || needs.promote-images.result == 'success')
     # A failure here (an API hiccup, a missing milestone) must not mark the run
     # failed: cut-release.sh reads the run's conclusion and would re-draft a
     # release whose gates all passed.
@@ -892,9 +947,161 @@ jobs:
   # downloadable, so `curl | sh` works here); if ANY distro fails, the `gate` job
   # below retracts the release to a draft. Net effect: a release only survives if
   # it installs cleanly on every supported distro ("só corta se passar").
+  # ── GA: publish the images the last green rc validated (ADR 0109) ──
+  # Instead of the build jobs, for a GA image-plan found to change nothing an
+  # image is built from. Each rc image is verified against its signature, then
+  # written under the GA tags with a configuration naming the GA (the binaries
+  # report it, internal/version) and the rc's layers, checked layer by layer by
+  # internal/tools/imagepromote, and the GA digests are signed. The data image
+  # is scanned before anything is written, as its build job does.
+  promote-images:
+    name: Promote the rc images to the GA
+    needs: [chart-preflight, image-plan]
+    if: needs.image-plan.outputs.mode == 'promote'
+    runs-on: ubuntu-26.04
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
+      id-token: write       # keyless cosign signing
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+        with:
+          cosign-release: v2.4.3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # ADR 0108 on the data image this GA publishes: the rc's layers, scanned
+      # with today's database before any GA tag is written.
+      - name: Scan the data image's language packages (amd64)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        env:
+          TRIVY_PKG_TYPES: library
+          TRIVY_PLATFORM: linux/amd64
+        with:
+          version: ${{ env.TRIVY_VERSION }}
+          scan-type: image
+          image-ref: ${{ env.REGISTRY }}/${{ github.repository_owner }}/dexaflow-runtime:py3.11-data-${{ needs.image-plan.outputs.rc }}
+          scanners: vuln
+          severity: CRITICAL
+          ignore-unfixed: true
+          trivyignores: .trivyignore.yaml
+          exit-code: 1
+          format: table
+
+      - name: Report HIGH findings new since the rc (amd64)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        env:
+          TRIVY_PKG_TYPES: library
+          TRIVY_PLATFORM: linux/amd64
+          TRIVY_SKIP_DB_UPDATE: "true"
+        with:
+          version: ${{ env.TRIVY_VERSION }}
+          scan-type: image
+          image-ref: ${{ env.REGISTRY }}/${{ github.repository_owner }}/dexaflow-runtime:py3.11-data-${{ needs.image-plan.outputs.rc }}
+          scanners: vuln
+          severity: HIGH
+          ignore-unfixed: true
+          trivyignores: .trivyignore.yaml
+          exit-code: 0
+          format: json
+          output: data-high-amd64.json
+
+      - name: Upload the HIGH report (amd64)
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: runtime-data-high-amd64
+          path: data-high-amd64.json
+          if-no-files-found: error
+          retention-days: 90
+
+      # ADR 0108 on the data image this GA publishes: the rc's layers, scanned
+      # with today's database before any GA tag is written.
+      - name: Scan the data image's language packages (arm64)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        env:
+          TRIVY_PKG_TYPES: library
+          TRIVY_PLATFORM: linux/arm64
+        with:
+          version: ${{ env.TRIVY_VERSION }}
+          scan-type: image
+          image-ref: ${{ env.REGISTRY }}/${{ github.repository_owner }}/dexaflow-runtime:py3.11-data-${{ needs.image-plan.outputs.rc }}
+          scanners: vuln
+          severity: CRITICAL
+          ignore-unfixed: true
+          trivyignores: .trivyignore.yaml
+          exit-code: 1
+          format: table
+
+      - name: Report HIGH findings new since the rc (arm64)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        env:
+          TRIVY_PKG_TYPES: library
+          TRIVY_PLATFORM: linux/arm64
+          TRIVY_SKIP_DB_UPDATE: "true"
+        with:
+          version: ${{ env.TRIVY_VERSION }}
+          scan-type: image
+          image-ref: ${{ env.REGISTRY }}/${{ github.repository_owner }}/dexaflow-runtime:py3.11-data-${{ needs.image-plan.outputs.rc }}
+          scanners: vuln
+          severity: HIGH
+          ignore-unfixed: true
+          trivyignores: .trivyignore.yaml
+          exit-code: 0
+          format: json
+          output: data-high-arm64.json
+
+      - name: Upload the HIGH report (arm64)
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: runtime-data-high-arm64
+          path: data-high-arm64.json
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Promote and sign
+        env:
+          RC: ${{ needs.image-plan.outputs.rc }}
+          TAG: ${{ github.ref_name }}
+          REGISTRY_PREFIX: ${{ env.REGISTRY }}/${{ github.repository_owner }}
+          COSIGN_IDENTITY_REGEXP: ^https://github\.com/${{ github.repository }}/\.github/workflows/release\.yaml@refs/tags/
+        run: |
+          set -euo pipefail
+          go build -o "$RUNNER_TEMP/imagepromote" ./internal/tools/imagepromote
+          echo "### ${TAG} publishes the images of ${RC}" >>"$GITHUB_STEP_SUMMARY"
+          IMAGEPROMOTE="$RUNNER_TEMP/imagepromote" bash scripts/release-promote-images.sh "$RC" "$TAG"
+
+      - name: Assert the baked agents report this release
+        env:
+          REGISTRY_PREFIX: ${{ env.REGISTRY }}/${{ github.repository_owner }}
+          RC: ${{ needs.image-plan.outputs.rc }}
+          TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          for ref in $(bash scripts/release-promote-images.sh "$RC" "$TAG" --list |
+            awk '{print $2}' | grep '/dexaflow-runtime:'); do
+            bash scripts/release-check-agent-stamp.sh "$ref" "$TAG"
+          done
+
   install-smoke:
     name: Install smoke (${{ matrix.image }})
     needs: release
+    # The release job runs after a skipped job on either image path (ADR
+    # 0109); without a status function this job would be skipped with it.
+    if: ${{ !cancelled() && needs.release.result == 'success' }}
     runs-on: ubuntu-26.04
     timeout-minutes: 15
     container: ${{ matrix.image }}
@@ -1004,6 +1211,9 @@ jobs:
   lite-cold-start-smoke:
     name: Lite cold-start (boot + /readyz, docker PG)
     needs: release
+    # The release job runs after a skipped job on either image path (ADR
+    # 0109); without a status function this job would be skipped with it.
+    if: ${{ !cancelled() && needs.release.result == 'success' }}
     runs-on: ubuntu-26.04
     timeout-minutes: 15
     steps:
@@ -1163,6 +1373,9 @@ jobs:
   upgrade-smoke:
     name: Upgrade smoke (previous → ${{ github.ref_name }})
     needs: release
+    # The release job runs after a skipped job on either image path (ADR
+    # 0109); without a status function this job would be skipped with it.
+    if: ${{ !cancelled() && needs.release.result == 'success' }}
     runs-on: ubuntu-26.04
     timeout-minutes: 15
     container: mirror.gcr.io/library/ubuntu:24.04
@@ -1210,7 +1423,13 @@ jobs:
   # the release if this job fails, as it does for a missing signature.
   attest:
     name: Attest provenance and SBOMs
-    needs: [release, migrate-image, runtime-image, runtime-data-image]
+    # Every published image: built by the three image jobs, or written by
+    # promote-images (ADR 0109), whichever ran.
+    needs: [release, migrate-image, runtime-image, runtime-data-image, promote-images]
+    if: >-
+      !cancelled() && needs.release.result == 'success' &&
+      ((needs.migrate-image.result == 'success' && needs.runtime-image.result == 'success' && needs.runtime-data-image.result == 'success') ||
+       needs.promote-images.result == 'success')
     runs-on: ubuntu-26.04
     timeout-minutes: 30
     permissions:
@@ -1323,6 +1542,9 @@ jobs:
   verify-server-signature:
     name: Verify dexaflow-server, dexaflow-mcp and dexaflow-cli image signatures
     needs: release
+    # The release job runs after a skipped job on either image path (ADR
+    # 0109); without a status function this job would be skipped with it.
+    if: ${{ !cancelled() && needs.release.result == 'success' }}
     runs-on: ubuntu-26.04
     timeout-minutes: 10
     permissions:
@@ -1408,22 +1630,89 @@ jobs:
   # handing users a broken build. Runs always() so it can act on any failure.
   # Its success is what `promote` waits for; nothing public has moved before
   # that (ADR 0071), so a retraction here leaves no chart and no Latest behind.
+  # ── An rc rehearses the GA promotion of its own images (ADR 0109) ──
+  # Every image the GA would promote is read, checked against its signature,
+  # rewritten and compared layer by layer without writing anything (--dry-run),
+  # and the CLI image is promoted for real into a throwaway registry on the
+  # runner and run, so it must report the GA version. A GA then takes a path
+  # its rc already exercised.
+  promote-rehearsal:
+    name: Rehearse the GA promotion of these images
+    needs: [release, migrate-image, runtime-image, runtime-data-image]
+    if: ${{ !cancelled() && contains(github.ref_name, '-rc.') && needs.release.result == 'success' && needs.migrate-image.result == 'success' && needs.runtime-image.result == 'success' && needs.runtime-data-image.result == 'success' }}
+    runs-on: ubuntu-26.04
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: ${{ env.GO_VERSION }}
+
+      - uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+        with:
+          cosign-release: v2.4.3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@81c6f93d4bc991e510b342a00b419b3bb4efc5c6 # v4.7.0
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Promote every image without writing
+        env:
+          TAG: ${{ github.ref_name }}
+          REGISTRY_PREFIX: ${{ env.REGISTRY }}/${{ github.repository_owner }}
+          COSIGN_IDENTITY_REGEXP: ^https://github\.com/${{ github.repository }}/\.github/workflows/release\.yaml@refs/tags/
+        run: |
+          set -euo pipefail
+          go build -o "$RUNNER_TEMP/imagepromote" ./internal/tools/imagepromote
+          IMAGEPROMOTE="$RUNNER_TEMP/imagepromote" bash scripts/release-promote-images.sh "$TAG" "${TAG%-rc.*}" --dry-run
+
+      - name: Promote the CLI image into a local registry and run it
+        env:
+          TAG: ${{ github.ref_name }}
+          SRC: ${{ env.REGISTRY }}/${{ github.repository_owner }}/dexaflow-cli:${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          ga="${TAG%-rc.*}"
+          docker run -d --rm --name rehearsal-registry -p 127.0.0.1:5000:5000 mirror.gcr.io/library/registry:2 >/dev/null
+          for _ in $(seq 1 30); do curl -fsS http://127.0.0.1:5000/v2/ >/dev/null 2>&1 && break; sleep 1; done
+          "$RUNNER_TEMP/imagepromote" -release "$ga" -from "$SRC" -to "localhost:5000/dexaflow-cli:${ga}"
+          got="$(docker run --rm "localhost:5000/dexaflow-cli:${ga}" version --json)"
+          echo "$got"
+          [ "$(jq -r .version <<<"$got")" = "${ga#v}" ] || { echo "::error::the promoted CLI reports $(jq -r .version <<<"$got"), want ${ga#v}"; exit 1; }
+          [ "$(jq -r .built_as <<<"$got")" = "${TAG#v}" ] || { echo "::error::the promoted CLI does not say it was built as ${TAG#v}"; exit 1; }
+          echo "The ${ga} promotion of ${TAG} rehearsed: every image rewritten with its layers, the CLI runs as ${ga#v}." >>"$GITHUB_STEP_SUMMARY"
+
   gate:
     name: Gate release on install + lite-cold-start + upgrade + migrate + runtime image + server signature
-    needs: [release, install-smoke, lite-cold-start-smoke, upgrade-smoke, migrate-image, runtime-image, runtime-data-image, verify-server-signature, attest]
+    needs: [release, install-smoke, lite-cold-start-smoke, upgrade-smoke, migrate-image, runtime-image, runtime-data-image, promote-images, promote-rehearsal, verify-server-signature, attest]
     if: always() && needs.release.result == 'success'
     runs-on: ubuntu-26.04
     timeout-minutes: 15
+    env:
+      # The images: the three build jobs, or promote-images for a GA that
+      # publishes its rc's images (ADR 0109).
+      # An rc must pass the promotion rehearsal; a GA does not run it.
+      REHEARSAL_OK: ${{ (contains(github.ref_name, '-rc.') && needs.promote-rehearsal.result == 'success') || (!contains(github.ref_name, '-rc.') && needs.promote-rehearsal.result == 'skipped') }}
+      IMAGES_OK: ${{ (needs.migrate-image.result == 'success' && needs.runtime-image.result == 'success' && needs.runtime-data-image.result == 'success') || needs.promote-images.result == 'success' }}
     permissions:
       contents: write   # Edit the published release back to a draft on failure.
     steps:
       - name: Retract release to draft on smoke or image failure
-        if: needs.install-smoke.result != 'success' || needs.lite-cold-start-smoke.result != 'success' || needs.upgrade-smoke.result != 'success' || needs.migrate-image.result != 'success' || needs.runtime-image.result != 'success' || needs.runtime-data-image.result != 'success' || needs.verify-server-signature.result != 'success' || needs.attest.result != 'success'
+        if: needs.install-smoke.result != 'success' || needs.lite-cold-start-smoke.result != 'success' || needs.upgrade-smoke.result != 'success' || env.IMAGES_OK != 'true' || env.REHEARSAL_OK != 'true' || needs.verify-server-signature.result != 'success' || needs.attest.result != 'success'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -eu
-          echo "::error::release blocked: install-smoke=${{ needs.install-smoke.result }} lite-cold-start-smoke=${{ needs.lite-cold-start-smoke.result }} upgrade-smoke=${{ needs.upgrade-smoke.result }} migrate-image=${{ needs.migrate-image.result }} runtime-image=${{ needs.runtime-image.result }} runtime-data-image=${{ needs.runtime-data-image.result }} verify-server-signature=${{ needs.verify-server-signature.result }} attest=${{ needs.attest.result }}; retracting ${GITHUB_REF_NAME} to a draft."
+          echo "::error::release blocked: install-smoke=${{ needs.install-smoke.result }} lite-cold-start-smoke=${{ needs.lite-cold-start-smoke.result }} upgrade-smoke=${{ needs.upgrade-smoke.result }} migrate-image=${{ needs.migrate-image.result }} runtime-image=${{ needs.runtime-image.result }} runtime-data-image=${{ needs.runtime-data-image.result }} promote-images=${{ needs.promote-images.result }} promote-rehearsal=${{ needs.promote-rehearsal.result }} verify-server-signature=${{ needs.verify-server-signature.result }} attest=${{ needs.attest.result }}; retracting ${GITHUB_REF_NAME} to a draft."
           gh release edit "${GITHUB_REF_NAME}" --repo "${GITHUB_REPOSITORY}" --draft
           # Print the recovery, because a plain re-run CANNOT work and the reader
           # has no way to know that from here (#979, observed on v0.4.5-rc.1).
@@ -1456,7 +1745,7 @@ jobs:
           EOF
           exit 1
       - name: Confirm release passed all gates and ensure it is published
-        if: needs.install-smoke.result == 'success' && needs.lite-cold-start-smoke.result == 'success' && needs.upgrade-smoke.result == 'success' && needs.migrate-image.result == 'success' && needs.runtime-image.result == 'success' && needs.runtime-data-image.result == 'success' && needs.verify-server-signature.result == 'success' && needs.attest.result == 'success'
+        if: needs.install-smoke.result == 'success' && needs.lite-cold-start-smoke.result == 'success' && needs.upgrade-smoke.result == 'success' && env.IMAGES_OK == 'true' && env.REHEARSAL_OK == 'true' && needs.verify-server-signature.result == 'success' && needs.attest.result == 'success'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
@@ -1490,7 +1779,7 @@ jobs:
   promote:
     name: Promote (verify images, chart, py3.N, Latest)
     needs: gate
-    if: needs.gate.result == 'success'
+    if: ${{ !cancelled() && needs.gate.result == 'success' }}
     runs-on: ubuntu-26.04
     timeout-minutes: 20
     permissions:
