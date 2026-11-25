@@ -1,0 +1,3 @@
+kind: Changed
+body: '**The CLI image (`ghcr.io/dexadata/dexaflow-cli`) ships uv 0.13.9** (#2478), used by the daemonless dependency layer of `dexaflow deploy`. Its Python stays on 3.13, the newest line the bundled parser supports.'
+time: 2026-11-25T14:00:00.000000+00:00

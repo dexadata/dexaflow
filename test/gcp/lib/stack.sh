@@ -144,8 +144,8 @@ stack_helm_args() { # <release> <namespace> <task namespace> <jwt secret> <boots
     --set-string "bootstrap.password=$pw"
     # NOT agentTLS.enabled=false: see the header. autoGenerate is the chart
     # default and mints a self-signed CA with no cert-manager.
-    --set "auth.agentTLS.enabled=true"
-    --set "auth.agentTLS.autoGenerate=true"
+    --set "agentTLS.enabled=true"
+    --set "agentTLS.autoGenerate=true"
     # #1230: the chart's logs PVC (50 Gi, on by default, right for production)
     # outlives a deleted cluster as an orphaned persistent disk, and nothing can
     # tell ours from someone else's to reclaim it. An experiment needs no log
@@ -263,15 +263,15 @@ self_test() {
   # that. An install carrying it never reaches a cluster, so the first sign
   # would be a failed helm at the end of a paid provision.
   case " ${HELM_ARGS[*]} " in
-    *"auth.agentTLS.enabled=false"*)
+    *"agentTLS.enabled=false"*)
       echo "  FAIL the install carries agentTLS.enabled=false, which this chart refuses to render"; fail=1 ;;
-    *"auth.agentTLS.enabled=true"*)
+    *"agentTLS.enabled=true"*)
       echo "  ok   the install keeps agent TLS on, so the chart's render guard is not tripped" ;;
     *)
       echo "  FAIL the install does not decide agentTLS at all"; fail=1 ;;
   esac
   case " ${HELM_ARGS[*]} " in
-    *"auth.agentTLS.autoGenerate=true"*) echo "  ok   the cert is auto-generated, so the install needs no cert-manager" ;;
+    *"agentTLS.autoGenerate=true"*) echo "  ok   the cert is auto-generated, so the install needs no cert-manager" ;;
     *) echo "  FAIL nothing provides a gRPC cert, so the Pro edition would refuse to boot"; fail=1 ;;
   esac
 
