@@ -1,0 +1,10 @@
+# actionlint configuration.
+#
+# GitHub-hosted runner labels newer than the pinned actionlint (v1.7.12, the
+# latest release) knows. ubuntu-26.04 has been a hosted label since
+# ubuntu-latest moved to it on 2026-11-12 (#2469); without this entry every
+# job that names it fails the lint as an unknown label. Remove a label once
+# an actionlint release lists it.
+self-hosted-runner:
+  labels:
+    - ubuntu-26.04
