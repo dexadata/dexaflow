@@ -279,15 +279,12 @@ func setupK8sDispatch(ctx context.Context, cfg *config.ServerConfig, sched *sche
 	// Shared informer read-path (PR-10): one long-lived watch replaces the
 	// reapers' per-running-TI LIST storm and the reconciler's 30s LIST. Consulted
 	// only to DEFER a reap; the live TaskPodPresence kill path is unchanged (#461).
-	// A typed-nil pointer would defeat the reconciler's / reaper's nil check, so
-	// the interfaces are only populated when the informer actually built.
+	// A typed-nil pointer would defeat the reaper's nil check, so the interface
+	// is only populated when the informer actually built; startMaintenance
+	// checks the pointer itself.
 	podInformer := buildPodInformer(ctx, cfg, clients.informers, logger)
-	var (
-		snapshotter executor.PodSnapshotter
-		cache       executor.PodPresenceCache
-	)
+	var cache executor.PodPresenceCache
 	if podInformer != nil {
-		snapshotter = podInformer
 		cache = podInformer
 	}
 	// Warm failover seam (ADR 0058 N1d-a2): one warm-pod client, built ONLY when
@@ -354,7 +351,7 @@ func setupK8sDispatch(ctx context.Context, cfg *config.ServerConfig, sched *sche
 	// (ADR 0052 amendment, part 2). Lite never reaches this and keeps
 	// confirming at mark time.
 	store.SetProvisionalInfraMarks(true)
-	startMaintenance(ctx, mcs, cfg.Executor.TaskNamespace, execStore, store, overrideObservers{metrics: metrics, sink: markers}, reaper, sched.IsLeading, logger, snapshotter, settledRunCollection(cfg.Executor, execStore), cfg.Executor.PendingTimeout())
+	startMaintenance(ctx, mcs, cfg.Executor.TaskNamespace, execStore, store, overrideObservers{metrics: metrics, sink: markers}, reaper, sched.IsLeading, logger, podInformer, settledRunCollection(cfg.Executor, execStore), cfg.Executor.PendingTimeout())
 	startStagingGC(ctx, mcs, cfg.Executor.TaskNamespace, store, sched.IsLeading, logger, metrics)
 	// Warm-pool reconciler (ADR 0058 N1b2b, model A2): keeps min_idle warm workers
 	// ready per active dag_version. Started ONLY when warm pools are enabled, with

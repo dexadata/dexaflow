@@ -1,0 +1,9 @@
+kind: Changed
+body: |-
+  **Failed task pods settle within seconds.** The leader now settles a task
+  pod as soon as its pod watch sees it turn terminal, instead of at the next
+  30 second reconcile sweep: an `OOMKilled` container, an eviction or a pod the
+  cluster stopped is recorded, and retried or re-placed, within seconds. The
+  sweep keeps running and settles any event that was missed, and the change
+  adds no request to the Kubernetes API (#2330).
+time: 2026-11-25T18:00:00.000000000+00:00
