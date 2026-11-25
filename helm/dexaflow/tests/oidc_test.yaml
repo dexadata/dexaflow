@@ -404,3 +404,76 @@ tests:
     asserts:
       - exists:
           path: spec.template.metadata.annotations["checksum/oidc-config"]
+
+  # Sign-out at the IdP (ADR 0110, #1165). The mode always renders, so the pod
+  # says which one it runs; the redirect is omitted when empty, because an empty
+  # post_logout_redirect_uri is what the server already sends without it.
+  - it: ends the IdP session on sign-out by default
+    template: deployment.yaml
+    set:
+      auth.oidc.enabled: true
+      auth.oidc.issuer: https://accounts.google.com
+      auth.oidc.clientId: cid.apps.googleusercontent.com
+      auth.oidc.redirectUrl: https://leoflow.example.com/api/v2/auth/oidc/callback
+      auth.oidc.tenantClaim: hd
+      auth.oidc.tenantClaims:
+        example.com: default
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: DEXAFLOW_AUTH_OIDC_LOGOUT
+            value: idp
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: DEXAFLOW_AUTH_OIDC_POST_LOGOUT_REDIRECT_URL
+            value: ""
+
+  - it: renders the local sign-out mode and the post-logout redirect
+    template: deployment.yaml
+    set:
+      auth.oidc.enabled: true
+      auth.oidc.issuer: https://accounts.google.com
+      auth.oidc.clientId: cid.apps.googleusercontent.com
+      auth.oidc.redirectUrl: https://leoflow.example.com/api/v2/auth/oidc/callback
+      auth.oidc.tenantClaim: hd
+      auth.oidc.tenantClaims:
+        example.com: default
+      auth.oidc.logout: local
+      auth.oidc.postLogoutRedirectUrl: https://leoflow.example.com/signed-out
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: DEXAFLOW_AUTH_OIDC_LOGOUT
+            value: local
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: DEXAFLOW_AUTH_OIDC_POST_LOGOUT_REDIRECT_URL
+            value: https://leoflow.example.com/signed-out
+
+  - it: refuses an unknown sign-out mode at render
+    template: deployment.yaml
+    set:
+      auth.oidc.enabled: true
+      auth.oidc.issuer: https://accounts.google.com
+      auth.oidc.clientId: cid.apps.googleusercontent.com
+      auth.oidc.redirectUrl: https://leoflow.example.com/api/v2/auth/oidc/callback
+      auth.oidc.tenantClaim: hd
+      auth.oidc.tenantClaims:
+        example.com: default
+      auth.oidc.logout: global
+    asserts:
+      - failedTemplate:
+          errorPattern: "auth.oidc.logout must be idp or local"
+
+  - it: renders no sign-out setting while SSO is off
+    template: deployment.yaml
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: DEXAFLOW_AUTH_OIDC_LOGOUT
+            value: idp
