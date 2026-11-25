@@ -514,7 +514,7 @@ func (d Disposition) String() string
 String renders the disposition for logs and error notes.
 
 <a name="Executor"></a>
-## type [Executor](<https://github.com/dexadata/dexaflow/blob/main/internal/executor/executor.go#L173-L175>)
+## type [Executor](<https://github.com/dexadata/dexaflow/blob/main/internal/executor/executor.go#L178-L180>)
 
 Executor runs or dispatches a task. For asynchronous executors \(Kubernetes/Docker/subprocess\) the return reflects dispatch only, and the agent reports the final state over gRPC. The Disposition tells the scheduler WHY a dispatch failed \(transient cluster Backpressure, an Unavailable API, a permanent Rejected, among others\), so the orchestration layer never has to inspect runtime\-specific error types itself \(ADR 0051 Phase 4\). A successful dispatch returns \(Dispatched, nil\); a failure returns the classified disposition alongside the non\-nil cause \(its text feeds the scheduler's note/log\).
 
@@ -1572,7 +1572,7 @@ func (r *Reconciler) SetSettledRunCollection(c SettledRunChecker)
 SetSettledRunCollection turns on collecting a settled run's finished pods in one DeleteCollection. Nil \(the default\) keeps the age\-based GC only.
 
 <a name="Request"></a>
-## type [Request](<https://github.com/dexadata/dexaflow/blob/main/internal/executor/executor.go#L35-L163>)
+## type [Request](<https://github.com/dexadata/dexaflow/blob/main/internal/executor/executor.go#L35-L168>)
 
 Request bundles everything an executor needs to run a single task instance.
 
@@ -1697,6 +1697,11 @@ type Request struct {
     // the key in the cluster's secret store rather than in Dexaflow (ADR 0035).
     TaskSecretName      string
     TaskSecretMountPath string
+    // TaskSecretAliasPath, when set and different from TaskSecretMountPath,
+    // mounts the same Secret there too. The server sets it to the path the
+    // leoflow default used while the mount path is the dexaflow default, so a DAG
+    // that reads the old path keeps working (#2155).
+    TaskSecretAliasPath string
 
     // SecretsBackend / SecretsBackendKwargs, when set, are the operator's external
     // secrets backend (ADR 0060): the provider class the in-pod resolver drives and
