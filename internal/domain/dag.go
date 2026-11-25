@@ -48,7 +48,8 @@ const (
 // TriggerRule decides whether a task runs based on its upstreams' states.
 type TriggerRule string
 
-// Supported trigger rules for the MVP. See docs/api/dag-schema.json.
+// Supported trigger rules, with Airflow 3 semantics (ADR 0064 D2). See
+// docs/api/dag-schema.json.
 const (
 	// TriggerRuleAllSuccess runs when every upstream succeeded (default).
 	TriggerRuleAllSuccess TriggerRule = "all_success"
@@ -60,6 +61,17 @@ const (
 	TriggerRuleOneSuccess TriggerRule = "one_success"
 	// TriggerRuleOneFailed runs as soon as one upstream fails.
 	TriggerRuleOneFailed TriggerRule = "one_failed"
+	// TriggerRuleNoneFailed runs once every upstream finished and none failed:
+	// success and skipped upstreams both count.
+	TriggerRuleNoneFailed TriggerRule = "none_failed"
+	// TriggerRuleNoneFailedMinOneSuccess runs once every upstream finished, none
+	// failed and at least one succeeded.
+	TriggerRuleNoneFailedMinOneSuccess TriggerRule = "none_failed_min_one_success"
+	// TriggerRuleNoneSkipped runs once every upstream finished and none was
+	// skipped, whether they succeeded or failed.
+	TriggerRuleNoneSkipped TriggerRule = "none_skipped"
+	// TriggerRuleAlways runs at once, whatever its upstreams do.
+	TriggerRuleAlways TriggerRule = "always"
 )
 
 // DAGSpec is the canonical serialized representation of a DAG consumed by the

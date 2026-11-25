@@ -133,16 +133,18 @@ func countUpstreams(upstreams []domain.TaskState) upstreamCounts {
 // EvaluateTriggerRule decides what to do with a task given its trigger rule and
 // the current states of its upstream tasks. A task with no upstreams (a root
 // task) is always scheduled.
+//
+// Each rule follows Airflow 3.2 (ADR 0064 D2): every evaluator owns its
+// handling of upstream_failed, so an upstream_failed upstream counts as a
+// failure for the rules that look at failures (all_failed and one_failed run
+// on it) instead of condemning every rule. An unknown rule waits, so a DAG the
+// schema let through with a rule this build does not know never runs a task
+// it was not meant to.
 func EvaluateTriggerRule(rule domain.TriggerRule, upstreams []domain.TaskState) TriggerDecision {
 	if len(upstreams) == 0 {
 		return DecisionSchedule
 	}
 	c := countUpstreams(upstreams)
-	// An upstream_failed upstream propagates downstream for every rule except
-	// all_done, which runs once everything is terminal regardless of outcome.
-	if rule != domain.TriggerRuleAllDone && c.upstreamFailed > 0 {
-		return DecisionUpstreamFailed
-	}
 	switch rule {
 	case domain.TriggerRuleAllSuccess:
 		return evalAllSuccess(c)
@@ -151,17 +153,30 @@ func EvaluateTriggerRule(rule domain.TriggerRule, upstreams []domain.TaskState) 
 	case domain.TriggerRuleAllDone:
 		return evalAllDone(c)
 	case domain.TriggerRuleOneSuccess:
-		return evalOneOf(c, c.success)
+		return evalOneSuccess(c)
 	case domain.TriggerRuleOneFailed:
-		return evalOneOf(c, c.failed)
+		return evalOneFailed(c)
+	case domain.TriggerRuleNoneFailed:
+		return evalNoneFailed(c)
+	case domain.TriggerRuleNoneFailedMinOneSuccess:
+		return evalNoneFailedMinOneSuccess(c)
+	case domain.TriggerRuleNoneSkipped:
+		return evalNoneSkipped(c)
+	case domain.TriggerRuleAlways:
+		return DecisionSchedule
 	default:
 		return DecisionWait
 	}
 }
 
+// failures counts the upstreams that failed or were marked upstream_failed.
+func (c upstreamCounts) failures() int { return c.failed + c.upstreamFailed }
+
+// evalAllSuccess: a failure propagates and a skip skips at once; otherwise the
+// task waits for every upstream to succeed.
 func evalAllSuccess(c upstreamCounts) TriggerDecision {
 	switch {
-	case c.failed > 0:
+	case c.failures() > 0:
 		return DecisionUpstreamFailed
 	case c.skipped > 0:
 		return DecisionSkip
@@ -172,14 +187,16 @@ func evalAllSuccess(c upstreamCounts) TriggerDecision {
 	}
 }
 
+// evalAllFailed: a success or a skip skips at once; otherwise the task runs
+// once every upstream failed or was marked upstream_failed.
 func evalAllFailed(c upstreamCounts) TriggerDecision {
 	switch {
+	case c.success+c.skipped > 0:
+		return DecisionSkip
 	case c.active > 0:
 		return DecisionWait
-	case c.failed == c.total:
-		return DecisionSchedule
 	default:
-		return DecisionSkip
+		return DecisionSchedule
 	}
 }
 
@@ -190,17 +207,73 @@ func evalAllDone(c upstreamCounts) TriggerDecision {
 	return DecisionSchedule
 }
 
-// evalOneOf implements the one_success / one_failed rules: schedule once every
-// upstream has settled and at least `hits` of the target state occurred,
-// otherwise skip; wait while any upstream is still active.
-func evalOneOf(c upstreamCounts, hits int) TriggerDecision {
+// evalOneSuccess runs as soon as one upstream succeeds. When every upstream
+// finished without a success it skips if all were skipped and is
+// upstream_failed otherwise.
+func evalOneSuccess(c upstreamCounts) TriggerDecision {
 	switch {
+	case c.success > 0:
+		return DecisionSchedule
 	case c.active > 0:
 		return DecisionWait
-	case hits > 0:
+	case c.skipped == c.total:
+		return DecisionSkip
+	default:
+		return DecisionUpstreamFailed
+	}
+}
+
+// evalOneFailed runs as soon as one upstream failed or was marked
+// upstream_failed, and skips once every upstream finished without one.
+func evalOneFailed(c upstreamCounts) TriggerDecision {
+	switch {
+	case c.failures() > 0:
 		return DecisionSchedule
+	case c.active > 0:
+		return DecisionWait
 	default:
 		return DecisionSkip
+	}
+}
+
+// evalNoneFailed: a failure propagates at once; otherwise the task runs once
+// every upstream succeeded or was skipped, all skipped included.
+func evalNoneFailed(c upstreamCounts) TriggerDecision {
+	switch {
+	case c.failures() > 0:
+		return DecisionUpstreamFailed
+	case c.active > 0:
+		return DecisionWait
+	default:
+		return DecisionSchedule
+	}
+}
+
+// evalNoneFailedMinOneSuccess is none_failed, except that a task whose
+// upstreams were all skipped is skipped too.
+func evalNoneFailedMinOneSuccess(c upstreamCounts) TriggerDecision {
+	switch {
+	case c.failures() > 0:
+		return DecisionUpstreamFailed
+	case c.skipped == c.total:
+		return DecisionSkip
+	case c.active > 0:
+		return DecisionWait
+	default:
+		return DecisionSchedule
+	}
+}
+
+// evalNoneSkipped: a skip skips at once; otherwise the task runs once every
+// upstream finished, failures included.
+func evalNoneSkipped(c upstreamCounts) TriggerDecision {
+	switch {
+	case c.skipped > 0:
+		return DecisionSkip
+	case c.active > 0:
+		return DecisionWait
+	default:
+		return DecisionSchedule
 	}
 }
 

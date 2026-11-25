@@ -1250,6 +1250,39 @@ Every log stream also publishes from its own queue now, in batches of up to
 256 lines per Redis round trip, so a follower costs a chatty task far less
 receive rate than before, under either mode.
 
+## Upgrading to 0.6.0: trigger rules follow Airflow 3
+
+The scheduler now evaluates trigger rules as Airflow 3 does
+([#2346](https://github.com/dexadata/dexaflow/issues/2346),
+[ADR 0064](/project/adrs/0064-branching-and-skip/)), and `dexaflow compile`
+accepts four more: `none_failed`, `none_failed_min_one_success`,
+`none_skipped` and `always`. A DAG that uses only `all_success` (the default)
+or `all_done` does not change. The others change for DAGs already deployed,
+with no recompile:
+
+| Rule | Before 0.6.0 | From 0.6.0 |
+|---|---|---|
+| `one_success` | Waited for every upstream, then ran if one succeeded | Runs as soon as one upstream succeeds, while its siblings still run |
+| `one_success`, every upstream finished without a success | `skipped` | `upstream_failed`, or `skipped` when every upstream was skipped |
+| `one_success`, an upstream is `upstream_failed` | The task became `upstream_failed` at once | The `upstream_failed` upstream counts as a finished one without a success |
+| `one_failed` | Waited for every upstream, then ran if one failed | Runs as soon as one upstream fails or is `upstream_failed` |
+| `all_failed` | Became `upstream_failed` when an upstream was `upstream_failed` | Runs when every upstream is `failed` or `upstream_failed` |
+| `all_failed`, an upstream succeeds or is skipped | Skipped once every upstream finished | Skipped at once |
+
+The visible effect: a cleanup or alert task on `one_failed` or `all_failed`
+now runs after a failure deeper in the graph, where it was marked
+`upstream_failed` before, and a `one_success` task starts while its siblings
+are still running.
+
+The four new rules work as in Airflow: `none_failed` runs once no upstream
+failed, all skipped included; `none_failed_min_one_success` is the same but is
+skipped when every upstream was skipped (the usual join after a branch);
+`none_skipped` runs once every upstream finished and none was skipped, failed
+ones included; `always` runs at once, whatever its upstreams do. A DAG that
+uses one of them needs 0.6.0 on the control plane: rolling the control plane
+back below 0.6.0 leaves its tasks waiting. `one_done`, `all_skipped` and the
+`all_done_*` rules are still refused at compile.
+
 ## Upgrading to 0.6.0: the chart refuses unknown values
 
 The chart now validates your values against its `values.schema.json`

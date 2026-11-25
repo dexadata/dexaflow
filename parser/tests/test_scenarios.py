@@ -187,6 +187,36 @@ def test_unsupported_trigger_rule_errors(monkeypatch, tmp_path):
             from airflow.providers.standard.operators.bash import BashOperator
             from airflow.sdk import DAG
             with DAG("g"):
-                BashOperator(task_id="a", bash_command="x", trigger_rule="none_failed")
+                BashOperator(task_id="a", bash_command="x", trigger_rule="one_done")
         """)
     assert "trigger rule" in str(ei.value)
+
+
+@pytest.mark.parametrize("rule", [
+    "none_failed", "none_failed_min_one_success", "none_skipped", "always",
+])
+def test_airflow_3_trigger_rules_compile(monkeypatch, tmp_path, rule):
+    """ADR 0064 D2: the four rules the scheduler evaluates since 0.6.0."""
+    spec = _compile(monkeypatch, tmp_path, f"""
+        from airflow.providers.standard.operators.bash import BashOperator
+        from airflow.sdk import DAG
+        with DAG("g"):
+            a = BashOperator(task_id="a", bash_command="x")
+            b = BashOperator(task_id="b", bash_command="x", trigger_rule="{rule}")
+            a >> b
+    """)
+    assert _task(spec, "b")["trigger_rule"] == rule
+
+
+@pytest.mark.parametrize("rule", [
+    "one_done", "all_skipped", "all_done_min_one_success", "all_done_setup_success",
+])
+def test_trigger_rules_still_refused(monkeypatch, tmp_path, rule):
+    with pytest.raises(ValueError) as ei:
+        _compile(monkeypatch, tmp_path, f"""
+            from airflow.providers.standard.operators.bash import BashOperator
+            from airflow.sdk import DAG
+            with DAG("g"):
+                BashOperator(task_id="a", bash_command="x", trigger_rule="{rule}")
+        """)
+    assert rule in str(ei.value)
