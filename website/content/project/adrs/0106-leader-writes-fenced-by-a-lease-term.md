@@ -154,8 +154,14 @@ One leader at a time is still the advisory lock's job, unchanged.
 
 ## Consequences
 
-- After the new leader's term commits, no database write from an older term
-  lands, and a pod create from an older term needs to pass the worker's
+- After the new leader's term commits, no statement of an older term that
+  starts later is let through, and an older term's transaction still open is
+  ended by the new leader (point 4). The fence is not exact: the trigger
+  reads the lease without a row lock, so a transaction whose statements all
+  passed before the term moved can still commit if ending its session fails
+  or loses the race. Locking the lease row in the trigger would close that
+  window, but it would make the new leader's term wait on a partitioned
+  leader's open transaction, which is the case fencing exists for. A pod create from an older term needs to pass the worker's
   term read in the window before the new term commits. The integration
   tests of #2329 drop the leader's lock session, let a second replica take
   the next term, and check that the old term's in-flight transaction does

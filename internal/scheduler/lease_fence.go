@@ -26,7 +26,38 @@ const defaultTermCacheTTL = time.Second
 type leaseGate struct {
 	mu      sync.Mutex
 	at      time.Time
+	term    int64
 	current bool
+	// reading is held by the one caller that reads the lease; the others
+	// answer from the cache meanwhile instead of queuing on the database.
+	reading sync.Mutex
+}
+
+// cached returns the gate's answer for term when it is younger than ttl.
+func (g *leaseGate) cached(term int64, ttl time.Duration) (current, ok bool) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if g.at.IsZero() || g.term != term || time.Since(g.at) >= ttl {
+		return false, false
+	}
+	return g.current, true
+}
+
+// last is the gate's latest answer for term whatever its age, true when it
+// has none.
+func (g *leaseGate) last(term int64) bool {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	if g.at.IsZero() || g.term != term {
+		return true
+	}
+	return g.current
+}
+
+func (g *leaseGate) store(term int64, current bool) {
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.term, g.current, g.at = term, current, time.Now()
 }
 
 // SetLeaseTerms gives the scheduler its lease's terms, for the pod term
@@ -59,17 +90,27 @@ func (s *Scheduler) TermCurrent(ctx context.Context) bool {
 		return true
 	}
 	g := &s.leaseGate
-	g.mu.Lock()
-	defer g.mu.Unlock()
-	if !g.at.IsZero() && time.Since(g.at) < s.termCacheTTL {
-		return g.current
+	// The cache is keyed by the term, so a new leadership never answers from
+	// the previous one's reading.
+	term := s.leaseTerms.Term()
+	if current, ok := g.cached(term, s.termCacheTTL); ok {
+		return current
+	}
+	if !g.reading.TryLock() {
+		return g.last(term)
+	}
+	defer g.reading.Unlock()
+	if current, ok := g.cached(term, s.termCacheTTL); ok {
+		return current
 	}
 	current, err := s.leaseTerms.Current(ctx)
 	if err != nil {
+		// Cached like an answer, so a database blip costs one read per TTL,
+		// not one per caller.
 		slog.WarnContext(ctx, "reading the scheduler lease term; treating it as current", "error", err)
-		return true
+		current = true
 	}
-	g.current, g.at = current, time.Now()
+	g.store(term, current)
 	return current
 }
 

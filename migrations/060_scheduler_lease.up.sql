@@ -12,8 +12,11 @@
 -- call. The previous binary never increments the term, so its leadership is
 -- guarded by the advisory lock alone, as before.
 --
--- CREATE TRIGGER takes a SHARE ROW EXCLUSIVE lock on its table for an instant;
--- lock_timeout bounds the wait, and the whole file is one transaction.
+-- CREATE TRIGGER takes a SHARE ROW EXCLUSIVE lock on its table, which waits
+-- for the writes in flight and holds new writes (not reads) until the file
+-- commits; lock_timeout bounds each wait, and the whole file is one
+-- transaction. The triggers are new, so there is no DROP TRIGGER first: that
+-- would take an ACCESS EXCLUSIVE lock and block the reads of these tables too.
 BEGIN;
 SET LOCAL lock_timeout = '5s';
 
@@ -31,6 +34,7 @@ INSERT INTO scheduler_lease (id) VALUES (1) ON CONFLICT (id) DO NOTHING;
 -- (stale_leader_term) apart from any other error.
 CREATE OR REPLACE FUNCTION dexaflow_fence_leader_term() RETURNS trigger
     LANGUAGE plpgsql
+    SET search_path FROM CURRENT
     AS $$
 DECLARE
     tag text := current_setting('dexaflow.leader_term', true);
@@ -48,16 +52,12 @@ BEGIN
 END
 $$;
 
-DROP TRIGGER IF EXISTS dexaflow_fence_leader_term ON dag_runs;
 CREATE TRIGGER dexaflow_fence_leader_term BEFORE INSERT OR UPDATE OR DELETE ON dag_runs
     FOR EACH STATEMENT EXECUTE FUNCTION dexaflow_fence_leader_term();
-DROP TRIGGER IF EXISTS dexaflow_fence_leader_term ON task_instances;
 CREATE TRIGGER dexaflow_fence_leader_term BEFORE INSERT OR UPDATE OR DELETE ON task_instances
     FOR EACH STATEMENT EXECUTE FUNCTION dexaflow_fence_leader_term();
-DROP TRIGGER IF EXISTS dexaflow_fence_leader_term ON task_instance_history;
 CREATE TRIGGER dexaflow_fence_leader_term BEFORE INSERT OR UPDATE OR DELETE ON task_instance_history
     FOR EACH STATEMENT EXECUTE FUNCTION dexaflow_fence_leader_term();
-DROP TRIGGER IF EXISTS dexaflow_fence_leader_term ON staging_volumes;
 CREATE TRIGGER dexaflow_fence_leader_term BEFORE INSERT OR UPDATE OR DELETE ON staging_volumes
     FOR EACH STATEMENT EXECUTE FUNCTION dexaflow_fence_leader_term();
 
