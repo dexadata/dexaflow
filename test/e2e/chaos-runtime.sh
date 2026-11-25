@@ -267,10 +267,25 @@ trigger_run() {
     -d '{}' "$API/api/v2/dags/$DAG_ID/dagRuns" | jq -r '.dag_run_id'
 }
 
-wait_task_running() {  # $1=run
+# work_pods lists the names of every chaosdag 'work' pod, in any phase.
+work_pods() {
+  kubectl get pods -n leoflow --no-headers 2>/dev/null | awk '/chaosdag-work-/{print $1}'
+}
+
+# running_work_pod prints the first Running 'work' pod whose name is not in
+# $1 (a newline-separated list taken before the run was triggered), so a
+# scenario finds its own run's pod and never an earlier scenario's leftover
+# (#2470: B once force-deleted A's still-running pod and passed on its own).
+running_work_pod() {  # $1=names to skip
+  kubectl get pods -n leoflow --no-headers 2>/dev/null |
+    awk '/chaosdag-work-.*Running/{print $1}' |
+    grep -vxF -f <(printf '%s\n' "$1") | head -1 || true
+}
+
+wait_task_running() {  # $1=run [$2=work pods that existed before the run]
   local deadline; deadline=$(( $(date +%s) + 90 ))
   while [ "$(date +%s)" -lt "$deadline" ]; do
-    kubectl get pods -n leoflow --no-headers 2>/dev/null | grep -q 'work.*Running' && return 0
+    [ -n "$(running_work_pod "${2:-}")" ] && return 0
     task_states "$1" | grep -q 'failed\|upstream_failed' && return 1
     sleep 3
   done
@@ -282,9 +297,10 @@ wait_task_running() {  # $1=run
 # ─────────────────────────────────────────────────────────────────────────────
 scenario_scheduler_crash() {
   log "SCENARIO A — kill the scheduler mid-run; assert health flips, run resumes, at-most-once"
+  local before; before="$(work_pods)"
   local run; run="$(trigger_run)"
   [ -n "$run" ] && [ "$run" != "null" ] || { bad "A: no run id"; return; }
-  wait_task_running "$run" || { bad "A: 'work' pod never reached Running"; return; }
+  wait_task_running "$run" "$before" || { bad "A: 'work' pod never reached Running"; return; }
 
   # api must currently see the scheduler healthy.
   wait_scheduler_status healthy 20 || { bad "A: scheduler not healthy before the kill"; return; }
@@ -351,12 +367,13 @@ scenario_task_pod_kill() {
     log "B: waiting $(( settled_at - $(date +%s) ))s for the scheduler's settling grace to end"
     sleep $(( settled_at - $(date +%s) ))
   fi
+  local before; before="$(work_pods)"
   local run; run="$(trigger_run)"
   [ -n "$run" ] && [ "$run" != "null" ] || { bad "B: no run id"; return; }
-  wait_task_running "$run" || { bad "B: 'work' pod never reached Running"; return; }
+  wait_task_running "$run" "$before" || { bad "B: 'work' pod never reached Running"; return; }
 
   local pod
-  pod="$(kubectl get pods -n leoflow --no-headers 2>/dev/null | awk '/chaosdag-work-.*Running/{print $1; exit}')"
+  pod="$(running_work_pod "$before")"
   [ -n "$pod" ] || { bad "B: could not find the running work pod"; return; }
 
   # Arm the agent-lost backstop before the kill. That reaper only fires once a TI
