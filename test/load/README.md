@@ -21,8 +21,9 @@ cluster and no executor, so they run on a laptop with just Postgres up.
 | 7 | Code-only deploy: p50 of `dexaflow deploy` after a DAG code change, and the warm-up of the new version's pool | [`deploy_p50/`](deploy_p50/) | ✅ implemented |
 | 8 | Usage event trigger: what recording a usage event adds to a settle and to a 1,000-task cascade | [`usage_settle/`](usage_settle/) | ✅ implemented |
 | 9 | Primary key order: insert rate, WAL and index size of a random UUIDv4 key against a time-ordered UUIDv7 | [`uuid_keys/`](uuid_keys/) | ✅ implemented |
+| 10 | Service level objectives over a soak or a failure injection run, from `/metrics` scrapes | [`slo_check/`](slo_check/) | ✅ implemented |
 
-Experiments 1, 4, 6, 7, 8 and 9 are built. The others are documented extension points.
+Experiments 1, 4, 6, 7, 8, 9 and 10 are built. The others are documented extension points.
 Experiments 4 and 7 drive a running control plane instead of the packages:
 Experiment 4 needs only an api role process and its Postgres, Experiment 7
 the CLI, and its warm-up half a cluster with warm pools on.
@@ -341,3 +342,34 @@ rows, the WAL per row, the sizes of the key index and of the table, and the
 rate of point lookups by key, as a table for
 [BASELINE.md](BASELINE.md#primary-key-order).
 
+## Experiment 10: service level objectives
+
+The [service level objectives](https://dexaflow.dexadata.ai/operate/service-level-objectives/)
+of the production profile, judged over a run that has no Prometheus: the
+long soak, a failure injection row (#2314). Scrape every control plane
+process's metrics listener every 15 seconds for the whole run, each process
+into a directory of its own (on k3d, port-forward each pod, not the
+Service), then hand the directories over:
+
+```sh
+mkdir -p scrapes/server
+while sleep 15; do curl -s localhost:9090/metrics > "scrapes/server/$(date +%s).prom"; done &
+# ... the run ...
+kill %1
+go run ./test/load/slo_check scrapes/*/
+```
+
+Within a directory, each objective's counters are summed as increases between
+consecutive scrapes; a counter that went down is a restart, counted from zero,
+as `increase()` does. The control plane exports no process start time, so a
+restarted process whose counters climbed past the old values before the next
+scrape is undercounted, and a process killed between two scrapes loses its
+counts since the last one: keep the interval short in a run that kills it. A
+scrape that does not parse (cut off by a kill) or holds no `dexaflow_` series
+(an empty file from a refused connection) is skipped with a warning. Leadership is the time of the run that
+no stretch with a growing leader tick count covers, on any process. It prints
+one row per objective with the target, the measured share and the number of
+events, and exits 1 when one is broken. An objective with no event is not
+measured, never met. The flags `--schedule-punctuality`, `--task-start`,
+`--platform-failures`, `--api-availability` and `--leaderless` change the
+targets; the defaults are the page's.

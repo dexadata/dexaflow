@@ -131,3 +131,63 @@ tests:
       - equal:
           path: spec.groups[0].rules[0].annotations.runbook_url
           value: https://dexaflow.dexadata.ai/operate/runbooks/schema-not-ready/
+
+  - it: renders the slo group with recording rules and two burn rate alerts (#2314)
+    set:
+      metrics.prometheusRule.enabled: true
+    asserts:
+      - equal:
+          path: spec.groups[2].name
+          value: dexaflow-slo
+      # 4 objectives x (1 objective + 4 error windows + 2 event windows), the
+      # leaderless rule, 2 alerts.
+      - lengthEqual:
+          path: spec.groups[2].rules
+          count: 31
+      - equal:
+          path: spec.groups[2].rules[0].expr
+          value: vector(0.99)
+      - equal:
+          path: spec.groups[2].rules[0].labels
+          value: {namespace: data, slo: schedule_punctuality}
+      - equal:
+          path: spec.groups[2].rules[29].alert
+          value: DexaflowErrorBudgetFastBurn
+      - equal:
+          path: spec.groups[2].rules[30].annotations.runbook_url
+          value: https://dexaflow.dexadata.ai/operate/runbooks/error-budget-burn/
+
+  - it: takes the objectives from values
+    set:
+      metrics.prometheusRule.enabled: true
+      metrics.prometheusRule.slo.objectives.apiAvailability: 0.9995
+    asserts:
+      - equal:
+          path: spec.groups[2].rules[21].expr
+          value: vector(0.9995)
+      - equal:
+          path: spec.groups[2].rules[21].labels.slo
+          value: api_availability
+
+  - it: leaves the slo group out when slo.enabled is false
+    set:
+      metrics.prometheusRule.enabled: true
+      metrics.prometheusRule.slo.enabled: false
+    asserts:
+      - lengthEqual:
+          path: spec.groups
+          count: 2
+
+  # --reuse-values from a release whose values predate the slo key.
+  - it: renders the slo group with the documented objectives when the key is absent
+    set:
+      metrics.prometheusRule.enabled: true
+      metrics.prometheusRule.slo: null
+    asserts:
+      - equal:
+          path: spec.groups[2].rules[7].expr
+          value: vector(0.99)
+      - equal:
+          path: spec.groups[2].rules[14].expr
+          value: vector(0.999)
+
