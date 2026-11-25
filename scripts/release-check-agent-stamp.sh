@@ -26,8 +26,9 @@ die() { printf 'error: %s\n' "$*" >&2; exit 1; }
 #   dexaflow v0.5.10 (commit 1a2b3c, built 2026-11-13T00:00:00Z, go1.26.10)
 stamp_problem() {
 	local out="$1" tag="$2" ver commit
-	ver="$(printf '%s\n' "$out" | sed -n 's/^dexaflow \([^ ]*\) (commit \([^,]*\), built .*/\1/p' | head -n1)"
-	commit="$(printf '%s\n' "$out" | sed -n 's/^dexaflow \([^ ]*\) (commit \([^,]*\), built .*/\2/p' | head -n1)"
+	# A GA promoted from its rc (ADR 0109) prints "(built as <rc>, commit ...".
+	ver="$(printf '%s\n' "$out" | sed -nE 's/^dexaflow ([^ ]*) \((built as [^,]*, )?commit ([^,]*), built .*/\1/p' | head -n1)"
+	commit="$(printf '%s\n' "$out" | sed -nE 's/^dexaflow ([^ ]*) \((built as [^,]*, )?commit ([^,]*), built .*/\3/p' | head -n1)"
 	if [ -z "$ver" ]; then
 		echo "the agent printed no version line: $out"
 	elif [ "$ver" != "$tag" ]; then
@@ -49,6 +50,10 @@ self_test() {
 	[ "$got" = "the agent reports version v0.5.10 with no commit stamp" ] || { echo "FAIL: missing commit accepted: $got"; return 1; }
 	got="$(stamp_problem 'exec format error' v0.5.10)"
 	[ "$got" = "the agent printed no version line: exec format error" ] || { echo "FAIL: garbage accepted: $got"; return 1; }
+	got="$(stamp_problem 'dexaflow v0.6.0 (built as v0.6.0-rc.2, commit 1a2b3c4d, built 2026-11-30T00:00:00Z, go1.26.11)' v0.6.0)"
+	[ -z "$got" ] || { echo "FAIL: a promoted agent was refused: $got"; return 1; }
+	got="$(stamp_problem 'dexaflow v0.6.0-rc.2 (commit 1a2b3c4d, built 2026-11-30T00:00:00Z, go1.26.11)' v0.6.0)"
+	[ "$got" = "the agent reports version v0.6.0-rc.2, want v0.6.0" ] || { echo "FAIL: an unpromoted rc accepted for its GA: $got"; return 1; }
 	echo "OK: stamp_problem"
 }
 
