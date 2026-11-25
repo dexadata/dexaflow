@@ -349,6 +349,12 @@ spec:
               value: {{ $v | quote }}
             {{- end }}
             {{- end }}
+            {{- $pto := include "leoflow.profiled" (dict "ctx" .ctx "value" .ctx.Values.executor.pendingTimeoutSeconds "cluster" 900) }}
+            {{- if and $pto (ne $pto "0") }}
+            # Fail a task whose pod no node can take after this long (#1609).
+            - name: LEOFLOW_EXECUTOR_PENDING_TIMEOUT_SECONDS
+              value: {{ $pto | quote }}
+            {{- end }}
             {{- if .ctx.Values.executor.collectSettledRunPods }}
             # Opt-in: collect a settled run's finished task pods in one
             # DeleteCollection instead of one delete per pod after the grace period.

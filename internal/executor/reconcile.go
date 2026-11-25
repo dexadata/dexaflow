@@ -2,6 +2,7 @@ package executor
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"strconv"
@@ -45,13 +46,15 @@ type verdict struct {
 	reason     string     // failure reason (settleFailed, settleInfra)
 	at         time.Time  // next-poke time (settleReschedule)
 	fromRecord bool       // a durable outcome record drove this, not pod phase
+	collect    bool       // delete the pod right after the settle (a bound on a Pending pod)
+	bound      string     // the Pending bound that settled it ("unschedulable", "image_pull"), or ""
 }
 
 // unrecoverableWaiting lists container "waiting" reasons that never self-resolve
-// and mean the agent never started, so no state will be reported.
+// and mean the agent never started, so no state will be reported. A failing
+// image pull is not one: the kubelet retries it, and Reconciler.classify
+// bounds it (#1609).
 var unrecoverableWaiting = map[string]bool{
-	"ImagePullBackOff":           true,
-	"ErrImagePull":               true,
 	"InvalidImageName":           true,
 	"CreateContainerError":       true,
 	"CreateContainerConfigError": true,
@@ -453,9 +456,9 @@ func podFailureReason(pod *corev1.Pod) string {
 // unbounded, operator-controlled string cannot reach the end-user field.
 func waitingFailureReason(reason, message string) string {
 	switch reason {
-	case "ImagePullBackOff", "ErrImagePull", "InvalidImageName":
+	case "InvalidImageName":
 		return boundReason(fmt.Sprintf(
-			"%s: the task image could not be pulled; check the image reference and the pull secret.", reason))
+			"%s: the task image reference is not a valid image name; check the image reference.", reason))
 	case "CreateContainerError":
 		return boundReason(fmt.Sprintf(
 			"%s: the task container could not be created; check the pod spec, mounts, and image entrypoint.", reason))
@@ -611,6 +614,14 @@ type Reconciler struct {
 	// infra mark visible (ADR 0052 amendment, part 1); nil leaves them off.
 	overrideRecorder InfraOverrideRecorder
 	overrideSink     logSink
+	// pendingTimeout is executor.pending_timeout_seconds (see classify); zero
+	// leaves an unschedulable pod waiting.
+	pendingTimeout time.Duration
+	// decisions counts the Pending bounds' settles; nil records nothing.
+	decisions DecisionRecorder
+	// unsched starts a pod's unschedulable clock no earlier than this
+	// reconciler's first sight of it (see unschedTracker).
+	unsched unschedTracker
 }
 
 // NewReconciler builds a Reconciler over the given cluster and outcome reporter.
@@ -658,7 +669,7 @@ func (r *Reconciler) Reconcile(ctx context.Context) error {
 	}
 	runs := newRunTracker(r.settledRuns != nil)
 	for _, pod := range pods {
-		v := classifyPod(pod)
+		v := r.classify(pod, r.now())
 		if !v.terminal {
 			runs.block(pod)
 			continue
@@ -670,6 +681,8 @@ func (r *Reconciler) Reconcile(ctx context.Context) error {
 		// try again next tick.
 		if v.settle != settleNothing {
 			if err := r.settlePod(ctx, pod, v); err != nil {
+				// A failed settle, or a Pending bound on an attempt that
+				// started since the snapshot: keep the pod either way.
 				runs.block(pod)
 				continue
 			}
@@ -682,6 +695,10 @@ func (r *Reconciler) Reconcile(ctx context.Context) error {
 			// reschedule_at and flap the sensor. It exited cleanly (nothing to
 			// inspect), so collect it now instead of after the grace period, well
 			// before the next redispatch. (ADR 0052)
+			if v.collect {
+				r.collectBound(ctx, pod)
+				continue
+			}
 			if v.settle == settleReschedule {
 				r.collect(ctx, pod)
 				continue
@@ -696,6 +713,7 @@ func (r *Reconciler) Reconcile(ctx context.Context) error {
 	// Every pod was visited: stamp the sweep before the collection, so its
 	// apiserver calls never delay the reaper's settling gate.
 	r.lastSweepCompleted.Store(started.UnixNano())
+	r.unsched.prune(started)
 	// Confirm the provisional infra marks against this sweep's pods (ADR 0052
 	// amendment, part 2).
 	r.confirmInfraMarks(ctx, pods)
@@ -758,6 +776,9 @@ func (r *Reconciler) settlePod(ctx context.Context, pod *corev1.Pod, v verdict) 
 		return nil
 	}
 	if err := r.recordOutcome(ctx, tiID, tryNumber, epoch, v); err != nil {
+		if errors.Is(err, errAttemptStarted) {
+			return err
+		}
 		slog.Error("recording task pod outcome", "pod", pod.Name, "task_instance", tiID,
 			"settle", v.settle, "from_record", v.fromRecord, "error", err)
 		return err
@@ -766,6 +787,9 @@ func (r *Reconciler) settlePod(ctx context.Context, pod *corev1.Pod, v verdict) 
 }
 
 func (r *Reconciler) recordOutcome(ctx context.Context, tiID string, tryNumber, epoch int, v verdict) error {
+	if v.bound != "" {
+		return r.settleBound(ctx, tiID, tryNumber, epoch, v)
+	}
 	switch v.settle {
 	case settleSucceeded:
 		return r.succeedFromRecord(ctx, tiID, tryNumber, epoch, v.fromRecord)

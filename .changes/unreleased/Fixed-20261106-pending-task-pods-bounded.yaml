@@ -1,0 +1,20 @@
+kind: Fixed
+body: |-
+  **Task pods that never start are bounded.** A pod the scheduler could not
+  place (a `node_selector` no node matches, a missing toleration, a request
+  larger than any node) left its task `queued` forever, holding its pool slot,
+  and a failing image pull failed the task on first sight, spending a retry on
+  a registry 429 (#1609). The reconciler now leaves a failing pull to the
+  kubelet's back-off for 5 minutes, then fails the attempt as
+  `image_pull_failed` on the infra rail, which re-places it without spending a
+  retry. The new `executor.pending_timeout_seconds` (Helm
+  `executor.pendingTimeoutSeconds`, default `0`, off; `900` under the chart's
+  `cluster` profile) fails a task whose pod stayed unschedulable that long,
+  with `unschedulable:` and the scheduler's message; it matters under the
+  `exchange` agent credential transport, since under `envvar` the
+  `start_expired` bound re-places a Pending pod after 8 minutes. Both bounds
+  settle an attempt only before it started and delete the pod when they
+  settle its task. Behavior change: a release on the `cluster` profile gets
+  the 15 minute bound on upgrade; raise `executor.pendingTimeoutSeconds` above
+  the slowest node your cluster autoscaler adds, or set it to `0`.
+time: 2026-11-06T20:00:00.000000000+00:00
