@@ -1314,3 +1314,23 @@ setting you set yourself, through the chart, a config file or a
 | `executor.task_secret_mount_path` | `/etc/leoflow/secrets` | `/etc/dexaflow/secrets` | Nothing to do: at the default, the Secret is mounted at both paths, so a DAG that reads the old one keeps working. Move DAGs to the new path when convenient. |
 | `executor.agent_path` (subprocess executor) | `leoflow-agent` | `dexaflow-agent` | Nothing to do: on a host with only `leoflow-agent` on `PATH`, the server runs it and logs a warning. |
 | `executor.http.user_agent` | `leoflow/0.1` | `dexaflow/<server version>` | Pin it if a service you call matches on the old header. |
+
+## Upgrading to 0.6.0: the task-pod network policy is on
+
+`taskNetworkPolicy.enabled` now defaults to `true`
+([#539](https://github.com/dexadata/dexaflow/issues/539)). A release that left it
+unset gets the policy on upgrade: task pods lose all ingress and their egress to
+the cloud metadata range `169.254.0.0/16`, and keep DNS, the control-plane gRPC
+and every other destination. See
+[Task-pod network policy](/operate/task-pod-hardening/#task-pod-network-policy).
+
+| Your install | What the upgrade does |
+|---|---|
+| Sets `taskNetworkPolicy.enabled` either way | Nothing changes. |
+| Leaves it unset, and no task reads the metadata endpoint or accepts connections | The policy is created. Tasks run as before. |
+| Leaves it unset, and tasks get keyless credentials from GKE Workload Identity or EKS Pod Identity (external secrets, cloud SDKs with no key) | Those tasks fail to authenticate. Before upgrading, re-allow the metadata host with `taskNetworkPolicy.allowMetadataEgress` (a `/32` each; see [External secrets](/operate/external-secrets/)), or set `taskNetworkPolicy.enabled: false` to keep the old behavior. AWS IRSA needs nothing. |
+| Leaves it unset, and something connects into a running task pod | Those connections are refused. Set `taskNetworkPolicy.enabled: false`, or add the ingress your cluster needs with a NetworkPolicy of your own. |
+
+The policy only takes effect on a CNI that enforces NetworkPolicy. On Cilium,
+GKE Dataplane V2 included, also set `taskNetworkPolicy.blockPrivateNetworks: true`,
+as the task pod hardening page explains.

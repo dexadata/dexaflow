@@ -483,30 +483,29 @@ deploy, layer on:
   gRPC port back. Do not use `[{namespaceSelector: {}}]` for this: an empty
   namespace selector matches every namespace. It renders nothing for task pods.
 - **`taskNetworkPolicy.enabled` is the task-pod policy, and it defaults to
-  `false`.** This is the one that governs the pods running untrusted,
-  author-supplied DAG code: it denies all ingress and allows egress only to DNS,
-  the control-plane gRPC, and every other destination *except* the cloud-metadata
-  range `169.254.0.0/16`. It is the network-layer containment
+  `true` since v0.6.0** ([#539](https://github.com/dexadata/dexaflow/issues/539)).
+  This is the one that governs the pods running untrusted, author-supplied DAG
+  code: it denies all ingress and allows egress only to DNS, the control-plane
+  gRPC, and every other destination *except* the cloud-metadata range
+  `169.254.0.0/16`. It is the network-layer containment
   [ADR 0048](/project/adrs/0048-no-user-code-in-control-plane/) leans on when it
-  argues that untrusted code is contained outside the control plane, so a
-  production deploy should set it explicitly:
-  `--set taskNetworkPolicy.enabled=true`. Two knobs go with it:
+  argues that untrusted code is contained outside the control plane.
+  `--set taskNetworkPolicy.enabled=false` opts out. Two knobs go with it:
   `taskNetworkPolicy.blockPrivateNetworks=true` *additionally* denies RFC1918 and
   the apiserver (opt-in, because a DAG calling an internal service is a
   legitimate orchestration pattern the policy cannot tell apart from the
   apiserver by IP), and `taskNetworkPolicy.allowMetadataEgress` re-permits single
-  hosts inside the blocked metadata range — one `/32` each, never the whole
+  hosts inside the blocked metadata range: one `/32` each, never the whole
   range, and the chart **fails the render** on anything wider (IPv6: `/128`),
   because an additive allow rule naming the range would override the `except`
-  and delete the block rather than widen the exception. That last one is why the
-  policy is opt-in rather than on by default:
-  both clouds serve **keyless workload identity from the link-local range**, so
-  turning the policy on breaks keyless external-secrets auth on GKE Workload
-  Identity (`169.254.169.254/32` and `169.254.169.252/32`, see
+  and delete the block rather than widen the exception. Check that one before
+  the first task runs: both clouds serve **keyless workload identity from the
+  link-local range**, so the policy breaks keyless external-secrets auth on GKE
+  Workload Identity (`169.254.169.254/32` and `169.254.169.252/32`, see
   [External secrets](/operate/external-secrets/)) and EKS Pod Identity
-  (`169.254.170.23/32`)
-  until the exception is added. AWS IRSA needs no exception — it uses the public
-  STS endpoint. The install NOTES warn while the value is off.
+  (`169.254.170.23/32`) until the exception is added. AWS IRSA needs no
+  exception: it uses the public STS endpoint. The install NOTES warn while the
+  value is off.
 - **Both policies need a CNI that *enforces* NetworkPolicy.** A rendered policy
   object is not proof of enforcement: kindnet (the default on `kind`) enforces
   nothing; the AWS VPC CNI enforces policy only when its network-policy agent is

@@ -6,14 +6,30 @@ templates:
 set:
   nameOverride: leoflow
 tests:
-  - it: not rendered when taskNetworkPolicy.enabled is false (default)
+  - it: not rendered when taskNetworkPolicy.enabled is false (the opt-out)
+    set:
+      database.url: postgres://h/d
+      redis.url: redis://h/0
+      auth.jwtSecret: jwt
+      taskNetworkPolicy.enabled: false
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  # #539: on by default since 0.6.0, with nothing set.
+  - it: rendered by default, blocking the metadata range
     set:
       database.url: postgres://h/d
       redis.url: redis://h/0
       auth.jwtSecret: jwt
     asserts:
       - hasDocuments:
-          count: 0
+          count: 1
+      - isKind:
+          of: NetworkPolicy
+      - contains:
+          path: spec.egress[2].to[0].ipBlock.except
+          content: 169.254.0.0/16
 
   - it: renders in taskNamespace, selects task pods, denies ingress, blocks metadata by default
     set:
