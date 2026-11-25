@@ -375,6 +375,14 @@ gen-config-reference: ## Regenerate the configuration reference tables from inte
 gen-config-reference-check: ## Fail when website/content/reference/configuration.md is stale (also run by go test)
 	go run ./internal/tools/configref -check
 
+.PHONY: gen-chart-schema
+gen-chart-schema: ## Regenerate helm/dexaflow/values.schema.json from values.yaml (#2320)
+	go run ./internal/tools/chartschema
+
+.PHONY: gen-chart-schema-check
+gen-chart-schema-check: ## Fail when helm/dexaflow/values.schema.json is stale (also run by go test)
+	go run ./internal/tools/chartschema -check
+
 .PHONY: gen-metrics-reference
 gen-metrics-reference: ## Regenerate the metrics reference table from the registered collectors
 	go run ./internal/tools/metricsref

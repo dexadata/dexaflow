@@ -1,0 +1,27 @@
+# Exceptions to the rules chartschema derives from values.yaml (see main.go).
+# Every entry must name a value values.yaml has.
+
+# Objects handed to Kubernetes as written: they accept any key, not only the
+# ones the default shows.
+open:
+  - resources
+  - podSecurityContext
+  - securityContext
+  - migrations.resources
+  - migrations.podSecurityContext
+  - migrations.securityContext
+  - builder.resources
+  - builder.seccompProfile
+  - builder.appArmorProfile
+  - ingress.maintenancePage.resources
+  - metrics.grafanaDashboard.labels
+
+# Values that accept a form their default does not show. null is always added.
+types:
+  podDisruptionBudget.minAvailable: [integer, string]
+  # Lists whose template guard explains the --set list syntax when a scalar
+  # arrives: the schema lets the scalar through so that message is the one
+  # the operator reads.
+  config.cors.allowedOrigins: [array, string]
+  deploy.defaults.platforms: [array, string]
+  taskNetworkPolicy.allowMetadataEgress: [array, string]
