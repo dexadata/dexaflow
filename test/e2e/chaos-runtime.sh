@@ -333,8 +333,15 @@ scenario_scheduler_crash() {
     bad "A: run did not resume to success within 180s (task states: $(echo "$states" | tr '\n' ' '))"
     # Keep the agent's side of the story (#2470): the work pod is reaped once
     # the grace ends, and with it the only record of why its report did not land.
+    # A stuck agent logs nothing (its failures all log, and none did), so a
+    # SIGQUIT first makes the Go runtime print every goroutine's stack, which
+    # names the call it is blocked in. The agent is PID 1 of the container.
     local p
-    for p in $(kubectl get pods -n leoflow --no-headers 2>/dev/null | awk '/chaosdag-work-/{print $1}'); do
+    for p in $(kubectl get pods -n leoflow --no-headers 2>/dev/null | awk '/chaosdag-work-.*Running/{print $1}'); do
+      kubectl exec -n leoflow "$p" -- sh -c 'kill -QUIT 1' >/dev/null 2>&1 || true
+    done
+    sleep 3
+    for p in $(work_pods); do
       kubectl logs -n leoflow "$p" --all-containers >"$WORKDIR/A-$p.log" 2>&1 || true
     done
     return
