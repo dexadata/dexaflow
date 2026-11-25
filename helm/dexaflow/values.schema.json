@@ -1023,6 +1023,89 @@
             "null"
           ],
           "pattern": "^(true|false)$"
+        },
+        "sentinel": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "properties": {
+            "master": {
+              "type": [
+                "string",
+                "number",
+                "integer",
+                "boolean",
+                "null"
+              ]
+            },
+            "addrs": {
+              "type": [
+                "array",
+                "null"
+              ]
+            },
+            "existingSecret": {
+              "type": [
+                "string",
+                "number",
+                "integer",
+                "boolean",
+                "null"
+              ]
+            }
+          },
+          "additionalProperties": false
+        },
+        "cluster": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "properties": {
+            "addrs": {
+              "type": [
+                "array",
+                "null"
+              ]
+            }
+          },
+          "additionalProperties": false
+        },
+        "dialTimeout": {
+          "type": [
+            "string",
+            "number",
+            "integer",
+            "boolean",
+            "null"
+          ]
+        },
+        "readTimeout": {
+          "type": [
+            "string",
+            "number",
+            "integer",
+            "boolean",
+            "null"
+          ]
+        },
+        "writeTimeout": {
+          "type": [
+            "string",
+            "number",
+            "integer",
+            "boolean",
+            "null"
+          ]
+        },
+        "poolSize": {
+          "type": [
+            "integer",
+            "string",
+            "null"
+          ],
+          "pattern": "^-?[0-9]+$"
         }
       },
       "additionalProperties": false

@@ -13,11 +13,11 @@ import (
 // (#2357): one INCR and EXPIRE per counted event, in one round trip, so every
 // replica behind the Service spends the same budget.
 type RedisRateCounter struct {
-	client *redis.Client
+	client redis.UniversalClient
 }
 
 // NewRedisRateCounter builds the shared rate limit counter over client.
-func NewRedisRateCounter(client *redis.Client) *RedisRateCounter {
+func NewRedisRateCounter(client redis.UniversalClient) *RedisRateCounter {
 	return &RedisRateCounter{client: client}
 }
 
