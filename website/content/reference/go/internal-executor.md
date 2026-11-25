@@ -205,6 +205,12 @@ const (
 const EventResilienceBackstopDisabled = "resilience_backstop_disabled"
 ```
 
+<a name="LeaderTermAnnotation"></a>LeaderTermAnnotation names the scheduler lease term of the leader that created a task pod \(ADR 0106, point 5\).
+
+```go
+const LeaderTermAnnotation = "leoflow.io/leader-term"
+```
+
 <a name="ReapPageSize"></a>ReapPageSize is how many candidates a paged reaper list returns per sweep. It bounds one sweep's work after a long outage, as the old fixed LIMIT did.
 
 ```go
@@ -514,7 +520,7 @@ func (d Disposition) String() string
 String renders the disposition for logs and error notes.
 
 <a name="Executor"></a>
-## type [Executor](<https://github.com/dexadata/dexaflow/blob/main/internal/executor/executor.go#L173-L175>)
+## type [Executor](<https://github.com/dexadata/dexaflow/blob/main/internal/executor/executor.go#L177-L179>)
 
 Executor runs or dispatches a task. For asynchronous executors \(Kubernetes/Docker/subprocess\) the return reflects dispatch only, and the agent reports the final state over gRPC. The Disposition tells the scheduler WHY a dispatch failed \(transient cluster Backpressure, an Unavailable API, a permanent Rejected, among others\), so the orchestration layer never has to inspect runtime\-specific error types itself \(ADR 0051 Phase 4\). A successful dispatch returns \(Dispatched, nil\); a failure returns the classified disposition alongside the non\-nil cause \(its text feeds the scheduler's note/log\).
 
@@ -1572,7 +1578,7 @@ func (r *Reconciler) SetSettledRunCollection(c SettledRunChecker)
 SetSettledRunCollection turns on collecting a settled run's finished pods in one DeleteCollection. Nil \(the default\) keeps the age\-based GC only.
 
 <a name="Request"></a>
-## type [Request](<https://github.com/dexadata/dexaflow/blob/main/internal/executor/executor.go#L35-L163>)
+## type [Request](<https://github.com/dexadata/dexaflow/blob/main/internal/executor/executor.go#L35-L167>)
 
 Request bundles everything an executor needs to run a single task instance.
 
@@ -1588,6 +1594,10 @@ type Request struct {
     // request (ADR 0051 amendment). It is stamped into the pod's identity
     // annotation so the exchanged token names this execution.
     AttemptEpoch int
+    // LeaderTerm is the scheduler lease term of the leader that created this
+    // request (ADR 0106), 0 when unknown. It is stamped on the pod as
+    // LeaderTermAnnotation.
+    LeaderTerm int64
 
     Image           string
     ImagePullPolicy string

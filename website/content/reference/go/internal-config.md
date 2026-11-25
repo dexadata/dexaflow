@@ -902,7 +902,7 @@ type DeploySection struct {
 ```
 
 <a name="DispatchSection"></a>
-## type [DispatchSection](<https://github.com/dexadata/dexaflow/blob/main/internal/config/server_execution.go#L331-L350>)
+## type [DispatchSection](<https://github.com/dexadata/dexaflow/blob/main/internal/config/server_execution.go#L337-L356>)
 
 DispatchSection sizes the BufferedDispatcher \(\#127\). BufferSize=0 keeps the scheduler tick synchronous with the inner dispatcher, the right shape for Lite \(subprocess fork is microseconds\). BufferSize\>0 enables the worker pool, the right shape for Pro \(Kubernetes API calls add real latency\). The defaults are set per\-edition by configsetup so the user does not have to think about this; an operator can still tune the knobs.
 
@@ -1550,7 +1550,7 @@ type PlatformDefaultsSection struct {
 ```
 
 <a name="PoolsSection"></a>
-## type [PoolsSection](<https://github.com/dexadata/dexaflow/blob/main/internal/config/server_execution.go#L317-L323>)
+## type [PoolsSection](<https://github.com/dexadata/dexaflow/blob/main/internal/config/server_execution.go#L323-L329>)
 
 PoolsSection is scheduler.pools \(\#2173\).
 
@@ -1604,7 +1604,7 @@ type RemoteBuilderSection struct {
 ```
 
 <a name="RetentionSection"></a>
-## type [RetentionSection](<https://github.com/dexadata/dexaflow/blob/main/internal/config/server_execution.go#L357-L383>)
+## type [RetentionSection](<https://github.com/dexadata/dexaflow/blob/main/internal/config/server_execution.go#L363-L389>)
 
 RetentionSection configures the leader\-only retention janitor, which deletes metadata rows past a per\-class age. Runs and the audit log are kept by default \(0 days\); the usage events keep 30 days, and they exist only once an operator turns their recording on. The pacing knobs keep each statement small and each cycle bounded.
 
@@ -1639,7 +1639,7 @@ type RetentionSection struct {
 ```
 
 <a name="RetentionSection.Active"></a>
-### func \(RetentionSection\) [Active](<https://github.com/dexadata/dexaflow/blob/main/internal/config/server_execution.go#L399>)
+### func \(RetentionSection\) [Active](<https://github.com/dexadata/dexaflow/blob/main/internal/config/server_execution.go#L405>)
 
 ```go
 func (r RetentionSection) Active(usageRecording bool) bool
@@ -1648,7 +1648,7 @@ func (r RetentionSection) Active(usageRecording bool) bool
 Active reports whether the janitor has work: a run or audit class, or the usage events window while recording is on. With recording off the table only holds what an earlier recording left, pruned whenever the janitor runs for another class.
 
 <a name="RetentionSection.Enabled"></a>
-### func \(RetentionSection\) [Enabled](<https://github.com/dexadata/dexaflow/blob/main/internal/config/server_execution.go#L391>)
+### func \(RetentionSection\) [Enabled](<https://github.com/dexadata/dexaflow/blob/main/internal/config/server_execution.go#L397>)
 
 ```go
 func (r RetentionSection) Enabled() bool
@@ -1657,7 +1657,7 @@ func (r RetentionSection) Enabled() bool
 Enabled reports whether the runs or the audit log class is configured.
 
 <a name="RetentionSection.Validate"></a>
-### func \(RetentionSection\) [Validate](<https://github.com/dexadata/dexaflow/blob/main/internal/config/server_execution.go#L404>)
+### func \(RetentionSection\) [Validate](<https://github.com/dexadata/dexaflow/blob/main/internal/config/server_execution.go#L410>)
 
 ```go
 func (r RetentionSection) Validate() error
@@ -1666,7 +1666,7 @@ func (r RetentionSection) Validate() error
 Validate is ValidateWith for an install that does not record usage events.
 
 <a name="RetentionSection.ValidateWith"></a>
-### func \(RetentionSection\) [ValidateWith](<https://github.com/dexadata/dexaflow/blob/main/internal/config/server_execution.go#L411>)
+### func \(RetentionSection\) [ValidateWith](<https://github.com/dexadata/dexaflow/blob/main/internal/config/server_execution.go#L417>)
 
 ```go
 func (r RetentionSection) ValidateWith(usageRecording bool) error
@@ -1675,7 +1675,7 @@ func (r RetentionSection) ValidateWith(usageRecording bool) error
 ValidateWith rejects a negative window always, and pacing that would make the janitor unbounded or a busy loop when it has work \(Active\): a run or audit class, or the usage events window while usageRecording is on. So the default 30 day window checks nothing new on an install that does not record.
 
 <a name="SchedulerSection"></a>
-## type [SchedulerSection](<https://github.com/dexadata/dexaflow/blob/main/internal/config/server_execution.go#L295-L314>)
+## type [SchedulerSection](<https://github.com/dexadata/dexaflow/blob/main/internal/config/server_execution.go#L295-L320>)
 
 SchedulerSection configures the scheduler loop.
 
@@ -1690,10 +1690,16 @@ type SchedulerSection struct {
     // triggers an early tick instead of waiting for the next interval, which
     // stays the upper bound. Off by default (ADR 0062): the tick then promotes
     // one step per interval, as it always has.
-    EagerPromotion bool            `mapstructure:"eager_promotion"`
-    Dispatch       DispatchSection `mapstructure:"dispatch"`
-    Alerts         AlertsSection   `mapstructure:"alerts"`
-    Pools          PoolsSection    `mapstructure:"pools"`
+    EagerPromotion bool `mapstructure:"eager_promotion"`
+    // LeaseFencing fences the leader's writes by its lease term (ADR 0106,
+    // #2329): the scheduler's writers run on a dedicated pool whose sessions
+    // carry the term, a new leader ends the sessions of older terms, and the
+    // database refuses a write from a session of an older term. Off by
+    // default for one minor; the chart's cluster profile turns it on.
+    LeaseFencing bool            `mapstructure:"lease_fencing"`
+    Dispatch     DispatchSection `mapstructure:"dispatch"`
+    Alerts       AlertsSection   `mapstructure:"alerts"`
+    Pools        PoolsSection    `mapstructure:"pools"`
     // PoolStarvationThreshold is how long a task held only by its pool waits
     // before the pool is reserved for it, so tasks of fewer slots cannot keep
     // a larger one out forever (ADR 0066 §4). 0 disables reservations. Read

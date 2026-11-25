@@ -92,18 +92,11 @@ func startSchedulerSide(ctx context.Context, cfg *config.ServerConfig, pg *stora
 	// them; unset, schedPG is pg and nothing changes. The agent gRPC handlers
 	// above write their execution store through the agent pool, and read the
 	// repository they share with the API on the main pool.
-	lease, closeLease, lerr := openSchedulerLease(ctx, cfg, logger)
-	if lerr != nil {
-		stopGRPCWithin(grpcSrv, grpcStopTimeout, logger, inflight.Count)
-		releaseAgentPG()
-		return nil, false, nil, lerr
-	}
-	schedPG, releaseSchedPG, perr := schedulerPool(ctx, pg, cfg, lease, metrics)
+	lease, closeLease, schedPG, releaseSchedPG, perr := openSchedulerStorage(ctx, pg, cfg, metrics, logger)
 	if perr != nil {
-		closeLease()
 		stopGRPCWithin(grpcSrv, grpcStopTimeout, logger, inflight.Count)
 		releaseAgentPG()
-		return nil, false, nil, fmt.Errorf("scheduler pool: %w", perr)
+		return nil, false, nil, perr
 	}
 	schedExec := execStore
 	if schedPG != pg {
@@ -276,6 +269,21 @@ func openSchedulerLease(ctx context.Context, cfg *config.ServerConfig, logger *s
 		logger.Info("scheduler leader writes are fenced by the lease term (scheduler.lease_fencing, ADR 0106)")
 	}
 	return lease, closeLease, nil
+}
+
+// openSchedulerStorage opens the leadership lease and the scheduler side's
+// database handle, closing the lease when the handle cannot be opened.
+func openSchedulerStorage(ctx context.Context, pg *storage.Postgres, cfg *config.ServerConfig, metrics *observability.Metrics, logger *slog.Logger) (lease *storage.SchedulerLease, closeLease func(), schedPG *storage.Postgres, release func(), err error) {
+	lease, closeLease, err = openSchedulerLease(ctx, cfg, logger)
+	if err != nil {
+		return nil, nil, nil, nil, err
+	}
+	schedPG, release, err = schedulerPool(ctx, pg, cfg, lease, metrics)
+	if err != nil {
+		closeLease()
+		return nil, nil, nil, nil, fmt.Errorf("scheduler pool: %w", err)
+	}
+	return lease, closeLease, schedPG, release, nil
 }
 
 // schedulerPool returns the scheduler side's database handle: with fencing
