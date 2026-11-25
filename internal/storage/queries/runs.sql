@@ -2098,3 +2098,13 @@ FROM task_instances ti
 JOIN tenants t ON t.id = ti.tenant_id
 WHERE ti.state IN ('scheduled', 'queued')
 GROUP BY t.name, ti.state;
+
+-- name: TaskAttempts :many
+-- The attempt each listed task instance is on, for the reconciler's abandoned
+-- pod teardown (#2430): the pods it lists are matched against it, and a pod
+-- whose attempt is not the live one (same try and epoch, state queued or
+-- running, the predicate RecordTaskHeartbeat answers by) is stopped. One read
+-- per sweep, by primary key, for the live task pods only.
+SELECT ti.id, ti.try_number, ti.attempt_epoch, ti.state IN ('queued', 'running') AS live
+FROM task_instances ti
+WHERE ti.id = ANY(sqlc.arg(ids)::uuid[]);

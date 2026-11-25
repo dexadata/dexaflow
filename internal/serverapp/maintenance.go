@@ -191,8 +191,12 @@ func retentionConfig(sec config.RetentionSection) retention.Config {
 // never the primary path. Each phase runs under its own one-interval budget
 // (maintenancePhaseTimeout). Lite/subprocess never calls this: no pods, no
 // reaping.
-func startMaintenance(ctx context.Context, cs kubernetes.Interface, namespace string, reporter executor.OutcomeReporter, confirmer executor.InfraConfirmer, overrides overrideObservers, reaper *executor.Reaper, leading func() bool, logger *slog.Logger, snapshotter executor.PodSnapshotter, settled executor.SettledRunChecker) {
+func startMaintenance(ctx context.Context, cs kubernetes.Interface, namespace string, reporter executor.OutcomeReporter, confirmer executor.InfraConfirmer, overrides overrideObservers, reaper *executor.Reaper, leading func() bool, logger *slog.Logger, snapshotter executor.PodSnapshotter, settled executor.SettledRunChecker, abandoned abandonedPods) {
 	rec := executor.NewReconciler(cs, namespace, reporter)
+	// Stop the live pods of attempts a verdict ended (a run or task instance
+	// marked through the API, a stopped tenant) whose agent did not stop them,
+	// under the reapers' destructive gate (#2430).
+	abandoned.wire(rec, reaper.GateOpen, overrides.metrics)
 	// The reconciler confirms the reapers' provisional infra marks (ADR 0052
 	// amendment, part 2); the caller makes the marks provisional in step.
 	rec.SetInfraConfirmer(confirmer)
@@ -213,6 +217,27 @@ func startMaintenance(ctx context.Context, cs kubernetes.Interface, namespace st
 	gatedtick.Start(ctx, "maintenance", reconcileInterval, leading, logger, func() {
 		maintenanceCycle(ctx, maintenancePhaseTimeout, rec.Reconcile, reaper.ReapOnce, logger)
 	})
+}
+
+// abandonedPods is what the reconciler's abandoned pod teardown needs: the
+// read of each task instance's attempt and the pod stop.
+type abandonedPods struct {
+	attempts executor.AttemptLiveness
+	stopper  executor.PodStopper
+}
+
+// wire turns the teardown on, with the grace the agent-lost reaper gives a
+// silent agent: an agent that can hear the control plane stops its task on
+// the next heartbeat, well inside it.
+func (a abandonedPods) wire(rec *executor.Reconciler, gate func(context.Context) bool, metrics *observability.Metrics) {
+	if a.attempts == nil || a.stopper == nil {
+		return
+	}
+	var recorder executor.DecisionRecorder
+	if metrics != nil {
+		recorder = metrics
+	}
+	rec.SetAbandonedPodTeardown(a.attempts, a.stopper, gate, executor.DefaultReaperConfig().AgentLostThreshold, recorder)
 }
 
 // overrideObservers is what makes the reconciler's infra overrides visible:

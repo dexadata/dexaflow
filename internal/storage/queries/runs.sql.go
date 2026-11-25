@@ -4578,6 +4578,49 @@ func (q *Queries) SucceedTaskInstanceOverInfraMark(ctx context.Context, arg Succ
 	return i, err
 }
 
+const taskAttempts = `-- name: TaskAttempts :many
+SELECT ti.id, ti.try_number, ti.attempt_epoch, ti.state IN ('queued', 'running') AS live
+FROM task_instances ti
+WHERE ti.id = ANY($1::uuid[])
+`
+
+type TaskAttemptsRow struct {
+	ID           pgtype.UUID `json:"id"`
+	TryNumber    int32       `json:"try_number"`
+	AttemptEpoch int32       `json:"attempt_epoch"`
+	Live         bool        `json:"live"`
+}
+
+// The attempt each listed task instance is on, for the reconciler's abandoned
+// pod teardown (#2430): the pods it lists are matched against it, and a pod
+// whose attempt is not the live one (same try and epoch, state queued or
+// running, the predicate RecordTaskHeartbeat answers by) is stopped. One read
+// per sweep, by primary key, for the live task pods only.
+func (q *Queries) TaskAttempts(ctx context.Context, ids []pgtype.UUID) ([]TaskAttemptsRow, error) {
+	rows, err := q.db.Query(ctx, taskAttempts, ids)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []TaskAttemptsRow{}
+	for rows.Next() {
+		var i TaskAttemptsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.TryNumber,
+			&i.AttemptEpoch,
+			&i.Live,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const taskInstanceAttemptFields = `-- name: TaskInstanceAttemptFields :one
 SELECT first_reschedule_at, max_tries FROM task_instances
 WHERE tenant_id = $1 AND dag_run_id = $2 AND task_id = $3

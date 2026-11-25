@@ -76,10 +76,20 @@ A running attempt is stopped the way a task instance marked failed is: its next
 heartbeat, at most 15 seconds later, matches no live row, and the agent kills
 its task process group. The slots it held under `max_active_tasks` and its pool
 are free from the verdict on, as in Airflow, so for up to one heartbeat the old
-attempt and the next one can run side by side. An agent that cannot reach the
-control plane does not learn of the stop and its task runs to its end or its
-`execution_timeout`. Before 0.5.10 only the run changed: its tasks kept running
-outside every cap, and the tasks it had not started stayed `none`.
+attempt and the next one can run side by side. Before 0.5.10 only the run
+changed: its tasks kept running outside every cap, and the tasks it had not
+started stayed `none`.
+
+Since 0.6.0 an agent that cannot reach the control plane is stopped too
+([#2430](https://github.com/dexadata/dexaflow/issues/2430)). On Kubernetes the
+scheduler leader stops the pod of an attempt that stayed ended for 90 seconds
+while its pod kept running, the way a reaper stops a reaped attempt's pod
+([Stopping the pod of an attempt a verdict ended](/operate/scheduler-resilience/#stopping-the-pod-of-an-attempt-a-verdict-ended)),
+so a partition between the task pods and the control plane overlaps the next
+attempt for about two minutes. An agent the leader cannot reach either, a node
+cut off from the cluster, stops its task by itself once its heartbeats have gone
+unanswered for as long as the attempt's credential lives (10 minutes). Before
+0.6.0 such a task ran to its end or its `execution_timeout`.
 
 ## Clearing on the latest version
 

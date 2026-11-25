@@ -611,6 +611,9 @@ type Reconciler struct {
 	// infra mark visible (ADR 0052 amendment, part 1); nil leaves them off.
 	overrideRecorder InfraOverrideRecorder
 	overrideSink     logSink
+	// abandoned, when set, stops the live pods of attempts a verdict ended
+	// (abandoned_teardown.go, #2430). Nil: no pass.
+	abandoned *abandonedTeardown
 }
 
 // NewReconciler builds a Reconciler over the given cluster and outcome reporter.
@@ -699,6 +702,8 @@ func (r *Reconciler) Reconcile(ctx context.Context) error {
 	// Confirm the provisional infra marks against this sweep's pods (ADR 0052
 	// amendment, part 2).
 	r.confirmInfraMarks(ctx, pods)
+	// Stop the pods of attempts a verdict ended whose agent did not (#2430).
+	r.teardownAbandoned(ctx, pods)
 	r.collectSettledRuns(ctx, runs)
 	return nil
 }

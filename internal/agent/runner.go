@@ -10,6 +10,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/dexadata/dexaflow/internal/agent/secretsource"
@@ -92,6 +93,16 @@ type Runner struct {
 	// HeartbeatInterval is how often to ping the control plane while the task
 	// runs; zero disables heartbeats.
 	HeartbeatInterval time.Duration
+	// MaxFailedHeartbeats stops the task after this many heartbeats in a row
+	// get no answer from the control plane (#2430), as Airflow's supervisor
+	// does after [workers] max_failed_heartbeats. The agent-lost reaper has
+	// failed the attempt long before, and its slots are free for another, so
+	// user code that keeps running only overlaps it. Zero never stops.
+	// DefaultMaxFailedHeartbeats is what the agent binary sets.
+	MaxFailedHeartbeats int
+	// lostControlPlane is set when the heartbeat loop stopped the task for
+	// MaxFailedHeartbeats, so execute reports that cause.
+	lostControlPlane atomic.Bool
 	// Token, when set, is the swappable bearer backing the gRPC per-RPC credential.
 	// On a heartbeat carrying a renewed_token the loop atomically swaps it here so
 	// every subsequent RPC uses the new credential (ADR 0055 Fix #4). Nil disables
@@ -276,15 +287,10 @@ func (r *Runner) execute(ctx context.Context, argv, env []string, timeout time.D
 		slog.Warn("closing log stream", "error", cerr)
 	}
 
-	// Override the failure reason when the timeout fired. The check is on
-	// timeoutCtx (not runCtx or ctx) so a heartbeat-driven cancel or a
-	// parent SIGTERM still flows through the generic fail path.
-	if timeout > 0 && errors.Is(timeoutCtx.Err(), context.DeadlineExceeded) {
-		msg := fmt.Sprintf("execution_timeout: task exceeded %s limit", timeout)
-		// The message doubles as the classification here, and only here: it is built
-		// from a fixed template whose only variable is the declared timeout, so it
-		// carries nothing derived from an error.
-		return r.failWithReason(ctx, exitCode, msg, msg)
+	// Override the failure reason when the agent itself stopped the task: its
+	// timeout fired, or the control plane stopped answering (stopCause).
+	if msg, reason, stopped := r.stopCause(timeoutCtx, timeout); stopped {
+		return r.failWithReason(ctx, exitCode, msg, reason)
 	}
 	// A reschedule-mode sensor poked not-ready: it exits with rescheduleExitCode AND
 	// leaves its next-poke time in ReschedulePath. The FILE is the real signal, a
@@ -322,6 +328,27 @@ func (r *Runner) execute(ctx context.Context, argv, env []string, timeout time.D
 		return r.fail(ctx, 0, err, reasonOutputUndelivered)
 	}
 	return r.report(ctx, agentv1.TaskState_TASK_STATE_SUCCESS, 0, "")
+}
+
+// stopCause names why the agent itself stopped the task, when it did: its
+// execution_timeout fired (#194), or the control plane stopped answering its
+// heartbeats (#2430). The timeout check is on timeoutCtx (not runCtx or ctx),
+// so a heartbeat-driven terminate or a parent SIGTERM, which are not the
+// agent's own stop, still flow through the generic fail path.
+func (r *Runner) stopCause(timeoutCtx context.Context, timeout time.Duration) (msg, reason string, stopped bool) {
+	if timeout > 0 && errors.Is(timeoutCtx.Err(), context.DeadlineExceeded) {
+		msg := fmt.Sprintf("execution_timeout: task exceeded %s limit", timeout)
+		// The message doubles as the classification here, and only here: it is built
+		// from a fixed template whose only variable is the declared timeout, so it
+		// carries nothing derived from an error.
+		return msg, msg, true
+	}
+	if r.lostControlPlane.Load() {
+		msg := fmt.Sprintf("control plane unreachable: %d heartbeats in a row went unanswered, so the task was stopped",
+			r.MaxFailedHeartbeats)
+		return msg, reasonControlPlaneLost, true
+	}
+	return "", "", false
 }
 
 // failWithReason is fail() but with a pre-built error message, used by the
@@ -464,10 +491,12 @@ func sortedKeys(m map[string]json.RawMessage) []string {
 }
 
 // heartbeat pings the control plane on an interval while the task runs and
-// cancels it when the control plane signals termination.
+// cancels it when the control plane signals termination, or when
+// MaxFailedHeartbeats heartbeats in a row got no answer (#2430).
 func (r *Runner) heartbeat(ctx context.Context, cancel context.CancelFunc) {
 	ticker := time.NewTicker(r.HeartbeatInterval)
 	defer ticker.Stop()
+	failed := 0
 	for {
 		select {
 		case <-ctx.Done():
@@ -475,9 +504,21 @@ func (r *Runner) heartbeat(ctx context.Context, cancel context.CancelFunc) {
 		case <-ticker.C:
 			resp, err := r.Client.Heartbeat(ctx, &agentv1.HeartbeatRequest{SentAt: timestamppb.Now()})
 			if err != nil {
-				slog.Warn("heartbeat failed", "error", err)
+				if ctx.Err() != nil {
+					return
+				}
+				failed++
+				slog.Warn("heartbeat failed", "error", err, "consecutive_failures", failed)
+				if r.MaxFailedHeartbeats > 0 && failed >= r.MaxFailedHeartbeats {
+					slog.Error("stopping the task: the control plane did not answer its heartbeats",
+						"consecutive_failures", failed, "interval", r.HeartbeatInterval)
+					r.lostControlPlane.Store(true)
+					cancel()
+					return
+				}
 				continue
 			}
+			failed = 0
 			if r.applyHeartbeatResponse(resp) {
 				slog.Warn("control plane requested task termination")
 				cancel()
