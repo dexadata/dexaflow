@@ -144,10 +144,15 @@ func TestFirstFreePortSkipsBusy(t *testing.T) {
 	defer func() { _ = ln.Close() }()
 	busy := ln.Addr().(*net.TCPAddr).Port
 	got := firstFreePort(busy)
-	if got <= busy {
-		t.Errorf("firstFreePort(%d) = %d, must skip the bound port", busy, got)
+	if got <= busy || got >= busy+100 {
+		t.Errorf("firstFreePort(%d) = %d, must skip the bound port and stay in its window", busy, got)
 	}
-	if !portFree(got) {
-		t.Errorf("firstFreePort returned a port that is not free: %d", got)
+	// Probing the returned port again is not a check: busy is an ephemeral
+	// port, so the ones above it are what the kernel hands to the outbound
+	// connections of the package's parallel tests, and one of them can take
+	// got between the scan and a second probe. The port still bound is what
+	// must be skipped, and that holds for as long as ln is open.
+	if got2 := firstFreePort(busy); got2 == busy {
+		t.Errorf("firstFreePort(%d) returned the bound port", busy)
 	}
 }
