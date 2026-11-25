@@ -1,0 +1,3 @@
+kind: Upgrade
+body: '**The chart refuses unknown or mistyped values** (#2320): it now ships a `values.schema.json`, so `helm install`, `helm upgrade` and `helm template` fail on a key the chart does not have, or a value of the wrong shape, where they used to ignore it and install without the setting the operator believed was on. A values file that carries a typo or a stale key now stops the upgrade before anything changes and names the key: remove or fix it. See [Upgrading to 0.6.0: the chart refuses unknown values](https://dexaflow.dexadata.ai/operate/upgrades/version-notes/#upgrading-to-060-the-chart-refuses-unknown-values).'
+time: 2026-11-25T14:00:00.000000+00:00

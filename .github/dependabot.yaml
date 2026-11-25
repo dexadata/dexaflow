@@ -55,6 +55,14 @@ updates:
     groups:
       docker-base-images:
         patterns: ["*"]
+    # The Python line of the CLI image follows the newest line the bundled
+    # parser supports (3.13 today, internal/setup/detect.go), not the newest
+    # CPython: a 3.13 to 3.15 bump (#2478) ships a python3 the parser refuses.
+    # Patch tags of the same line still come through; the line moves by hand
+    # with the parser.
+    ignore:
+      - dependency-name: "python"
+        update-types: ["version-update:semver-major", "version-update:semver-minor"]
     labels: ["dependencies", "docker"]
 
   # Python dependencies. Both projects carry their own pyproject.toml; only
