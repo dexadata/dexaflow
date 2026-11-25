@@ -45,3 +45,8 @@ retries, pools and admission, and leader election. The root
   previous release. A change to the tick also needs a soak run for its
   release candidate (`make soak`, review 8), and a performance PR is reviewed
   by a specialist before it merges (root section 2).
+- **The scheduler talks no SQL.** Leadership goes through the `Lease` port
+  (`leadership.go`), which `internal/storage` implements
+  (`SchedulerLease`) and `internal/serverapp` wires, like every other store
+  this package reads through an interface. The depguard `layering` rule
+  refuses `internal/storage` and `github.com/jackc/pgx` here (#1948, #2329).

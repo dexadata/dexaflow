@@ -234,7 +234,7 @@ func startScheduler(ctx context.Context, cfg *config.ServerConfig, pg *storage.P
 		leaderPool.Close()
 		return nil, false, nil, err
 	}
-	leader := scheduler.NewLeader(leaderPool)
+	leader := storage.NewSchedulerLease(leaderPool)
 	go func() {
 		defer leaderPool.Close()
 		scheduler.CampaignAndRun(ctx, leader, sched, logger)
