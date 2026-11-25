@@ -1,8 +1,10 @@
 # Local development dependencies for the Dexaflow control plane.
 #
-# Brings up Postgres and Redis matching the server's default configuration:
-#   database.url = postgres://leoflow:leoflow@localhost:5432/leoflow
-#   redis.url    = redis://localhost:6379/0
+# Brings up Postgres and Redis for a server started with:
+#   DEXAFLOW_DATABASE_URL=postgres://leoflow:leoflow@localhost:5432/leoflow?sslmode=disable
+#   DEXAFLOW_REDIS_URL=redis://localhost:6379/0
+# The database keeps its leoflow name; since 0.6.0 the server's own default
+# names dexaflow (#2155), so the URL is set, as the Makefile's DATABASE_URL is.
 #
 # Postgres publishes host port 5432 unless DEXAFLOW_DEV_DB_PORT (or the older
 # LEOFLOW_DEV_DB_PORT) names another, for a machine where another project

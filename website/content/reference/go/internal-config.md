@@ -83,6 +83,7 @@ Package config loads Dexaflow configuration from defaults, an optional config fi
   - [func \(c \*ServerConfig\) AdvertisedDeployDefaults\(\) domain.DeployDefaults](<#ServerConfig.AdvertisedDeployDefaults>)
   - [func \(c \*ServerConfig\) ClusterEdition\(\) bool](<#ServerConfig.ClusterEdition>)
   - [func \(c \*ServerConfig\) PoolsEnabled\(\) bool](<#ServerConfig.PoolsEnabled>)
+  - [func \(c \*ServerConfig\) ResolveLegacyPaths\(\) \[\]string](<#ServerConfig.ResolveLegacyPaths>)
   - [func \(c \*ServerConfig\) Validate\(\) error](<#ServerConfig.Validate>)
 - [type ServerSection](<#ServerSection>)
   - [func \(s ServerSection\) EffectiveRole\(\) string](<#ServerSection.EffectiveRole>)
@@ -129,6 +130,33 @@ const (
     // accepted so a chart that sets it keeps working while the rename rolls
     // out; IsClusterEdition treats both the same.
     EditionProAlias = "pro"
+)
+```
+
+<a name="DefaultDatabaseURL"></a>Defaults that carry the product name. They named leoflow before 0.6.0 \(\#2155\); the Legacy constants are those older defaults, which an install upgraded in place may still depend on.
+
+```go
+const (
+    // DefaultDatabaseURL is database.url when nothing sets it: a local
+    // development Postgres.
+    DefaultDatabaseURL = "postgres://dexaflow:dexaflow@localhost:5432/dexaflow?sslmode=disable"
+    // DefaultTaskNamespace is executor.task_namespace when nothing sets it.
+    DefaultTaskNamespace = "dexaflow"
+    // DefaultAgentPath is executor.agent_path when nothing sets it.
+    DefaultAgentPath = "dexaflow-agent"
+    // LegacyAgentPath is the agent binary name before 0.6.0.
+    LegacyAgentPath = "leoflow-agent"
+    // DefaultTaskSecretMountPath is executor.task_secret_mount_path when
+    // nothing sets it.
+    DefaultTaskSecretMountPath = "/etc/dexaflow/secrets"
+    // LegacyTaskSecretMountPath is the task secret mount path before 0.6.0. A
+    // task pod also gets the secret there while the default is in use, so a DAG
+    // that reads the old path keeps working.
+    LegacyTaskSecretMountPath = "/etc/leoflow/secrets"
+    // DefaultLogsDir is logs.dir when nothing sets it.
+    DefaultLogsDir = "/var/log/dexaflow"
+    // LegacyLogsDir is the logs directory before 0.6.0.
+    LegacyLogsDir = "/var/log/leoflow"
 )
 ```
 
@@ -913,7 +941,7 @@ type DeploySection struct {
 ```
 
 <a name="DispatchSection"></a>
-## type [DispatchSection](<https://github.com/dexadata/dexaflow/blob/main/internal/config/server_execution.go#L331-L350>)
+## type [DispatchSection](<https://github.com/dexadata/dexaflow/blob/main/internal/config/server_execution.go#L332-L351>)
 
 DispatchSection sizes the BufferedDispatcher \(\#127\). BufferSize=0 keeps the scheduler tick synchronous with the inner dispatcher, the right shape for Lite \(subprocess fork is microseconds\). BufferSize\>0 enables the worker pool, the right shape for Pro \(Kubernetes API calls add real latency\). The defaults are set per\-edition by configsetup so the user does not have to think about this; an operator can still tune the knobs.
 
@@ -941,7 +969,7 @@ type DispatchSection struct {
 ```
 
 <a name="ExecutionAllowlistSection"></a>
-## type [ExecutionAllowlistSection](<https://github.com/dexadata/dexaflow/blob/main/internal/config/server_execution.go#L165-L180>)
+## type [ExecutionAllowlistSection](<https://github.com/dexadata/dexaflow/blob/main/internal/config/server_execution.go#L166-L181>)
 
 ExecutionAllowlistSection is executor.defaults.execution\_allowlist. A DAG that sets a field \(or priority class\) outside it is refused at registration and, for a DAG registered before the list changed, at dispatch.
 
@@ -965,7 +993,7 @@ type ExecutionAllowlistSection struct {
 ```
 
 <a name="ExecutionAllowlistSection.ExecutionPolicyConfig"></a>
-### func \(ExecutionAllowlistSection\) [ExecutionPolicyConfig](<https://github.com/dexadata/dexaflow/blob/main/internal/config/server_execution.go#L183>)
+### func \(ExecutionAllowlistSection\) [ExecutionPolicyConfig](<https://github.com/dexadata/dexaflow/blob/main/internal/config/server_execution.go#L184>)
 
 ```go
 func (s ExecutionAllowlistSection) ExecutionPolicyConfig() domain.ExecutionPolicyConfig
@@ -974,7 +1002,7 @@ func (s ExecutionAllowlistSection) ExecutionPolicyConfig() domain.ExecutionPolic
 ExecutionPolicyConfig is the section as the domain parser takes it.
 
 <a name="ExecutionSection"></a>
-## type [ExecutionSection](<https://github.com/dexadata/dexaflow/blob/main/internal/config/server_execution.go#L197-L273>)
+## type [ExecutionSection](<https://github.com/dexadata/dexaflow/blob/main/internal/config/server_execution.go#L198-L274>)
 
 ExecutionSection configures warm worker pools, Pro\-gated N:1 pod reuse \(ADR 0058\). Every field is operator\-set \(never DAG\-author\-set\), consistent with the secret\-scoping stance: whether a pod may be reused across attempts is an operator's security decision, not a DAG author's. All fields default to a byte\-for\-byte no\-op, warm pools OFF means dedicated pod\-per\-task, today's behavior, and are read for runtime behavior only in a later brick; N1a introduces the knobs plus the fail\-closed boot guard \(validateExecution\).
 
@@ -1059,7 +1087,7 @@ type ExecutionSection struct {
 ```
 
 <a name="ExecutionSection.EffectiveMinIdle"></a>
-### func \(ExecutionSection\) [EffectiveMinIdle](<https://github.com/dexadata/dexaflow/blob/main/internal/config/server_execution.go#L282>)
+### func \(ExecutionSection\) [EffectiveMinIdle](<https://github.com/dexadata/dexaflow/blob/main/internal/config/server_execution.go#L283>)
 
 ```go
 func (e ExecutionSection) EffectiveMinIdle(dagMinIdle int) int
@@ -1068,7 +1096,7 @@ func (e ExecutionSection) EffectiveMinIdle(dagMinIdle int) int
 EffectiveMinIdle resolves the warm\-worker target for one dag\_version \(domain.WarmPoolDefaults.EffectiveMinIdle\).
 
 <a name="ExecutionSection.WarmPoolDefaults"></a>
-### func \(ExecutionSection\) [WarmPoolDefaults](<https://github.com/dexadata/dexaflow/blob/main/internal/config/server_execution.go#L276>)
+### func \(ExecutionSection\) [WarmPoolDefaults](<https://github.com/dexadata/dexaflow/blob/main/internal/config/server_execution.go#L277>)
 
 ```go
 func (e ExecutionSection) WarmPoolDefaults() domain.WarmPoolDefaults
@@ -1077,7 +1105,7 @@ func (e ExecutionSection) WarmPoolDefaults() domain.WarmPoolDefaults
 WarmPoolDefaults is e's warm pool settings as the domain carries them.
 
 <a name="ExecutorSection"></a>
-## type [ExecutorSection](<https://github.com/dexadata/dexaflow/blob/main/internal/config/server_execution.go#L11-L77>)
+## type [ExecutorSection](<https://github.com/dexadata/dexaflow/blob/main/internal/config/server_execution.go#L11-L78>)
 
 ExecutorSection configures how tasks are executed.
 
@@ -1094,13 +1122,14 @@ type ExecutorSection struct {
     // TaskNamespace is the Kubernetes namespace the server creates task pods and
     // per-run staging PVCs in. It MUST match the namespace the Helm chart grants
     // the executor Role in (chart `taskNamespace` → LEOFLOW_EXECUTOR_TASK_NAMESPACE);
-    // a mismatch 403s every dispatch (#480). Defaults to "leoflow".
+    // a mismatch 403s every dispatch (#480). Defaults to "dexaflow" (DefaultTaskNamespace).
     TaskNamespace string `mapstructure:"task_namespace"`
     // Type selects the pod-path executor: "kubernetes" (default, pod-per-task) or
     // "subprocess" (dev only, runs the agent on the host without isolation, used
     // by `dexaflow lite`).
     Type string `mapstructure:"type"`
-    // AgentPath is the leoflow-agent binary the subprocess executor runs (dev only).
+    // AgentPath is the agent binary the subprocess executor runs (dev only).
+    // Defaults to dexaflow-agent (DefaultAgentPath).
     AgentPath string `mapstructure:"agent_path"`
     // SubprocessWorkDir is the working directory the subprocess executor runs the
     // agent in, so it can import the project's dag.py (dev only). Empty keeps the
@@ -1152,7 +1181,7 @@ type ExecutorSection struct {
 ```
 
 <a name="ExecutorUnitSection"></a>
-## type [ExecutorUnitSection](<https://github.com/dexadata/dexaflow/blob/main/internal/config/server_execution.go#L83-L88>)
+## type [ExecutorUnitSection](<https://github.com/dexadata/dexaflow/blob/main/internal/config/server_execution.go#L84-L89>)
 
 ExecutorUnitSection is executor.unit: the CPU and memory of one pool slot, as Kubernetes quantities \(both or neither\), how a task that does not fit its size is treated \(refuse or warn\), and the largest pool\_slots a task may have while the unit is set.
 
@@ -1166,7 +1195,7 @@ type ExecutorUnitSection struct {
 ```
 
 <a name="ExecutorUnitSection.ResourceUnitConfig"></a>
-### func \(ExecutorUnitSection\) [ResourceUnitConfig](<https://github.com/dexadata/dexaflow/blob/main/internal/config/server_execution.go#L91>)
+### func \(ExecutorUnitSection\) [ResourceUnitConfig](<https://github.com/dexadata/dexaflow/blob/main/internal/config/server_execution.go#L92>)
 
 ```go
 func (u ExecutorUnitSection) ResourceUnitConfig() domain.ResourceUnitConfig
@@ -1175,7 +1204,7 @@ func (u ExecutorUnitSection) ResourceUnitConfig() domain.ResourceUnitConfig
 ResourceUnitConfig is the section as the domain parser takes it.
 
 <a name="HTTPExecutorSection"></a>
-## type [HTTPExecutorSection](<https://github.com/dexadata/dexaflow/blob/main/internal/config/server_execution.go#L288-L292>)
+## type [HTTPExecutorSection](<https://github.com/dexadata/dexaflow/blob/main/internal/config/server_execution.go#L289-L293>)
 
 HTTPExecutorSection configures HTTP\-related executor knobs.
 
@@ -1252,7 +1281,7 @@ type JWTSection struct {
 ```
 
 <a name="KubeClientSection"></a>
-## type [KubeClientSection](<https://github.com/dexadata/dexaflow/blob/main/internal/config/server_execution.go#L102-L113>)
+## type [KubeClientSection](<https://github.com/dexadata/dexaflow/blob/main/internal/config/server_execution.go#L103-L114>)
 
 KubeClientSection sets the client\-side rate limits \(client\-go token buckets\) of the control plane's Kubernetes clients. The dispatch client creates task pods; the agent token exchange builds its own client with the same limits. Maintenance work \(pod informer, reconciler, reapers, staging GC, warm pool reconciler\) shares the dispatch client unless MaintenanceQPS is set, in which case it gets a separate client and token bucket so a maintenance burst cannot starve pod creation.
 
@@ -1524,7 +1553,7 @@ type ObservabilitySection struct {
 ```
 
 <a name="PlatformDefaultsSection"></a>
-## type [PlatformDefaultsSection](<https://github.com/dexadata/dexaflow/blob/main/internal/config/server_execution.go#L117-L160>)
+## type [PlatformDefaultsSection](<https://github.com/dexadata/dexaflow/blob/main/internal/config/server_execution.go#L118-L161>)
 
 PlatformDefaultsSection configures the lowest\-precedence \(L0\) task defaults, applied at dispatch to fill gaps the DAG left empty \(ADR 0023\).
 
@@ -1576,7 +1605,7 @@ type PlatformDefaultsSection struct {
 ```
 
 <a name="PoolsSection"></a>
-## type [PoolsSection](<https://github.com/dexadata/dexaflow/blob/main/internal/config/server_execution.go#L317-L323>)
+## type [PoolsSection](<https://github.com/dexadata/dexaflow/blob/main/internal/config/server_execution.go#L318-L324>)
 
 PoolsSection is scheduler.pools \(\#2173\).
 
@@ -1630,7 +1659,7 @@ type RemoteBuilderSection struct {
 ```
 
 <a name="RetentionSection"></a>
-## type [RetentionSection](<https://github.com/dexadata/dexaflow/blob/main/internal/config/server_execution.go#L357-L383>)
+## type [RetentionSection](<https://github.com/dexadata/dexaflow/blob/main/internal/config/server_execution.go#L358-L384>)
 
 RetentionSection configures the leader\-only retention janitor, which deletes metadata rows past a per\-class age. Runs and the audit log are kept by default \(0 days\); the usage events keep 30 days, and they exist only once an operator turns their recording on. The pacing knobs keep each statement small and each cycle bounded.
 
@@ -1665,7 +1694,7 @@ type RetentionSection struct {
 ```
 
 <a name="RetentionSection.Active"></a>
-### func \(RetentionSection\) [Active](<https://github.com/dexadata/dexaflow/blob/main/internal/config/server_execution.go#L399>)
+### func \(RetentionSection\) [Active](<https://github.com/dexadata/dexaflow/blob/main/internal/config/server_execution.go#L400>)
 
 ```go
 func (r RetentionSection) Active(usageRecording bool) bool
@@ -1674,7 +1703,7 @@ func (r RetentionSection) Active(usageRecording bool) bool
 Active reports whether the janitor has work: a run or audit class, or the usage events window while recording is on. With recording off the table only holds what an earlier recording left, pruned whenever the janitor runs for another class.
 
 <a name="RetentionSection.Enabled"></a>
-### func \(RetentionSection\) [Enabled](<https://github.com/dexadata/dexaflow/blob/main/internal/config/server_execution.go#L391>)
+### func \(RetentionSection\) [Enabled](<https://github.com/dexadata/dexaflow/blob/main/internal/config/server_execution.go#L392>)
 
 ```go
 func (r RetentionSection) Enabled() bool
@@ -1683,7 +1712,7 @@ func (r RetentionSection) Enabled() bool
 Enabled reports whether the runs or the audit log class is configured.
 
 <a name="RetentionSection.Validate"></a>
-### func \(RetentionSection\) [Validate](<https://github.com/dexadata/dexaflow/blob/main/internal/config/server_execution.go#L404>)
+### func \(RetentionSection\) [Validate](<https://github.com/dexadata/dexaflow/blob/main/internal/config/server_execution.go#L405>)
 
 ```go
 func (r RetentionSection) Validate() error
@@ -1692,7 +1721,7 @@ func (r RetentionSection) Validate() error
 Validate is ValidateWith for an install that does not record usage events.
 
 <a name="RetentionSection.ValidateWith"></a>
-### func \(RetentionSection\) [ValidateWith](<https://github.com/dexadata/dexaflow/blob/main/internal/config/server_execution.go#L411>)
+### func \(RetentionSection\) [ValidateWith](<https://github.com/dexadata/dexaflow/blob/main/internal/config/server_execution.go#L412>)
 
 ```go
 func (r RetentionSection) ValidateWith(usageRecording bool) error
@@ -1701,7 +1730,7 @@ func (r RetentionSection) ValidateWith(usageRecording bool) error
 ValidateWith rejects a negative window always, and pacing that would make the janitor unbounded or a busy loop when it has work \(Active\): a run or audit class, or the usage events window while usageRecording is on. So the default 30 day window checks nothing new on an install that does not record.
 
 <a name="SchedulerSection"></a>
-## type [SchedulerSection](<https://github.com/dexadata/dexaflow/blob/main/internal/config/server_execution.go#L295-L314>)
+## type [SchedulerSection](<https://github.com/dexadata/dexaflow/blob/main/internal/config/server_execution.go#L296-L315>)
 
 SchedulerSection configures the scheduler loop.
 
@@ -1850,6 +1879,20 @@ func (c *ServerConfig) PoolsEnabled() bool
 ```
 
 PoolsEnabled reports whether named pools are on: scheduler.pools.enabled when it is set, otherwise the cluster edition \(\#2173\).
+
+<a name="ServerConfig.ResolveLegacyPaths"></a>
+### func \(\*ServerConfig\) [ResolveLegacyPaths](<https://github.com/dexadata/dexaflow/blob/main/internal/config/legacy_paths.go#L47>)
+
+```go
+func (c *ServerConfig) ResolveLegacyPaths() []string
+```
+
+ResolveLegacyPaths keeps an install upgraded in place on the paths the leoflow defaults gave it, when the setting was left at its default and only the old path exists on this host:
+
+- logs.dir: /var/log/leoflow exists and /var/log/dexaflow does not;
+- executor.agent\_path, under the subprocess executor: leoflow\-agent is on PATH and dexaflow\-agent is not.
+
+It returns one warning per path it kept, naming the setting to pin. Neither executor.task\_namespace nor database.url has such a fallback: a namespace or a database cannot be probed safely from here, so the upgrade notes ask an install that relies on the old defaults to pin them.
 
 <a name="ServerConfig.Validate"></a>
 ### func \(\*ServerConfig\) [Validate](<https://github.com/dexadata/dexaflow/blob/main/internal/config/server.go#L480>)

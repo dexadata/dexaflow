@@ -38,6 +38,11 @@
 #
 # Usage: test/e2e/source-mode-e2e.sh [cluster-name]
 set -euo pipefail
+# The fixtures this script runs against name the task namespace and the
+# database `leoflow`; the server's own defaults name them dexaflow since 0.6.0
+# (#2155), so the fixture names are pinned for the control plane here.
+export LEOFLOW_EXECUTOR_TASK_NAMESPACE="${LEOFLOW_EXECUTOR_TASK_NAMESPACE:-leoflow}"
+export LEOFLOW_DATABASE_URL="${LEOFLOW_DATABASE_URL:-postgres://leoflow:leoflow@localhost:5432/leoflow?sslmode=disable}"
 
 # shellcheck source=test/e2e/lib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
@@ -48,14 +53,15 @@ WORKDIR="$(mktemp -d)"
 PY_VERSION="3.11"
 BASE_IMAGE="leoflow-base:py${PY_VERSION}"
 NS="leoflow"
-# `.localhost` resolves to the loopback on the host, so `docker push` works over
-# plain HTTP, and k3d's registry mirror resolves the same name in the cluster
-# (the deploy-e2e.sh pattern). The reference the server is configured with is
-# therefore byte for byte the one the pods pull.
+# Every reference names the registry `localhost:<port>`: Docker pushes there
+# over plain HTTP on every version, and a k3d registry mirror
+# (k3d_registry_config in lib.sh) sends the same name to the registry node in
+# the cluster (the deploy-e2e.sh pattern). The reference the server is
+# configured with is therefore byte for byte the one the pods pull.
 REG_NAME="source-mode-registry.localhost"
 REG_PORT="${LEOFLOW_E2E_REGISTRY_PORT:-5112}"
 REG_FULLNAME="k3d-${REG_NAME}"
-REG_HOST="${REG_FULLNAME}:${REG_PORT}"
+REG_HOST="localhost:${REG_PORT}"
 HTTP_PORT="${LEOFLOW_E2E_HTTP_PORT:-18082}"
 API="http://localhost:${HTTP_PORT}"
 GRPC_PORT="9091"
@@ -253,8 +259,9 @@ docker build --provenance=false -f "$ROOT/runtime/Dockerfile" --build-arg "PYTHO
 log "Creating k3d registry ($REG_HOST) + cluster '$CLUSTER'"
 k3d registry delete "$REG_FULLNAME" >/dev/null 2>&1 || true
 k3d registry create "$REG_NAME" --port "$REG_PORT" >/dev/null
+k3d_registry_config "$WORKDIR/registries.yaml" "$REG_PORT" "$REG_FULLNAME"
 # shellcheck disable=SC2086 # LEOFLOW_E2E_K3D_ARGS is a space-separated list on purpose
-k3d cluster create "$CLUSTER" --registry-use "$REG_HOST" --wait \
+k3d cluster create "$CLUSTER" --registry-use "${REG_FULLNAME}:${REG_PORT}" --registry-config "$WORKDIR/registries.yaml" --wait \
   --kubeconfig-update-default=false --kubeconfig-switch-context=false ${LEOFLOW_E2E_K3D_ARGS:-}
 k3d kubeconfig get "$CLUSTER" > "$KUBECONFIG"
 kubectl create namespace "$NS"

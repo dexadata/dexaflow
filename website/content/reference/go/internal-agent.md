@@ -13,6 +13,7 @@ Package agent contains the worker\-side logic that runs inside the task containe
 ## Index
 
 - [Constants](<#constants>)
+- [Variables](<#variables>)
 - [func AttemptTokenTTL\(interval time.Duration\) time.Duration](<#AttemptTokenTTL>)
 - [func BuildCommand\(operator, entrypoint, operatorClass string\) \(\[\]string, error\)](<#BuildCommand>)
 - [func ClassifyBootstrapFailure\(stage BootstrapStage, err error\) string](<#ClassifyBootstrapFailure>)
@@ -61,6 +62,14 @@ const LogResumeMetadataKey = "dexaflow-log-resume"
 
 ```go
 const LogResumedHeaderKey = "dexaflow-log-resumed"
+```
+
+## Variables
+
+<a name="DefaultMaxFailedHeartbeats"></a>DefaultMaxFailedHeartbeats is how many heartbeats in a row may go unanswered before the agent stops its task \(Runner.MaxFailedHeartbeats, \#2430\): as many as span the attempt token TTL. By then the bearer has lapsed unrenewed, so the attempt can never report again, and the agent\-lost reaper failed it long before. A control plane outage shorter than that, a restart or a failover that the reapers' settling grace forgives, stops nothing.
+
+```go
+var DefaultMaxFailedHeartbeats = int((AttemptTokenTTL(DefaultHeartbeatInterval) + DefaultHeartbeatInterval - 1) / DefaultHeartbeatInterval)
 ```
 
 <a name="AttemptTokenTTL"></a>
@@ -182,7 +191,7 @@ const (
 ```
 
 <a name="CommandRunner"></a>
-## type [CommandRunner](<https://github.com/dexadata/dexaflow/blob/main/internal/agent/runner.go#L25-L27>)
+## type [CommandRunner](<https://github.com/dexadata/dexaflow/blob/main/internal/agent/runner.go#L26-L28>)
 
 CommandRunner executes the user task process, writing its stdout and stderr to the supplied writers and returning the process exit code.
 
@@ -211,7 +220,7 @@ func NewExecRunnerRecordingGroup(path string) CommandRunner
 NewExecRunnerRecordingGroup is NewExecRunner that also records each task's process group at path \(a procgroup.Record: this agent's pid, the group id and the group leader's start time\) as soon as the task starts. Lite hands the path to its agent: the task leads its own group, so an agent killed outright leaves the task running, and only this record lets the server see that orphan and stop it before the attempt is placed again \(\#916\). A task whose group cannot be recorded is stopped and the run fails, so no task runs that the server could not find. An empty path records nothing.
 
 <a name="LogSink"></a>
-## type [LogSink](<https://github.com/dexadata/dexaflow/blob/main/internal/agent/runner.go#L36-L39>)
+## type [LogSink](<https://github.com/dexadata/dexaflow/blob/main/internal/agent/runner.go#L37-L40>)
 
 LogSink receives log lines produced by the user task. Sends are best\-effort.
 
@@ -232,7 +241,7 @@ func OpenLogSink(ctx context.Context, client agentv1.AgentServiceClient) (LogSin
 OpenLogSink starts the StreamLogs RPC and returns a sink that forwards lines to it. It is the agent's first RPC, so it uses WaitForReady: with the lazy connection of grpc.NewClient the channel may not be established yet, and without this the stream would fail fast on a cold connection \(the "opening log stream" EOF in \#36\) rather than waiting for the control plane to be reachable. ctx also bounds the streams the sink re\-opens.
 
 <a name="NoopLogSink"></a>
-## type [NoopLogSink](<https://github.com/dexadata/dexaflow/blob/main/internal/agent/runner.go#L44>)
+## type [NoopLogSink](<https://github.com/dexadata/dexaflow/blob/main/internal/agent/runner.go#L45>)
 
 NoopLogSink discards log lines. The agent falls back to it when the control plane log stream is unavailable \(e.g. StreamLogs not yet implemented\), so a task still runs even though its logs are not shipped this run.
 
@@ -241,7 +250,7 @@ type NoopLogSink struct{}
 ```
 
 <a name="NoopLogSink.Close"></a>
-### func \(NoopLogSink\) [Close](<https://github.com/dexadata/dexaflow/blob/main/internal/agent/runner.go#L50>)
+### func \(NoopLogSink\) [Close](<https://github.com/dexadata/dexaflow/blob/main/internal/agent/runner.go#L51>)
 
 ```go
 func (NoopLogSink) Close() error
@@ -250,7 +259,7 @@ func (NoopLogSink) Close() error
 Close is a no\-op.
 
 <a name="NoopLogSink.Send"></a>
-### func \(NoopLogSink\) [Send](<https://github.com/dexadata/dexaflow/blob/main/internal/agent/runner.go#L47>)
+### func \(NoopLogSink\) [Send](<https://github.com/dexadata/dexaflow/blob/main/internal/agent/runner.go#L48>)
 
 ```go
 func (NoopLogSink) Send(*agentv1.LogLine) error
@@ -259,7 +268,7 @@ func (NoopLogSink) Send(*agentv1.LogLine) error
 Send discards the line.
 
 <a name="Runner"></a>
-## type [Runner](<https://github.com/dexadata/dexaflow/blob/main/internal/agent/runner.go#L56-L142>)
+## type [Runner](<https://github.com/dexadata/dexaflow/blob/main/internal/agent/runner.go#L57-L153>)
 
 Runner orchestrates a single task execution inside the worker container: it registers with the control plane, fetches the task spec and XCom inputs, runs the user process while streaming logs, pushes the return value, and reports the terminal state.
 
@@ -303,6 +312,14 @@ type Runner struct {
     // HeartbeatInterval is how often to ping the control plane while the task
     // runs; zero disables heartbeats.
     HeartbeatInterval time.Duration
+    // MaxFailedHeartbeats stops the task after this many heartbeats in a row
+    // get no answer from the control plane (#2430), as Airflow's supervisor
+    // does after [workers] max_failed_heartbeats. The agent-lost reaper has
+    // failed the attempt long before, and its slots are free for another, so
+    // user code that keeps running only overlaps it. Zero never stops.
+    // DefaultMaxFailedHeartbeats is what the agent binary sets.
+    MaxFailedHeartbeats int
+
     // Token, when set, is the swappable bearer backing the gRPC per-RPC credential.
     // On a heartbeat carrying a renewed_token the loop atomically swaps it here so
     // every subsequent RPC uses the new credential (ADR 0055 Fix #4). Nil disables
@@ -329,7 +346,7 @@ type Runner struct {
 ```
 
 <a name="Runner.Run"></a>
-### func \(\*Runner\) [Run](<https://github.com/dexadata/dexaflow/blob/main/internal/agent/runner.go#L165>)
+### func \(\*Runner\) [Run](<https://github.com/dexadata/dexaflow/blob/main/internal/agent/runner.go#L176>)
 
 ```go
 func (r *Runner) Run(ctx context.Context) error
@@ -391,7 +408,7 @@ func (s *TokenSource) Token() string
 Token returns the current bearer.
 
 <a name="WarmRunner"></a>
-## type [WarmRunner](<https://github.com/dexadata/dexaflow/blob/main/internal/agent/warm.go#L41-L169>)
+## type [WarmRunner](<https://github.com/dexadata/dexaflow/blob/main/internal/agent/warm.go#L41-L170>)
 
 WarmRunner is the client side of the warm\-worker transport \(ADR 0058 D4\): a long\-lived process that registers once, opens the AwaitAssignment bidi stream, and serves MANY task attempts — one at a time — each in a fresh forked child.
 
@@ -457,10 +474,11 @@ type WarmRunner struct {
     SharedTmpDir string
     SharedMemDir string
 
-    // TerminationLogPath and HeartbeatInterval mirror the single-shot Runner's
-    // fields and are threaded into every per-attempt Runner.
-    TerminationLogPath string
-    HeartbeatInterval  time.Duration
+    // TerminationLogPath, HeartbeatInterval and MaxFailedHeartbeats mirror the
+    // single-shot Runner's fields and are threaded into every per-attempt Runner.
+    TerminationLogPath  string
+    HeartbeatInterval   time.Duration
+    MaxFailedHeartbeats int
 
     // StreamHeartbeat is how often the worker re-sends its WorkerRegister on the
     // open assignment stream, idle or busy, as a liveness heartbeat. The control
@@ -521,7 +539,7 @@ type WarmRunner struct {
 ```
 
 <a name="WarmRunner.Run"></a>
-### func \(\*WarmRunner\) [Run](<https://github.com/dexadata/dexaflow/blob/main/internal/agent/warm.go#L204>)
+### func \(\*WarmRunner\) [Run](<https://github.com/dexadata/dexaflow/blob/main/internal/agent/warm.go#L205>)
 
 ```go
 func (w *WarmRunner) Run(ctx context.Context, dagVersionID string) error

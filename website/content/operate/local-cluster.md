@@ -88,6 +88,19 @@ If `docker push` later fails with `no such host`, your resolver does not map
 `*.localhost` to the loopback. Add `127.0.0.1 k3d-dexaflow-registry.localhost`
 to `/etc/hosts`.
 
+Recent Docker Engine releases (the one on ubuntu-26.04, API 1.54) no longer
+look the name up before they pick the protocol, so the push goes out over HTTPS
+and fails with `server gave HTTP response to HTTPS client`. Declare the
+registry insecure in the Docker daemon configuration (`/etc/docker/daemon.json`
+on Linux, Settings > Docker Engine in Docker Desktop) and restart Docker:
+
+```json
+{ "insecure-registries": ["k3d-dexaflow-registry.localhost:5050"] }
+```
+
+`dexaflow deploy` builders that push without Docker (code layer, dependency
+layer) are not affected: they speak plain HTTP to any `*.localhost` name.
+
 k3d switches your current `kubectl` context to the new cluster
 (`k3d-dexaflow-local`). Every `kubectl` and `helm` command below runs against it.
 
@@ -293,6 +306,7 @@ use the registry address it gives you as `registry.url` in `dexaflow.yaml`.
 | The `dexaflow-migrate` Job fails on its first connection | Postgres was not accepting connections yet | wait with `pg_isready` (step 2), then `helm uninstall` and install again |
 | `dexaflow auth login` answers "invalid credentials" | the username is the e-mail address | `--username admin@dexaflow.local` |
 | `docker push` fails with `no such host` | your resolver does not map `*.localhost` | add `127.0.0.1 k3d-dexaflow-registry.localhost` to `/etc/hosts` |
+| `docker push` fails with `server gave HTTP response to HTTPS client` | a recent Docker Engine no longer treats `*.localhost` as the loopback | add the registry to `insecure-registries` and restart Docker, as in step 1 |
 | The task pod is in `ErrImagePull` | the cluster was created without `--registry-use`, or the image reference does not name `k3d-dexaflow-registry.localhost:5050` | recreate the cluster as in step 1; check `registry.url` |
 | The task pod fails with `exec format error` | the DAG image was built for another architecture | remove `build.platforms` from `dexaflow.yaml` |
 | Pods stay `Pending` and the node has a `disk-pressure` taint | the disk Docker uses is below the kubelet's eviction threshold (10 to 15% free by default) | free disk space, for example with `docker image prune` |

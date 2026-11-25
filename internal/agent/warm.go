@@ -92,10 +92,11 @@ type WarmRunner struct {
 	SharedTmpDir string
 	SharedMemDir string
 
-	// TerminationLogPath and HeartbeatInterval mirror the single-shot Runner's
-	// fields and are threaded into every per-attempt Runner.
-	TerminationLogPath string
-	HeartbeatInterval  time.Duration
+	// TerminationLogPath, HeartbeatInterval and MaxFailedHeartbeats mirror the
+	// single-shot Runner's fields and are threaded into every per-attempt Runner.
+	TerminationLogPath  string
+	HeartbeatInterval   time.Duration
+	MaxFailedHeartbeats int
 
 	// StreamHeartbeat is how often the worker re-sends its WorkerRegister on the
 	// open assignment stream, idle or busy, as a liveness heartbeat. The control
@@ -790,10 +791,11 @@ func (w *WarmRunner) attemptRunner(sink LogSink) *Runner {
 		XComDir: filepath.Join(w.ScratchDir, "xcom"),
 		// Per-attempt TMPDIR under the scratch resetScratch wipes, so the child's
 		// temp files never persist into the next attempt on this warm worker (#728).
-		TmpDir:             filepath.Join(w.ScratchDir, "tmp"),
-		TerminationLogPath: w.TerminationLogPath,
-		HeartbeatInterval:  w.HeartbeatInterval,
-		Token:              w.AttemptTokens,
-		warmAttempt:        true,
+		TmpDir:              filepath.Join(w.ScratchDir, "tmp"),
+		TerminationLogPath:  w.TerminationLogPath,
+		HeartbeatInterval:   w.HeartbeatInterval,
+		MaxFailedHeartbeats: w.MaxFailedHeartbeats,
+		Token:               w.AttemptTokens,
+		warmAttempt:         true,
 	}
 }
