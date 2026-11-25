@@ -1886,6 +1886,15 @@ environment:
       credentials, and the build reads it as the `dexaflow_index_url` build
       secret ([ADR 0088](/project/adrs/0088-build-args-secrets-and-package-index/)).
       See [Builders](/operate/builders/).
+  - name: RELEASE_VERSION
+    group: server
+    description: >-
+      Not set by you: the release images of a GA promoted from its last rc
+      carry it in their image configuration, and a binary built as that rc
+      (`v0.6.0-rc.2`) then reports the release it names (`v0.6.0`), with
+      "built as" the rc in `--version`. A binary that is not an rc of exactly
+      that release ignores it
+      ([ADR 0109](/project/adrs/0109-ga-promotes-the-rc-images/)).
 
 # Variables that exist only for automated tests. They are not documented on
 # the page; the reason says why.

@@ -14,6 +14,7 @@
 #   scripts/cut-release.sh v0.4.4-rc.1 --dry-run  # preflight + print the plan, no mutation
 #   scripts/cut-release.sh <version> --resume     # finish a cut that died after
 #                                                 # the prepare PR merged
+#   scripts/cut-release.sh 0.6.0 --rebuild-images # a GA that rebuilds its images (ADR 0109)
 #   scripts/cut-release.sh --self-test            # pure-logic cases, no network
 #   scripts/cut-release.sh 0.4.4 --force-queue    # tag even on a busy Actions queue
 #   scripts/cut-release.sh 0.4.4 --allow-red="<reason>"
@@ -165,9 +166,13 @@ sync_changelog_pr() { # <version>
 # override of a red check is part of the release's record, so it travels with
 # the tag, where the Release workflow and anyone running `git show <tag>` read
 # it.
-tag_message() { # <tag> [reason]
+tag_message() { # <tag> [reason] [rebuild-images]
   printf 'leoflow %s' "$1"
   [ -n "${2:-}" ] && printf '\n\nRed-CI-override: %s' "$2"
+  # ADR 0109: a GA publishes the images of its last green rc. This line, read
+  # by scripts/release-image-plan.sh, makes the Release workflow rebuild them
+  # instead, for a GA whose promotion itself is broken.
+  [ "${3:-0}" = 1 ] && printf '\n\nRebuild-images: true'
   return 0
 }
 
@@ -825,6 +830,8 @@ JSON
   # travels in the tag annotation; without one the annotation is the old line.
   _eq "$(tag_message v1.2.3)" "leoflow v1.2.3" "a tag without an override keeps the old annotation"
   _eq "$(tag_message v1.2.3 'coverage badge API 502' | tail -1)" "Red-CI-override: coverage badge API 502" "the override reason is in the annotation"
+  _eq "$(tag_message v1.2.3 '' 1 | tail -1)" "Rebuild-images: true" "--rebuild-images is in the annotation"
+  _eq "$(tag_message v1.2.3 '' 0)" "leoflow v1.2.3" "no rebuild line without --rebuild-images"
   # ci_gate: release-ci-gate.sh's exit status decides, and only 0 passes.
   # Driven through a stub of the script, the way the cut calls it.
   local cg; cg="$(mktemp -d)"; mkdir -p "$cg/scripts"
@@ -1300,6 +1307,7 @@ main() {
   # --yes, parsed below, may set it.
   ASSUME_YES=0
   local arg version="" dry=0 resume=0 force_queue=0 allow_red=""
+  REBUILD_IMAGES=0
   for arg in "$@"; do
     case "$arg" in
       --allow-red=*) allow_red="${arg#--allow-red=}"
@@ -1310,11 +1318,12 @@ main() {
       --yes)       ASSUME_YES=1 ;;
       --resume)    resume=1 ;;
       --force-queue) force_queue=1 ;;
+      --rebuild-images) REBUILD_IMAGES=1 ;;
       -*)          die "unknown flag: $arg" ;;
       *)           version="$arg" ;;
     esac
   done
-  [ -n "$version" ] || die "usage: cut-release.sh <version> [--dry-run] [--yes] [--resume] [--force-queue] [--allow-red=<reason>]"
+  [ -n "$version" ] || die "usage: cut-release.sh <version> [--dry-run] [--yes] [--resume] [--force-queue] [--allow-red=<reason>] [--rebuild-images]"
 
   version="${version#v}"
   valid_version "$version" || die "invalid version '$version' (want X.Y.Z or X.Y.Z-rc.N)"
@@ -1630,7 +1639,7 @@ main() {
 
   check_queue "$force_queue" || die "the Actions queue is busy: the release jobs would wait behind it while nothing is promoted. Hold PR pushes until it drains (RELEASING.md, release freeze), then re-run with --resume, or pass --force-queue"
   confirm_tag "$tag"
-  git tag -a "$tag" "$sha" -m "$(tag_message "$tag" "$allow_red")" || die "creating tag $tag failed"
+  git tag -a "$tag" "$sha" -m "$(tag_message "$tag" "$allow_red" "${REBUILD_IMAGES:-0}")" || die "creating tag $tag failed"
   git push origin "$tag" || die "pushing tag $tag failed — the tag is local only; 'git push origin $tag' when ready"
   log "tagged $tag @ ${sha:0:8}"
   # Provenance goes down the instant the push returns, never behind a fallible

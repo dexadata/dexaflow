@@ -6,7 +6,9 @@ is contained — not in the control plane (ADR 0048). The control-plane policy
 (networkpolicy.yaml) does NOT cover task pods; this one selects them by the
 leoflow.io/run-id label every task pod carries (executor/kubernetes.go).
 
-Off by default and CNI-dependent, like the control-plane policy. When enabled:
+On by default since 0.6.0 (#539; `enabled: false` opts out) and, like the
+control-plane policy, enforced only by a CNI that enforces NetworkPolicy. When
+enabled:
 - ingress is denied (nothing dials into a task pod);
 - egress allows DNS and the control-plane gRPC (the agent dials back), then all
   other egress EXCEPT the cloud metadata endpoint (169.254.0.0/16) — always,

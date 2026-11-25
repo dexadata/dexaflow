@@ -511,7 +511,7 @@ func IsOnceSchedule(expr string) bool
 IsOnceSchedule reports whether expr is Airflow's "@once" — a DAG that runs exactly one time \(on first scheduler sight\) and never again.
 
 <a name="IsReservedMetadataKey"></a>
-## func [IsReservedMetadataKey](<https://github.com/dexadata/dexaflow/blob/main/internal/domain/dag.go#L307>)
+## func [IsReservedMetadataKey](<https://github.com/dexadata/dexaflow/blob/main/internal/domain/dag.go#L319>)
 
 ```go
 func IsReservedMetadataKey(key string) bool
@@ -991,7 +991,7 @@ type DAG struct {
 ```
 
 <a name="DAGSpec"></a>
-## type [DAGSpec](<https://github.com/dexadata/dexaflow/blob/main/internal/domain/dag.go#L67-L133>)
+## type [DAGSpec](<https://github.com/dexadata/dexaflow/blob/main/internal/domain/dag.go#L79-L145>)
 
 DAGSpec is the canonical serialized representation of a DAG consumed by the control plane. It mirrors docs/api/dag\-schema.json.
 
@@ -1086,7 +1086,7 @@ RunParams returns the params a task of this DAG runs with, as the JSON object th
 When neither the DAG nor the task declares params, conf is returned unchanged. A conf that is not a JSON object \(or null\) is an error.
 
 <a name="DAGSpec.Validate"></a>
-### func \(\*DAGSpec\) [Validate](<https://github.com/dexadata/dexaflow/blob/main/internal/domain/dag.go#L322>)
+### func \(\*DAGSpec\) [Validate](<https://github.com/dexadata/dexaflow/blob/main/internal/domain/dag.go#L334>)
 
 ```go
 func (d *DAGSpec) Validate() error
@@ -1369,7 +1369,7 @@ type DbtConfig struct {
 ```
 
 <a name="DefaultArgs"></a>
-## type [DefaultArgs](<https://github.com/dexadata/dexaflow/blob/main/internal/domain/dag.go#L158-L162>)
+## type [DefaultArgs](<https://github.com/dexadata/dexaflow/blob/main/internal/domain/dag.go#L170-L174>)
 
 DefaultArgs holds retry and timeout defaults applied to every task in a DAG.
 
@@ -1574,7 +1574,7 @@ func (r DigestRequirement) CheckImage(image string) (warning string, err error)
 CheckImage applies r to the image of a version being registered. A pinned image \(IsDigestPinned\), and any image while r is off, returns nothing. Under warn an unpinned image returns the warning to give; under enforce it returns the refusal, which is the client's to fix.
 
 <a name="Execution"></a>
-## type [Execution](<https://github.com/dexadata/dexaflow/blob/main/internal/domain/dag.go#L259-L296>)
+## type [Execution](<https://github.com/dexadata/dexaflow/blob/main/internal/domain/dag.go#L271-L308>)
 
 Execution carries executor\-specific placement and scheduling hints for a task. Every field beyond NodeSelector/Tolerations/ServiceAccount is applied only by the Kubernetes executor; Lite \(subprocess, no pods\) ignores them.
 
@@ -1917,7 +1917,7 @@ type PageCursor struct {
 ```
 
 <a name="ParamSpec"></a>
-## type [ParamSpec](<https://github.com/dexadata/dexaflow/blob/main/internal/domain/dag.go#L140-L146>)
+## type [ParamSpec](<https://github.com/dexadata/dexaflow/blob/main/internal/domain/dag.go#L152-L158>)
 
 ParamSpec is one author\-declared DAG\-run parameter: a default value and the JSON Schema its trigger\-time conf value is validated against. Both are carried as raw JSON so an arbitrary default and an arbitrary schema round\-trip verbatim. Schema is \{\} \(or absent\) when the author declared a bare default with no constraints, in which case any conf value for that key is accepted.
 
@@ -2043,7 +2043,7 @@ func (r *RemoteBuilderConfig) Validate(prefix string) error
 Validate refuses a remote builder a build could not use, naming the field under prefix \(build.remote\_builder in dexaflow.yaml\).
 
 <a name="ResourceQuantity"></a>
-## type [ResourceQuantity](<https://github.com/dexadata/dexaflow/blob/main/internal/domain/dag.go#L246-L254>)
+## type [ResourceQuantity](<https://github.com/dexadata/dexaflow/blob/main/internal/domain/dag.go#L258-L266>)
 
 ResourceQuantity expresses CPU, memory, and ephemeral\-storage in Kubernetes notation.
 
@@ -2146,7 +2146,7 @@ type ResourceUnitConfig struct {
 ```
 
 <a name="Resources"></a>
-## type [Resources](<https://github.com/dexadata/dexaflow/blob/main/internal/domain/dag.go#L232-L242>)
+## type [Resources](<https://github.com/dexadata/dexaflow/blob/main/internal/domain/dag.go#L244-L254>)
 
 Resources holds Kubernetes\-style resource requests and limits for a task.
 
@@ -2213,7 +2213,7 @@ func (e *SafeError) Unwrap() error
 Unwrap returns the sentinel class so errors.Is keeps working.
 
 <a name="StagingConfig"></a>
-## type [StagingConfig](<https://github.com/dexadata/dexaflow/blob/main/internal/domain/dag.go#L151-L155>)
+## type [StagingConfig](<https://github.com/dexadata/dexaflow/blob/main/internal/domain/dag.go#L163-L167>)
 
 StagingConfig is the opt\-in per\-DAG\-run shared staging volume \(ADR 0022\). Size is a Kubernetes quantity \(e.g. "5Gi"\); StorageClass empty uses the cluster default RWX class.
 
@@ -2370,7 +2370,7 @@ type TaskInstanceFilter struct {
 ```
 
 <a name="TaskSpec"></a>
-## type [TaskSpec](<https://github.com/dexadata/dexaflow/blob/main/internal/domain/dag.go#L165-L229>)
+## type [TaskSpec](<https://github.com/dexadata/dexaflow/blob/main/internal/domain/dag.go#L177-L241>)
 
 TaskSpec describes a single unit of work within a DAG.
 
@@ -2443,7 +2443,7 @@ type TaskSpec struct {
 ```
 
 <a name="TaskSpec.EffectivePoolSlots"></a>
-### func \(TaskSpec\) [EffectivePoolSlots](<https://github.com/dexadata/dexaflow/blob/main/internal/domain/dag.go#L313>)
+### func \(TaskSpec\) [EffectivePoolSlots](<https://github.com/dexadata/dexaflow/blob/main/internal/domain/dag.go#L325>)
 
 ```go
 func (t TaskSpec) EffectivePoolSlots() int
@@ -2629,7 +2629,7 @@ TriggerRule decides whether a task runs based on its upstreams' states.
 type TriggerRule string
 ```
 
-<a name="TriggerRuleAllSuccess"></a>Supported trigger rules for the MVP. See docs/api/dag\-schema.json.
+<a name="TriggerRuleAllSuccess"></a>Supported trigger rules, with Airflow 3 semantics \(ADR 0064 D2\). See docs/api/dag\-schema.json.
 
 ```go
 const (
@@ -2643,6 +2643,17 @@ const (
     TriggerRuleOneSuccess TriggerRule = "one_success"
     // TriggerRuleOneFailed runs as soon as one upstream fails.
     TriggerRuleOneFailed TriggerRule = "one_failed"
+    // TriggerRuleNoneFailed runs once every upstream finished and none failed:
+    // success and skipped upstreams both count.
+    TriggerRuleNoneFailed TriggerRule = "none_failed"
+    // TriggerRuleNoneFailedMinOneSuccess runs once every upstream finished, none
+    // failed and at least one succeeded.
+    TriggerRuleNoneFailedMinOneSuccess TriggerRule = "none_failed_min_one_success"
+    // TriggerRuleNoneSkipped runs once every upstream finished and none was
+    // skipped, whether they succeeded or failed.
+    TriggerRuleNoneSkipped TriggerRule = "none_skipped"
+    // TriggerRuleAlways runs at once, whatever its upstreams do.
+    TriggerRuleAlways TriggerRule = "always"
 )
 ```
 

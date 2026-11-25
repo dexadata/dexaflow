@@ -1,0 +1,3 @@
+kind: Upgrade
+body: '**The task-pod network policy is on by default** (#539): `taskNetworkPolicy.enabled` now defaults to `true`, so a release that left it unset gets a NetworkPolicy that denies ingress to task pods and blocks their egress to the cloud metadata range `169.254.0.0/16`. Tasks that get keyless credentials from GKE Workload Identity or EKS Pod Identity need `taskNetworkPolicy.allowMetadataEgress` set before the upgrade; `taskNetworkPolicy.enabled: false` keeps the old behavior. See [Upgrading to 0.6.0: the task-pod network policy is on](https://dexaflow.dexadata.ai/operate/upgrades/version-notes/#upgrading-to-060-the-task-pod-network-policy-is-on).'
+time: 2026-11-25T14:10:00.000000+00:00

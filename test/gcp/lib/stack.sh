@@ -151,6 +151,10 @@ stack_helm_args() { # <release> <namespace> <task namespace> <jwt secret> <boots
     # tell ours from someone else's to reclaim it. An experiment needs no log
     # that outlives its cluster, so the control plane logs to an emptyDir.
     --set "logs.persistence.enabled=false"
+    # #539: the task-pod policy is on by default since 0.6.0. The experiments
+    # measure a baseline with no policy and apply their own (netpol.sh renders
+    # it under the same name), so the stack leaves it off.
+    --set "taskNetworkPolicy.enabled=false"
     --wait --timeout "${STACK_HELM_TIMEOUT:-10m}")
   HELM_ARGS+=("$@")
   return 0

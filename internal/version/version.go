@@ -3,9 +3,21 @@ package version
 
 import (
 	"fmt"
+	"os"
+	"regexp"
 	"runtime"
 	"runtime/debug"
 )
+
+// ReleaseVersionEnv names the release an rc image was promoted to (ADR 0109).
+// A GA whose images are the last rc's carries it in the image configuration,
+// so the rc binaries in it report the GA version. Promoted honors it only for
+// the rc's own release.
+const ReleaseVersionEnv = "DEXAFLOW_RELEASE_VERSION"
+
+// rcVersion matches a release candidate version, with or without the leading
+// "v" (GoReleaser's .Version has none), and captures its release.
+var rcVersion = regexp.MustCompile(`^v?(\d+\.\d+\.\d+)-rc\.\d+$`)
 
 // modulePath is this module's path, looked up in the build info of a program
 // that imports it (pkg/server) and so sets no ldflags of its own.
@@ -25,6 +37,9 @@ type Info struct {
 	GitCommit string `json:"git_commit"`
 	BuildDate string `json:"build_date"`
 	GoVersion string `json:"go_version"`
+	// BuiltAs is the version the binary was linked as when it reports a
+	// promoted release version instead (ADR 0109); empty otherwise.
+	BuiltAs string `json:"built_as,omitempty"`
 }
 
 // Get returns the build metadata embedded at link time, augmented with the
@@ -38,12 +53,40 @@ func Get() Info {
 			v = dependencyVersion(bi, v)
 		}
 	}
-	return Info{
+	info := Info{
 		Version:   v,
 		GitCommit: gitCommit,
 		BuildDate: buildDate,
 		GoVersion: runtime.Version(),
 	}
+	if p := Promoted(v); p != v {
+		info.Version, info.BuiltAs = p, v
+	}
+	return info
+}
+
+// Promoted returns the version a binary linked as linked reports. It is the
+// release named by ReleaseVersionEnv when linked is a release candidate of
+// exactly that release (v0.6.0-rc.2 with v0.6.0), and linked otherwise, so the
+// variable can promote an rc to its own GA and cannot make any other build
+// claim a version. The result keeps linked's form, with or without the "v".
+func Promoted(linked string) string {
+	return promoted(linked, os.Getenv(ReleaseVersionEnv))
+}
+
+func promoted(linked, release string) string {
+	m := rcVersion.FindStringSubmatch(linked)
+	if m == nil {
+		return linked
+	}
+	base := m[1]
+	if release != base && release != "v"+base {
+		return linked
+	}
+	if linked[0] == 'v' {
+		return "v" + base
+	}
+	return base
 }
 
 // dependencyVersion is the version of this module as a dependency of the
@@ -69,6 +112,10 @@ func dependencyVersion(bi *debug.BuildInfo, fallback string) string {
 
 // String returns a single-line, human-readable rendering of the build metadata.
 func (i Info) String() string {
+	if i.BuiltAs != "" {
+		return fmt.Sprintf("dexaflow %s (built as %s, commit %s, built %s, %s)",
+			i.Version, i.BuiltAs, i.GitCommit, i.BuildDate, i.GoVersion)
+	}
 	return fmt.Sprintf("dexaflow %s (commit %s, built %s, %s)",
 		i.Version, i.GitCommit, i.BuildDate, i.GoVersion)
 }
