@@ -8,4 +8,3 @@
 # move the new code to another file of the package instead.
 #
 # <path> <lines>
-internal/api/resources.go 1573
