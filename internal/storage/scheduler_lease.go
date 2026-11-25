@@ -79,7 +79,7 @@ func (l *SchedulerLease) TryAcquire(ctx context.Context) (bool, error) {
 // of that term still in flight aborts instead of committing after the term
 // moved (ADR 0106, point 4). The deposed leader's pool reconnects with its old
 // tag, and the fence trigger refuses its writes from then on. Best effort: a
-// session of another role cannot be signalled, and the trigger still fences
+// session of another role cannot be signaled, and the trigger still fences
 // its next statement.
 func (l *SchedulerLease) endOlderTerms(ctx context.Context, term int64) {
 	var ended int
