@@ -131,6 +131,9 @@ var serverDefaults = map[string]any{
 	// Off by default (ADR 0062 feature gate): promotion keeps its one-step-per-
 	// tick cadence until an operator opts in.
 	"scheduler.eager_promotion": false,
+	// Leader write fencing by lease term (ADR 0106, #2329): off by default
+	// for one minor, on under the chart's cluster profile.
+	"scheduler.lease_fencing": false,
 	// Default: synchronous dispatch (BufferSize=0). Safe and zero-overhead for
 	// Lite. Pro deployments should set buffer_size>=1 + workers>=1 in their
 	// values.yaml so K8s API latency does not stretch the tick (#127, ADR 0031).

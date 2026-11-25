@@ -3,6 +3,7 @@ package scheduler
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 	"testing"
 	"time"
@@ -83,11 +84,15 @@ func TestWatchLeadershipFiresOnStepDownWithReason(t *testing.T) {
 	}{
 		{name: "lock_released", chk: &fakeChecker{held: false}, wantReason: "lock_released", interval: time.Millisecond},
 		{name: "check_timeout", chk: &fakeChecker{err: errors.New("blip")}, wantReason: "check_timeout", interval: 5 * time.Millisecond},
+		// A newer term is not a transient error: one check is enough, with
+		// an interval long enough that waiting for three would time out.
+		{name: "term_superseded", chk: &fakeChecker{err: fmt.Errorf("lease term 3: %w", ErrLeaseSuperseded)}, wantReason: "term_superseded", interval: 300 * time.Millisecond},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			ctx, cancel := context.WithCancel(context.Background())
 			defer cancel()
+			start := time.Now()
 			var (
 				mu              sync.Mutex
 				reasons         []string
@@ -114,6 +119,9 @@ func TestWatchLeadershipFiresOnStepDownWithReason(t *testing.T) {
 				t.Fatal("did not step down")
 			}
 			<-done
+			if tc.name == "term_superseded" && time.Since(start) >= time.Duration(maxLeaderCheckFailures)*tc.interval {
+				t.Errorf("stepped down after %v; a superseded term must step down on the first check", time.Since(start))
+			}
 			mu.Lock()
 			defer mu.Unlock()
 			if len(reasons) != 1 || reasons[0] != tc.wantReason {

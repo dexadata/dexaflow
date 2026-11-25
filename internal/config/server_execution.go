@@ -302,10 +302,16 @@ type SchedulerSection struct {
 	// triggers an early tick instead of waiting for the next interval, which
 	// stays the upper bound. Off by default (ADR 0062): the tick then promotes
 	// one step per interval, as it always has.
-	EagerPromotion bool            `mapstructure:"eager_promotion"`
-	Dispatch       DispatchSection `mapstructure:"dispatch"`
-	Alerts         AlertsSection   `mapstructure:"alerts"`
-	Pools          PoolsSection    `mapstructure:"pools"`
+	EagerPromotion bool `mapstructure:"eager_promotion"`
+	// LeaseFencing fences the leader's writes by its lease term (ADR 0106,
+	// #2329): the scheduler's writers run on a dedicated pool whose sessions
+	// carry the term, a new leader ends the sessions of older terms, and the
+	// database refuses a write from a session of an older term. Off by
+	// default for one minor; the chart's cluster profile turns it on.
+	LeaseFencing bool            `mapstructure:"lease_fencing"`
+	Dispatch     DispatchSection `mapstructure:"dispatch"`
+	Alerts       AlertsSection   `mapstructure:"alerts"`
+	Pools        PoolsSection    `mapstructure:"pools"`
 	// PoolStarvationThreshold is how long a task held only by its pool waits
 	// before the pool is reserved for it, so tasks of fewer slots cannot keep
 	// a larger one out forever (ADR 0066 §4). 0 disables reservations. Read

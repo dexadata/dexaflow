@@ -20,7 +20,6 @@ import (
 	"github.com/dexadata/dexaflow/internal/envcompat"
 	"github.com/dexadata/dexaflow/internal/logs"
 	"github.com/dexadata/dexaflow/internal/observability"
-	"github.com/dexadata/dexaflow/internal/scheduler"
 	"github.com/dexadata/dexaflow/internal/secrets"
 	"github.com/dexadata/dexaflow/internal/storage"
 	"github.com/dexadata/dexaflow/internal/version"
@@ -287,7 +286,7 @@ func Run(ctx context.Context, opts Options) error {
 	// lock (ADR 0009). The "all" role keeps its in-process handle (real tick
 	// health), unchanged.
 	if servesAPI && !servesScheduler {
-		schedulerHealth = scheduler.NewLeaderHealthReader(pg.Pool)
+		schedulerHealth = storage.NewLeaderHealthReader(pg.Pool)
 	}
 
 	// The API side (HTTP + embedded UI) is built only in the api/"all" role. The

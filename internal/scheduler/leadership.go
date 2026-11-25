@@ -21,6 +21,18 @@ type leadershipChecker interface {
 	HoldsLock(ctx context.Context) (bool, error)
 }
 
+// Lease is the leadership the scheduler campaigns for: the advisory lock of
+// ADR 0009, taken and checked on a session of its own. internal/storage
+// implements it (SchedulerLease) and internal/serverapp wires it, so the
+// decision layer holds no database pool (#2329).
+type Lease interface {
+	leadershipAcquirer
+	leadershipChecker
+	// Release gives up leadership, so a follower can take it at once instead
+	// of after the session drops.
+	Release(ctx context.Context) error
+}
+
 // leadershipAcquirer tries to take leadership without blocking.
 type leadershipAcquirer interface {
 	TryAcquire(ctx context.Context) (bool, error)
@@ -53,7 +65,7 @@ func checkLeadership(ctx context.Context, chk leadershipChecker, timeout time.Du
 // connection blipped, was idle-reaped, or recycled), it steps down and
 // re-campaigns rather than scheduling alongside the new leader. It returns when
 // ctx is done.
-func CampaignAndRun(ctx context.Context, leader *Leader, sched *Scheduler, logger *slog.Logger) {
+func CampaignAndRun(ctx context.Context, leader Lease, sched *Scheduler, logger *slog.Logger) {
 	ticker := time.NewTicker(leaderCheckInterval)
 	defer ticker.Stop()
 	// stepDownAt is the wall-clock the previous runAsLeader returned at (i.e.
@@ -95,7 +107,7 @@ func CampaignAndRun(ctx context.Context, leader *Leader, sched *Scheduler, logge
 // of double-scheduling against the new leader. It signals leadership to the
 // scheduler so the heartbeat/health reflects whether this instance is the
 // active scheduler.
-func runAsLeader(ctx context.Context, leader *Leader, sched *Scheduler, logger *slog.Logger) {
+func runAsLeader(ctx context.Context, leader Lease, sched *Scheduler, logger *slog.Logger) {
 	logger.Info("became scheduler leader")
 	runCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
@@ -147,6 +159,11 @@ func watchLeadership(ctx context.Context, chk leadershipChecker, interval time.D
 		case <-ticker.C:
 			held, err := checkLeadership(ctx, chk, interval)
 			switch {
+			case errors.Is(err, ErrLeaseSuperseded):
+				logger.Warn("another replica holds a newer scheduler lease term; stepping down",
+					"reason", "term_superseded", "error", err)
+				stepDown("term_superseded")
+				return
 			case err != nil:
 				if ctx.Err() != nil {
 					return // canceled mid-check (shutdown/stepdown)
@@ -171,10 +188,15 @@ func watchLeadership(ctx context.Context, chk leadershipChecker, interval time.D
 	}
 }
 
-func releaseLeader(leader *Leader, logger *slog.Logger) {
+func releaseLeader(leader Lease, logger *slog.Logger) {
 	rctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 	if err := leader.Release(rctx); err != nil { //nolint:contextcheck // fresh context to release after shutdown
 		logger.Error("releasing leadership", "error", err)
 	}
 }
+
+// ErrLeaseSuperseded is what a Lease check returns when another replica took
+// a newer lease term (ADR 0106): this replica no longer leads, whatever its
+// own session says, and steps down at once.
+var ErrLeaseSuperseded = errors.New("scheduler lease superseded by a newer term")

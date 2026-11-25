@@ -370,6 +370,12 @@ const defaultAlertConcurrency = 8
 
 // Scheduler advances dag runs by applying the planning rules each tick.
 type Scheduler struct {
+	// leaseTerms, leaseGate and termCacheTTL back LeaderTerm, TermCurrent
+	// and FencedLeading (ADR 0106); unset, the term is 0 and the gate open.
+	leaseTerms   LeaseTerms
+	leaseGate    leaseGate
+	termCacheTTL time.Duration
+
 	store       Store
 	logger      *slog.Logger
 	interval    time.Duration

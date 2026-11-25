@@ -173,7 +173,7 @@ func NewMetrics(reg prometheus.Registerer) *Metrics {
 		}, []string{"reason"}),
 		SchedulerStepDowns: f.NewCounterVec(prometheus.CounterOpts{
 			Name: "dexaflow_scheduler_step_downs_total",
-			Help: "Scheduler leadership step-downs by reason (lock_released, check_timeout, shutdown). " +
+			Help: "Scheduler leadership step-downs by reason (lock_released, check_timeout, term_superseded, shutdown). " +
 				"Operators alert on rate(...[5m]); a sudden uptick usually indicates a Postgres connection-stability issue (#311).",
 		}, []string{"reason"}),
 		SchedulerReacquire: f.NewHistogram(prometheus.HistogramOpts{

@@ -143,6 +143,7 @@ type PlatformDefaults struct {
 
 // Dispatcher builds executor requests for queued pod-path tasks and runs them.
 type Dispatcher struct {
+	leaderTerm     func() int64
 	exec           executor.Executor
 	resolver       Resolver
 	issuer         TokenIssuer
@@ -202,6 +203,18 @@ type Dispatcher struct {
 // fields it forces are set on every attempt after the admission hooks ran. A
 // nil policy, the default, changes nothing.
 func (d *Dispatcher) SetForcePolicy(p *ForcePolicy) { d.force = p }
+
+// SetLeaderTerm gives the dispatcher the scheduler lease term to stamp on
+// each task pod it creates (ADR 0106, point 5).
+func (d *Dispatcher) SetLeaderTerm(term func() int64) { d.leaderTerm = term }
+
+// currentLeaderTerm is the term to stamp, 0 without a source.
+func (d *Dispatcher) currentLeaderTerm() int64 {
+	if d.leaderTerm == nil {
+		return 0
+	}
+	return d.leaderTerm()
+}
 
 // UnitMisfitRecorder counts a task that does not fit the resource unit but is
 // let through under executor.unit.enforce=warn, by stage ("register" or
@@ -387,6 +400,7 @@ func (d *Dispatcher) Dispatch(ctx context.Context, runID, dagID, dagVersionID st
 		TaskID:               task.TaskID,
 		TryNumber:            r.TryNumber,
 		AttemptEpoch:         r.AttemptEpoch,
+		LeaderTerm:           d.currentLeaderTerm(),
 		Image:                r.Image,
 		ImagePullPolicy:      r.ImagePullPolicy,
 		Source:               r.Source,

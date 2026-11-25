@@ -126,6 +126,8 @@ linters:
               desc: "map config onto api or domain types in internal/serverapp (#1948)"
             - pkg: github.com/dexadata/dexaflow/internal/storage
               desc: "depend on an interface the server wires a store into (#1948)"
+            - pkg: github.com/jackc/pgx
+              desc: "SQL belongs in internal/storage behind a port the server wires in, as scheduler.Lease is (#2329)"
     gocyclo:
       # ADR 0012: hard cap at 15. Critical paths target <=10 but that is not enforced here.
       min-complexity: 15

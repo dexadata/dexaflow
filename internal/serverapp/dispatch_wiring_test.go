@@ -23,7 +23,7 @@ func (noopInner) Dispatch(context.Context, string, string, string, domain.TaskSp
 func TestWrapBuffered_ReturnsCloserOnlyWhenBuffered(t *testing.T) {
 	log := slog.New(slog.NewTextHandler(io.Discard, nil))
 
-	disp, closer := wrapBuffered(noopInner{}, nil, log, nil, config.DispatchSection{BufferSize: 0})
+	disp, closer := wrapBuffered(noopInner{}, nil, log, nil, config.DispatchSection{BufferSize: 0}, nil)
 	if disp == nil {
 		t.Fatal("passthrough dispatcher is nil")
 	}
@@ -31,7 +31,7 @@ func TestWrapBuffered_ReturnsCloserOnlyWhenBuffered(t *testing.T) {
 		t.Errorf("passthrough returned a non-nil closer (%T); Lite has no pool to close", closer)
 	}
 
-	disp2, closer2 := wrapBuffered(noopInner{}, nil, log, nil, config.DispatchSection{BufferSize: 4, Workers: 2})
+	disp2, closer2 := wrapBuffered(noopInner{}, nil, log, nil, config.DispatchSection{BufferSize: 4, Workers: 2}, nil)
 	if disp2 == nil {
 		t.Fatal("buffered dispatcher is nil")
 	}

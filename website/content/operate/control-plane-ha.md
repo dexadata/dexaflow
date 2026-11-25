@@ -439,13 +439,13 @@ database:
 | Pool | Size | Opened by |
 |---|---|---|
 | Requests and scheduling | `database.maxOpenConns` (chart default `20`) | every pod |
-| Scheduler (only when set) | `database.schedulerMaxConns` (chart default `0`, off) | every pod that runs the scheduler |
+| Scheduler (only when set, or with lease fencing on) | `database.schedulerMaxConns` (chart default `0`, off; 8 when unset with `config.scheduler.leaseFencing` on, the `cluster` profile's default) | every pod that runs the scheduler |
 | Agent handlers (only when set) | `database.agentMaxConns` (chart default `0`, off) | every pod that runs the scheduler |
 | Health checks (`/readyz`, the UI database widget) | `2` | every pod |
 | Scheduler leader lock | `1` | every pod that runs the scheduler (`all` and `scheduler` roles) |
 
 So one pod can hold up to `maxOpenConns + 3` connections (plus
-`schedulerMaxConns` and `agentMaxConns` on a pod that runs the scheduler, when they are set), and the cluster-wide
+`schedulerMaxConns` and `agentMaxConns` on a pod that runs the scheduler, when they are set, and 8 for the scheduler pool when lease fencing is on without `schedulerMaxConns`), and the cluster-wide
 ceiling is that number times the most pods that can be up at once: the HPA's
 `maxReplicas` (or `replicaCount`, or `split.api.replicaCount + 1` in split
 mode), plus the surge pods a rolling update starts before it stops old ones.
@@ -735,6 +735,36 @@ no longer answers. Two settings bound how long that lasts:
   The UI is never served for a session that was not verified.
 
 Nothing needs configuring: all of this applies to every install.
+
+### Leader writes fenced by a lease term
+
+Between the moment a leader's session drops and the moment its watchdog
+notices, a follower can already lead, and the old leader's tick, dispatch
+workers and reapers keep writing through their own pools. Every acquisition of
+leadership takes a new term in the `scheduler_lease` row
+([ADR 0106](/project/adrs/0106-leader-writes-fenced-by-a-lease-term/),
+[#2329](https://github.com/dexadata/dexaflow/issues/2329)), and the leader
+renews by that term every check: a renewal that finds a newer term steps the
+leader down at once with reason `term_superseded`.
+
+With `scheduler.lease_fencing` on (Helm `config.scheduler.leaseFencing`, on
+under the `cluster` profile), the scheduler's writers run on a dedicated pool
+whose sessions carry the term (`application_name` `dexaflow-leader/<term>`).
+A new leader ends the sessions of older terms as soon as its term commits, so
+a transaction of the old leader still in flight aborts, and the database
+refuses any later write to runs or task instances from an older term
+(`stale_leader_term`, counted as `leader_write_fenced` in
+`dexaflow_scheduler_decisions_total`). Before each task pod create, a
+dispatch worker checks that its term is still the current one and drops the
+dispatch when it is not (`dispatch_dropped_stale_term`); the task stays queued
+for the new leader, and every task pod names the term that created it in the
+`leoflow.io/leader-term` annotation. The reapers, the pod reconciler and the
+warm pool and staging collection act only while the term is current, read at
+most once a second. The API, the agent handlers and the migration Job are not
+fenced. The dedicated pool counts against the
+connection budget below: `database.schedulerMaxConns`, or 8 when it is unset.
+PgBouncer in transaction mode is not supported for the scheduler with fencing
+on, since the term is a session setting.
 
 ## Related
 
