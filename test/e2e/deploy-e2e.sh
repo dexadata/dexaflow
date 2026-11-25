@@ -80,6 +80,11 @@ else
   HOLD_SECONDS="${DEXAFLOW_E2E_HOLD_SECONDS:-30}"
 fi
 DB_URL="${DEXAFLOW_E2E_DATABASE_URL:-postgres://leoflow:leoflow@localhost:5432/leoflow?sslmode=disable}"
+# The fixtures this script runs against name the task namespace and the
+# database `leoflow`; the server's own defaults name them dexaflow since 0.6.0
+# (#2155), so the fixture names are pinned for the control plane here.
+export LEOFLOW_EXECUTOR_TASK_NAMESPACE="${LEOFLOW_EXECUTOR_TASK_NAMESPACE:-leoflow}"
+export LEOFLOW_DATABASE_URL="${LEOFLOW_DATABASE_URL:-$DB_URL}"
 NS="leoflow"
 # Every warm worker pod seen while the runs were live, one "name<TAB>version
 # label<TAB>image" line per sighting. A warm pod can be recycled before the

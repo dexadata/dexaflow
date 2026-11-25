@@ -151,7 +151,9 @@ type Dispatcher struct {
 	tlsCAConfigMap string
 	taskSecret     string
 	taskSecretPath string
-	defaults       PlatformDefaults
+	// taskSecretAlias is a second mount path for the task Secret (#2155).
+	taskSecretAlias string
+	defaults        PlatformDefaults
 	// Agent-token transport (ADR 0055 Fix #3). Empty tokenTransport = the env-var
 	// default (plaintext token env var), so a deployment that does not opt in is
 	// byte-identical to today. "exchange" threads the projected-token config onto
@@ -282,6 +284,12 @@ func (d *Dispatcher) SetAgentTLSCAConfigMap(name string) { d.tlsCAConfigMap = na
 func (d *Dispatcher) SetTaskSecret(name, mountPath string) {
 	d.taskSecret, d.taskSecretPath = name, mountPath
 }
+
+// SetTaskSecretAlias mounts the task Secret at a second path too (#2155): the
+// server passes the path the leoflow default used while the mount path is the
+// dexaflow default, so a DAG that reads the old path keeps working. Empty =
+// one mount only.
+func (d *Dispatcher) SetTaskSecretAlias(path string) { d.taskSecretAlias = path }
 
 // SetPlatformDefaults configures the per-cluster task defaults applied at
 // dispatch to fill gaps the DAG artifact left empty (ADR 0023, layer L0).
@@ -434,6 +442,7 @@ func (d *Dispatcher) Dispatch(ctx context.Context, runID, dagID, dagVersionID st
 	req.AgentTLSCAConfigMap = d.tlsCAConfigMap
 	req.TaskSecretName = d.taskSecret
 	req.TaskSecretMountPath = d.taskSecretPath
+	req.TaskSecretAliasPath = d.taskSecretAlias
 	// Agent-token transport (ADR 0055 Fix #3). Under the exchange transport the
 	// executor projects a ServiceAccount token instead of placing the plaintext
 	// token on the pod; the token is still minted above (the env-var path needs it,

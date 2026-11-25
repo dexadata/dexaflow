@@ -45,6 +45,19 @@ func startupConfig(opts Options) (*config.ServerConfig, error) {
 	return cfg, nil
 }
 
+// applyLegacyPaths keeps an install upgraded in place on the leoflow paths
+// its defaults gave it before 0.6.0, when only those exist on this host, and
+// logs one warning per path kept (#2155). A configuration passed in through
+// opts.Config is the embedder's own and is left as given.
+func applyLegacyPaths(opts Options, cfg *config.ServerConfig, logger *slog.Logger) {
+	if opts.Config != nil {
+		return
+	}
+	for _, w := range cfg.ResolveLegacyPaths() {
+		logger.Warn(w)
+	}
+}
+
 // loadConfig returns opts.Config, or when it is nil the configuration the
 // binary loads: the file opts.ConfigFile names, or else the one
 // LEOFLOW_CONFIG names (mirrored from DEXAFLOW_CONFIG), then the
@@ -172,6 +185,7 @@ func Run(ctx context.Context, opts Options) error {
 	// left the eviction-log failure modes unmeasurable (#918). One line fixes
 	// every remaining site and takes nothing away from injection.
 	slog.SetDefault(tel.Logger)
+	applyLegacyPaths(opts, cfg, tel.Logger)
 	warnStartup(cfg, tel.Logger)
 	recordResiliencePosture(cfg, tel.Metrics)
 	tel.Metrics.RecordBuildInfo(version.Get(), cfg.Server.EffectiveRole())

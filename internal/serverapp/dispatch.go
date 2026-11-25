@@ -137,11 +137,23 @@ func configureSubprocessDispatcher(dispatcher *dispatch.Dispatcher, cfg *config.
 	setWarmPlacer(dispatcher, warmPools)
 }
 
+// taskSecretAlias is the second path the task Secret is mounted at: the
+// leoflow default while the mount path is the dexaflow default, so a DAG that
+// read the old default path keeps working after 0.6.0 (#2155), and nothing
+// once the operator chose a path of their own.
+func taskSecretAlias(mountPath string) string {
+	if mountPath == config.DefaultTaskSecretMountPath {
+		return config.LegacyTaskSecretMountPath
+	}
+	return ""
+}
+
 // configureK8sDispatcher applies cfg to the pod-path dispatcher. warmPolicy
 // describes what it makes of a task, for the register response.
 func configureK8sDispatcher(dispatcher *dispatch.Dispatcher, cfg *config.ServerConfig, warmPools *agentrpc.WorkerRegistry, metrics *observability.Metrics) {
 	dispatcher.SetAgentTLSCAConfigMap(cfg.Executor.AgentTLSCAConfigMap)
 	dispatcher.SetTaskSecret(cfg.Executor.TaskSecretName, cfg.Executor.TaskSecretMountPath)
+	dispatcher.SetTaskSecretAlias(taskSecretAlias(cfg.Executor.TaskSecretMountPath))
 	dispatcher.SetDefaultTaskServiceAccount(cfg.Executor.TaskServiceAccount)
 	// Agent-token transport (ADR 0055 Fix #3). Under the exchange transport the
 	// executor projects a ServiceAccount token instead of the plaintext one; the

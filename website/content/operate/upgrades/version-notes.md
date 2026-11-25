@@ -2,7 +2,7 @@
 title: "Version notes"
 linkTitle: "Version notes"
 weight: 10
-description: "What changes when a Cluster control plane upgrades to each 0.5.x release, and what to do about it."
+description: "What changes when a Cluster control plane upgrades to each 0.5.x and 0.6.x release, and what to do about it."
 ---
 
 One section per release: what changes when a Cluster control plane [upgrades](/operate/upgrades/) to it, and what to do. Read the sections between your version and the target before a `helm upgrade`.
@@ -1249,3 +1249,19 @@ since the last check are replayed when it is noticed, at most a second later.
 Every log stream also publishes from its own queue now, in batches of up to
 256 lines per Redis round trip, so a follower costs a chatty task far less
 receive rate than before, under either mode.
+
+## Upgrading to 0.6.0: server defaults use the dexaflow names
+
+Six server settings had defaults that still carried the old name. They now use
+`dexaflow` ([#2155](https://github.com/dexadata/dexaflow/issues/2155)). A
+setting you set yourself, through the chart, a config file or a
+`DEXAFLOW_*` or `LEOFLOW_*` variable, is not affected.
+
+| Setting | Before | 0.6.0 | If you relied on the old default |
+|---|---|---|---|
+| `executor.task_namespace` | `leoflow` | `dexaflow` | **Pin it before upgrading**: `DEXAFLOW_EXECUTOR_TASK_NAMESPACE=leoflow`. Task pods would otherwise go to a namespace the executor has no Role in. The chart always sets it, so a chart install is unaffected. |
+| `database.url` | `postgres://leoflow:leoflow@localhost:5432/leoflow` | `postgres://dexaflow:dexaflow@localhost:5432/dexaflow` | **Pin it before upgrading**: `DEXAFLOW_DATABASE_URL=<your URL>`. The server cannot tell which database you meant. The chart always sets it. |
+| `logs.dir` | `/var/log/leoflow` | `/var/log/dexaflow` | Nothing to do: on a host where only `/var/log/leoflow` exists, the server keeps writing there and logs a warning naming `DEXAFLOW_LOGS_DIR`. |
+| `executor.task_secret_mount_path` | `/etc/leoflow/secrets` | `/etc/dexaflow/secrets` | Nothing to do: at the default, the Secret is mounted at both paths, so a DAG that reads the old one keeps working. Move DAGs to the new path when convenient. |
+| `executor.agent_path` (subprocess executor) | `leoflow-agent` | `dexaflow-agent` | Nothing to do: on a host with only `leoflow-agent` on `PATH`, the server runs it and logs a warning. |
+| `executor.http.user_agent` | `leoflow/0.1` | `dexaflow/<server version>` | Pin it if a service you call matches on the old header. |
