@@ -2,7 +2,7 @@
 title: "Version notes"
 linkTitle: "Version notes"
 weight: 10
-description: "What changes when a Cluster control plane upgrades to each 0.5.x release, and what to do about it."
+description: "What changes when a Cluster control plane upgrades to each 0.5.x and 0.6.x release, and what to do about it."
 ---
 
 One section per release: what changes when a Cluster control plane [upgrades](/operate/upgrades/) to it, and what to do. Read the sections between your version and the target before a `helm upgrade`.
@@ -1249,3 +1249,23 @@ since the last check are replayed when it is noticed, at most a second later.
 Every log stream also publishes from its own queue now, in batches of up to
 256 lines per Redis round trip, so a follower costs a chatty task far less
 receive rate than before, under either mode.
+
+## Upgrading to 0.6.0: the task-pod network policy is on
+
+`taskNetworkPolicy.enabled` now defaults to `true`
+([#539](https://github.com/dexadata/dexaflow/issues/539)). A release that left it
+unset gets the policy on upgrade: task pods lose all ingress and their egress to
+the cloud metadata range `169.254.0.0/16`, and keep DNS, the control-plane gRPC
+and every other destination. See
+[Task-pod network policy](/operate/task-pod-hardening/#task-pod-network-policy).
+
+| Your install | What the upgrade does |
+|---|---|
+| Sets `taskNetworkPolicy.enabled` either way | Nothing changes. |
+| Leaves it unset, and no task reads the metadata endpoint or accepts connections | The policy is created. Tasks run as before. |
+| Leaves it unset, and tasks get keyless credentials from GKE Workload Identity or EKS Pod Identity (external secrets, cloud SDKs with no key) | Those tasks fail to authenticate. Before upgrading, re-allow the metadata host with `taskNetworkPolicy.allowMetadataEgress` (a `/32` each; see [External secrets](/operate/external-secrets/)), or set `taskNetworkPolicy.enabled: false` to keep the old behavior. AWS IRSA needs nothing. |
+| Leaves it unset, and something connects into a running task pod | Those connections are refused. Set `taskNetworkPolicy.enabled: false`, or add the ingress your cluster needs with a NetworkPolicy of your own. |
+
+The policy only takes effect on a CNI that enforces NetworkPolicy. On Cilium,
+GKE Dataplane V2 included, also set `taskNetworkPolicy.blockPrivateNetworks: true`,
+as the task pod hardening page explains.
