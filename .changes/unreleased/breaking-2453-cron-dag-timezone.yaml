@@ -1,0 +1,4 @@
+kind: Breaking
+body: |-
+  A cron schedule is now read in the time zone of the DAG's `start_date`, as Airflow does ([#2453](https://github.com/dexadata/dexaflow/issues/2453)). `schedule="0 6 * * *"` with `start_date=pendulum.datetime(2026, 1, 1, tz="America/Sao_Paulo")` runs at 06:00 in Sao Paulo (09:00 UTC), where it ran at 06:00 UTC before; daylight saving time is followed on the wall clock, as in Airflow. `dexaflow compile` writes the zone to `dag.json` as `schedule_timezone`, so a DAG moves at its next compile and deploy. DAGs whose `start_date` is UTC, naive or unset do not change. To keep the old time, use a UTC `start_date` or move the hour in the cron. See [Upgrading to 0.6.0: cron schedules run in the DAG's time zone](https://dexaflow.dexadata.ai/operate/upgrades/version-notes/#upgrading-to-060-cron-schedules-run-in-the-dags-time-zone).
+time: 2026-11-25T14:30:00.000000+00:00

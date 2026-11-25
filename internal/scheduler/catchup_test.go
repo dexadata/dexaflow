@@ -111,7 +111,7 @@ func TestDueScheduledSlots(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			got := dueScheduledSlots(tc.expr, tc.last, tc.startDate, now, tc.catchup, tc.maxSlots)
+			got := dueScheduledSlots(tc.expr, "", tc.last, tc.startDate, now, tc.catchup, tc.maxSlots)
 			if len(got) != len(tc.want) {
 				t.Fatalf("len = %d, want %d (got=%v)", len(got), len(tc.want), got)
 			}
@@ -147,7 +147,7 @@ func TestDueScheduledSlotsRespectsUTCWhenSeedHasOffset(t *testing.T) {
 	// Same instant as 2026-06-01T00:00:00Z but stamped in -0300, mirroring
 	// what pgx returns from a Postgres column read.
 	lastLogical := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC).In(saoPaulo)
-	got := dueScheduledSlots("@daily", &lastLogical, nil, now, false, 100)
+	got := dueScheduledSlots("@daily", "", &lastLogical, nil, now, false, 100)
 	if len(got) != 0 {
 		t.Fatalf("expected 0 slots (last run already covers today's UTC midnight), got %d: %v", len(got), got)
 	}
@@ -166,7 +166,7 @@ func TestDueSlotsForAScheduleThatNeverFires(t *testing.T) {
 	for _, expr := range []string{"0 0 31 2 *", "0 , * * 0"} {
 		done := make(chan []time.Time, 1)
 		go func() {
-			done <- dueScheduledSlots(expr, &last, &start, now, true, 5)
+			done <- dueScheduledSlots(expr, "", &last, &start, now, true, 5)
 		}()
 		select {
 		case slots := <-done:
@@ -176,10 +176,10 @@ func TestDueSlotsForAScheduleThatNeverFires(t *testing.T) {
 		case <-time.After(5 * time.Second):
 			t.Fatalf("%q with a start_date: dueScheduledSlots did not return", expr)
 		}
-		if slots := dueScheduledSlots(expr, &last, nil, now, true, 5); len(slots) != 0 {
+		if slots := dueScheduledSlots(expr, "", &last, nil, now, true, 5); len(slots) != 0 {
 			t.Errorf("%q: slots = %v, want none", expr, slots)
 		}
-		if logical, due := nextScheduledRun(expr, &last, now); due {
+		if logical, due := nextScheduledRun(expr, "", &last, now); due {
 			t.Errorf("%q: nextScheduledRun due at %v, want not due", expr, logical)
 		}
 	}

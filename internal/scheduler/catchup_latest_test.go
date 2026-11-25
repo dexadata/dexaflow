@@ -97,7 +97,7 @@ func assertLatestMinuteSlot(t *testing.T, got, before, after time.Time) {
 func TestDueScheduledSlotsCatchupFalseIrregularSchedule(t *testing.T) {
 	start := time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC)
 	now := time.Date(2026, 6, 1, 8, 0, 0, 0, time.UTC) // a Monday
-	got := dueScheduledSlots("0 9 * * 1-5", nil, &start, now, false, maxCatchupSlotsPerTick)
+	got := dueScheduledSlots("0 9 * * 1-5", "", nil, &start, now, false, maxCatchupSlotsPerTick)
 	want := time.Date(2026, 5, 29, 9, 0, 0, 0, time.UTC) // the Friday before
 	if len(got) != 1 || !got[0].Equal(want) {
 		t.Errorf("got %v, want [%s]", got, want)
@@ -110,11 +110,11 @@ func TestDueScheduledSlotsCatchupFalseIrregularSchedule(t *testing.T) {
 func TestDueScheduledSlotsCatchupFalseRespectsFloors(t *testing.T) {
 	now := time.Date(2026, 6, 1, 12, 30, 0, 0, time.UTC)
 	last := time.Date(2026, 6, 1, 12, 0, 0, 0, time.UTC)
-	if got := dueScheduledSlots("@hourly", &last, nil, now, false, maxCatchupSlotsPerTick); len(got) != 0 {
+	if got := dueScheduledSlots("@hourly", "", &last, nil, now, false, maxCatchupSlotsPerTick); len(got) != 0 {
 		t.Errorf("latest slot equals last logical: got %v, want none", got)
 	}
 	start := time.Date(2026, 6, 1, 12, 15, 0, 0, time.UTC)
-	if got := dueScheduledSlots("@hourly", nil, &start, now, false, maxCatchupSlotsPerTick); len(got) != 0 {
+	if got := dueScheduledSlots("@hourly", "", nil, &start, now, false, maxCatchupSlotsPerTick); len(got) != 0 {
 		t.Errorf("latest slot before start_date: got %v, want none", got)
 	}
 }
