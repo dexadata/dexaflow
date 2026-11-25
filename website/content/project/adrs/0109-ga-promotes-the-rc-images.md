@@ -5,7 +5,7 @@ weight: 1090
 description: "ADR 0109: when the GA commit changes nothing an image is built from, the Release workflow does not rebuild the container images of a GA tag. It copies every image of the last green rc of that version under the GA tags with a new image configuration that names the GA version, keeps every layer byte for byte, checks that it did, and signs and attests the result. The binaries in the image report the GA version because the version package accepts that configuration only for the rc it was built as."
 ---
 
-**Status:** Proposed
+**Status:** Accepted
 **Date:** 2026-11-25
 **Relates:** ADR 0014 (supply chain signing), ADR 0033 (rc tags and E2E gates), ADR 0071 (stage, verify, promote), ADR 0108 (findings between rc and GA)
 **Issues:** #878
