@@ -69,7 +69,11 @@ Package config loads Dexaflow configuration from defaults, an optional config fi
 - [type ObservabilitySection](<#ObservabilitySection>)
 - [type PlatformDefaultsSection](<#PlatformDefaultsSection>)
 - [type PoolsSection](<#PoolsSection>)
+- [type RedisClusterSection](<#RedisClusterSection>)
 - [type RedisSection](<#RedisSection>)
+  - [func \(r RedisSection\) Configured\(\) bool](<#RedisSection.Configured>)
+  - [func \(r RedisSection\) Validate\(\) error](<#RedisSection.Validate>)
+- [type RedisSentinelSection](<#RedisSentinelSection>)
 - [type RemoteBuilderSection](<#RemoteBuilderSection>)
 - [type RetentionSection](<#RetentionSection>)
   - [func \(r RetentionSection\) Active\(usageRecording bool\) bool](<#RetentionSection.Active>)
@@ -297,7 +301,7 @@ func UpdateUserStore(path string, update func(*UserStore) error) error
 UpdateUserStore reads the store at path, lets update change it, and writes the managed keys back \(the per\-server sessions, the targets, the selections and the single\-server server\_url/token pair\). Every other key, the order of the keys and their comments are kept. The file is created when absent and replaced atomically at 0600, whatever its mode was, because it holds tokens.
 
 <a name="ValidOrigins"></a>
-## func [ValidOrigins](<https://github.com/dexadata/dexaflow/blob/main/internal/config/server.go#L555>)
+## func [ValidOrigins](<https://github.com/dexadata/dexaflow/blob/main/internal/config/server.go#L631>)
 
 ```go
 func ValidOrigins(list []string) bool
@@ -1311,7 +1315,7 @@ type LogsSection struct {
 ```
 
 <a name="MetricsSection"></a>
-## type [MetricsSection](<https://github.com/dexadata/dexaflow/blob/main/internal/config/server.go#L302-L307>)
+## type [MetricsSection](<https://github.com/dexadata/dexaflow/blob/main/internal/config/server.go#L377-L382>)
 
 MetricsSection configures the Prometheus scrape.
 
@@ -1418,7 +1422,7 @@ type OIDCSection struct {
 ```
 
 <a name="OTelSection"></a>
-## type [OTelSection](<https://github.com/dexadata/dexaflow/blob/main/internal/config/server.go#L310-L321>)
+## type [OTelSection](<https://github.com/dexadata/dexaflow/blob/main/internal/config/server.go#L385-L396>)
 
 OTelSection configures OpenTelemetry export.
 
@@ -1480,7 +1484,7 @@ type ObjectLogSection struct {
 ```
 
 <a name="ObservabilitySection"></a>
-## type [ObservabilitySection](<https://github.com/dexadata/dexaflow/blob/main/internal/config/server.go#L290-L299>)
+## type [ObservabilitySection](<https://github.com/dexadata/dexaflow/blob/main/internal/config/server.go#L365-L374>)
 
 ObservabilitySection configures logging, metrics, and tracing.
 
@@ -1564,8 +1568,21 @@ type PoolsSection struct {
 }
 ```
 
+<a name="RedisClusterSection"></a>
+## type [RedisClusterSection](<https://github.com/dexadata/dexaflow/blob/main/internal/config/server.go#L319-L323>)
+
+RedisClusterSection lists the seed nodes of a Redis Cluster.
+
+```go
+type RedisClusterSection struct {
+    // Addrs are host:port addresses of some of the cluster's nodes; the
+    // client discovers the rest.
+    Addrs []string `mapstructure:"addrs"`
+}
+```
+
 <a name="RedisSection"></a>
-## type [RedisSection](<https://github.com/dexadata/dexaflow/blob/main/internal/config/server.go#L271-L287>)
+## type [RedisSection](<https://github.com/dexadata/dexaflow/blob/main/internal/config/server.go#L271-L305>)
 
 RedisSection configures the Redis connection.
 
@@ -1586,6 +1603,59 @@ type RedisSection struct {
     // policy only logs a warning and sets dexaflow_redis_eviction_policy_safe
     // to 0.
     RequireNoEviction bool `mapstructure:"require_noeviction"`
+    // Sentinel, when its master is set, reaches Redis through Sentinel
+    // (#2358): the client asks the sentinels at Addrs for the master and
+    // follows a failover. URL then only supplies the credentials, the
+    // database and TLS.
+    Sentinel RedisSentinelSection `mapstructure:"sentinel"`
+    // Cluster, when it lists addresses, reaches a Redis Cluster through
+    // those seed nodes (#2358). URL then only supplies the credentials and
+    // TLS; a Cluster has database 0 only.
+    Cluster RedisClusterSection `mapstructure:"cluster"`
+    // DialTimeout, ReadTimeout and WriteTimeout bound one connection attempt
+    // and one command's read and write. Zero keeps the client's defaults:
+    // 5 s to dial, 3 s to read, and the read timeout to write.
+    DialTimeout  time.Duration `mapstructure:"dial_timeout"`
+    ReadTimeout  time.Duration `mapstructure:"read_timeout"`
+    WriteTimeout time.Duration `mapstructure:"write_timeout"`
+    // PoolSize is the connection pool size per node. Zero keeps the client's
+    // default, 10 connections per CPU.
+    PoolSize int `mapstructure:"pool_size"`
+}
+```
+
+<a name="RedisSection.Configured"></a>
+### func \(RedisSection\) [Configured](<https://github.com/dexadata/dexaflow/blob/main/internal/config/server.go#L327>)
+
+```go
+func (r RedisSection) Configured() bool
+```
+
+Configured reports whether a Redis is configured at all, by URL, Sentinel or Cluster. None means the embedded datastore \(Lite, ADR 0026\).
+
+<a name="RedisSection.Validate"></a>
+### func \(RedisSection\) [Validate](<https://github.com/dexadata/dexaflow/blob/main/internal/config/server.go#L332>)
+
+```go
+func (r RedisSection) Validate() error
+```
+
+Validate refuses a Redis configuration the client cannot use.
+
+<a name="RedisSentinelSection"></a>
+## type [RedisSentinelSection](<https://github.com/dexadata/dexaflow/blob/main/internal/config/server.go#L308-L316>)
+
+RedisSentinelSection names a Sentinel\-managed Redis master.
+
+```go
+type RedisSentinelSection struct {
+    // Master is the name of the master the sentinels monitor.
+    Master string `mapstructure:"master"`
+    // Addrs are the sentinels' host:port addresses.
+    Addrs []string `mapstructure:"addrs"`
+    // Password authenticates to the sentinels, when they require it; the
+    // master's own password comes from the URL.
+    Password string `mapstructure:"password"`
 }
 ```
 
@@ -1790,7 +1860,7 @@ type ServerConfig struct {
 ```
 
 <a name="LoadServer"></a>
-### func [LoadServer](<https://github.com/dexadata/dexaflow/blob/main/internal/config/server.go#L325>)
+### func [LoadServer](<https://github.com/dexadata/dexaflow/blob/main/internal/config/server.go#L400>)
 
 ```go
 func LoadServer(configFile string, flags *pflag.FlagSet) (*ServerConfig, error)
@@ -1826,7 +1896,7 @@ func (c *ServerConfig) PoolsEnabled() bool
 PoolsEnabled reports whether named pools are on: scheduler.pools.enabled when it is set, otherwise the cluster edition \(\#2173\).
 
 <a name="ServerConfig.Validate"></a>
-### func \(\*ServerConfig\) [Validate](<https://github.com/dexadata/dexaflow/blob/main/internal/config/server.go#L480>)
+### func \(\*ServerConfig\) [Validate](<https://github.com/dexadata/dexaflow/blob/main/internal/config/server.go#L555>)
 
 ```go
 func (c *ServerConfig) Validate() error

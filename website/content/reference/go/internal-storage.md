@@ -85,7 +85,7 @@ Package storage wraps the Postgres and Redis connections used by the control pla
 - [type RedisMemoryMetrics](<#RedisMemoryMetrics>)
 - [type RedisMetrics](<#RedisMetrics>)
 - [type RedisRateCounter](<#RedisRateCounter>)
-  - [func NewRedisRateCounter\(client \*redis.Client\) \*RedisRateCounter](<#NewRedisRateCounter>)
+  - [func NewRedisRateCounter\(client redis.UniversalClient\) \*RedisRateCounter](<#NewRedisRateCounter>)
   - [func \(r \*RedisRateCounter\) Decr\(ctx context.Context, key string\) error](<#RedisRateCounter.Decr>)
   - [func \(r \*RedisRateCounter\) Get\(ctx context.Context, key string\) \(int64, error\)](<#RedisRateCounter.Get>)
   - [func \(r \*RedisRateCounter\) Incr\(ctx context.Context, key string, ttl time.Duration\) \(int64, error\)](<#RedisRateCounter.Incr>)
@@ -447,7 +447,7 @@ func TryKeyMigrationLockShared(ctx context.Context, q RowQueryer) (bool, error)
 TryKeyMigrationLockShared takes the key\-migration lock in shared mode on the caller's session without waiting. It reports false while a migration holds it.
 
 <a name="WatchRedisMemory"></a>
-## func [WatchRedisMemory](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/redis_memory.go#L126>)
+## func [WatchRedisMemory](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/redis_memory.go#L161>)
 
 ```go
 func WatchRedisMemory(ctx context.Context, r *Redis, m RedisMemoryMetrics, logger *slog.Logger, interval time.Duration) func()
@@ -993,18 +993,21 @@ func (p *Postgres) SetSchemaObserver(observe func(class string))
 SetSchemaObserver registers what readiness reports each schema verdict to: the class of a not\-ready schema, or "" when it is ready. It feeds dexaflow\_schema\_ready for a pod that was already serving. Set it once, at boot, before the probes run.
 
 <a name="Redis"></a>
-## type [Redis](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/redis.go#L17-L19>)
+## type [Redis](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/redis.go#L18-L23>)
 
-Redis wraps a go\-redis client used for XCom values and the live log tail.
+Redis wraps a go\-redis client used for XCom values and the live log tail: a single node, a Sentinel\-managed master or a Redis Cluster \(\#2358\).
 
 ```go
 type Redis struct {
-    Client *redis.Client
+    Client redis.UniversalClient
+    // Cluster is set for a Redis Cluster, where a multi-key command must
+    // stay within one hash slot.
+    Cluster bool
 }
 ```
 
 <a name="NewRedis"></a>
-### func [NewRedis](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/redis.go#L57>)
+### func [NewRedis](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/redis.go#L133>)
 
 ```go
 func NewRedis(ctx context.Context, cfg config.RedisSection) (*Redis, error)
@@ -1013,7 +1016,7 @@ func NewRedis(ctx context.Context, cfg config.RedisSection) (*Redis, error)
 NewRedis connects to Redis and verifies connectivity.
 
 <a name="Redis.Close"></a>
-### func \(\*Redis\) [Close](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/redis.go#L75>)
+### func \(\*Redis\) [Close](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/redis.go#L151>)
 
 ```go
 func (r *Redis) Close() error
@@ -1022,16 +1025,16 @@ func (r *Redis) Close() error
 Close releases the Redis client.
 
 <a name="Redis.MemoryInfo"></a>
-### func \(\*Redis\) [MemoryInfo](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/redis_memory.go#L40>)
+### func \(\*Redis\) [MemoryInfo](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/redis_memory.go#L45>)
 
 ```go
 func (r *Redis) MemoryInfo(ctx context.Context) (RedisMemoryInfo, error)
 ```
 
-MemoryInfo reads the eviction policy, the used memory and the evicted keys from INFO, which managed services allow where CONFIG GET is blocked. The sections are read one call each because Redis before 7 takes one section per INFO.
+MemoryInfo reads the eviction policy, the used memory and the evicted keys from INFO, which managed services allow where CONFIG GET is blocked. The sections are read one call each because Redis before 7 takes one section per INFO. On a Cluster the policy is a setting of each node, so every master is read: the first unsafe policy found is reported, and memory and evictions are summed.
 
 <a name="Redis.Ping"></a>
-### func \(\*Redis\) [Ping](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/redis.go#L70>)
+### func \(\*Redis\) [Ping](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/redis.go#L146>)
 
 ```go
 func (r *Redis) Ping(ctx context.Context) error
@@ -1040,7 +1043,7 @@ func (r *Redis) Ping(ctx context.Context) error
 Ping checks Redis connectivity \(used by /readyz\).
 
 <a name="RedisMemoryInfo"></a>
-## type [RedisMemoryInfo](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/redis_memory.go#L21-L29>)
+## type [RedisMemoryInfo](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/redis_memory.go#L24-L32>)
 
 RedisMemoryInfo is what the server reports about its memory and evictions.
 
@@ -1057,7 +1060,7 @@ type RedisMemoryInfo struct {
 ```
 
 <a name="CheckRedisEviction"></a>
-### func [CheckRedisEviction](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/redis_memory.go#L97>)
+### func [CheckRedisEviction](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/redis_memory.go#L132>)
 
 ```go
 func CheckRedisEviction(ctx context.Context, r *Redis, require bool, logger *slog.Logger) (RedisMemoryInfo, error)
@@ -1066,7 +1069,7 @@ func CheckRedisEviction(ctx context.Context, r *Redis, require bool, logger *slo
 CheckRedisEviction is the boot check of the eviction policy \(\#2354\). A policy other than noeviction lets Redis delete the XCom values of running DAGs under memory pressure, and the downstream task then fails with "not found". It logs a warning that names the risk, or, when require is set \(redis.require\_noeviction\), returns ErrRedisEvictionUnsafe so the process refuses to boot. A policy that cannot be read is a warning, or a refusal in strict mode: strict mode fails closed.
 
 <a name="RedisMemoryInfo.EvictionSafe"></a>
-### func \(RedisMemoryInfo\) [EvictionSafe](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/redis_memory.go#L32>)
+### func \(RedisMemoryInfo\) [EvictionSafe](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/redis_memory.go#L35>)
 
 ```go
 func (i RedisMemoryInfo) EvictionSafe() bool
@@ -1075,7 +1078,7 @@ func (i RedisMemoryInfo) EvictionSafe() bool
 EvictionSafe reports whether the policy keeps every key until it expires.
 
 <a name="RedisMemoryMetrics"></a>
-## type [RedisMemoryMetrics](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/redis_memory.go#L81-L83>)
+## type [RedisMemoryMetrics](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/redis_memory.go#L116-L118>)
 
 RedisMemoryMetrics receives what WatchRedisMemory reads from INFO. It is a local interface so this package does not import internal/observability.
 
@@ -1115,7 +1118,7 @@ type RedisRateCounter struct {
 ### func [NewRedisRateCounter](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/redis_ratelimit.go#L20>)
 
 ```go
-func NewRedisRateCounter(client *redis.Client) *RedisRateCounter
+func NewRedisRateCounter(client redis.UniversalClient) *RedisRateCounter
 ```
 
 NewRedisRateCounter builds the shared rate limit counter over client.
