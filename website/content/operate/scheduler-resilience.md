@@ -32,7 +32,7 @@ see [Lite: which reapers run](#lite-which-reapers-run).
 | Task pod still `Pending` as its attempt credential nears its end (TI in `queued`; env-var transport only) | Dispatch-lost reaper ([#1126](https://github.com/dexadata/dexaflow/issues/1126)) | **8 min** after `queued_at` (the 10 min attempt token TTL less a 2 min margin) | TI failed with `start_expired`, an infra mark: the Pending pod is deleted, `killed: start_expired …` is appended to the attempt's log, and the planner re-places the task with a fresh credential **without spending a retry**. A pod already `Running` is left alone. |
 | Task pod vanished (TI in `running`, no pod at all for its attempt) | Pod-lost reaper | **60 s** after the running transition, then a live pod read | TI failed with `pod_lost`, and a final `killed: pod_lost (...)` line is appended to the attempt's log. Only when the apiserver holds no pod for the attempt: a pod that is still there in a terminal phase is left for the reconciler to settle from its termination log (`pod_lost_terminal_pod_defer`). |
 | Warm worker died holding attempts (warm pools only) | Warm-worker-lost reaper | next maintenance cycle | Each attempt bound to the dead worker is failed `pod_lost`, and its log ends with a `killed: pod_lost (warm worker <name> is gone or terminated)` line. When the worker's container terminated `OOMKilled` (on cgroup v2 an OOM in a task kills the whole worker), the failure message and the log line name the OOM kill instead, also when the pod is already deleted: the server remembers the terminated reason of each warm worker it saw terminate for 10 minutes; the attempt still counts as an infra failure; refill of the pool is the warm-pool reconciler's job, not the reaper's. |
-| Cluster stopped the task pod (graceful node shutdown on a spot or preemptible reclaim, node-pressure eviction, preemption, admission refusal) | Pod reconciler | seconds, from the pod's watch event; the next reconcile sweep (30 s) if the event is missed | TI failed with `pod_disrupted` on the infra rail: re-placed on the infra budget without spending a task retry. See [A pod the cluster stopped is an infra failure](#a-pod-the-cluster-stopped-is-an-infra-failure). |
+| Cluster stopped the task pod (graceful node shutdown on a spot or preemptible reclaim, node-pressure eviction, preemption, admission refusal) | Pod reconciler | usually seconds, from the pod's watch event; the next reconcile sweep (30 s) if the event is missed | TI failed with `pod_disrupted` on the infra rail: re-placed on the infra budget without spending a task retry. See [A pod the cluster stopped is an infra failure](#a-pod-the-cluster-stopped-is-an-infra-failure). |
 | Task pod image pull failing (`ErrImagePull`, `ImagePullBackOff`: a registry 429 or 503, a network blip, a missing tag or pull secret) | Pod reconciler | **5 min** after the pod was placed | The kubelet retries the pull meanwhile. Still failing then: TI failed with `image_pull_failed` on the infra rail, re-placed on the infra budget without spending a task retry, and the pod is deleted ([#1609](https://github.com/dexadata/dexaflow/issues/1609)). `InvalidImageName` never resolves and is a task failure at once. Both bounds settle an attempt only while it is not running yet: an attempt that started since the sweep read its pod (a pull that succeeded, a node that arrived) keeps running and its pod is left alone. A pod they collect is deleted only if it did not change since that read. See the `pending_bound_*` labels under [Observability](#observability). |
 | Task pod that no node can take (`PodScheduled=False`, reason `Unschedulable`: a `node_selector` no node matches, a missing toleration, a request larger than any node, a volume that never binds) | Pod reconciler | `executor.pending_timeout_seconds` (off by default; the chart's `cluster` profile sets **15 min**) | TI failed with `unschedulable:` and the scheduler's message, a task failure under the retry policy, and the pod is deleted. The clock starts no earlier than when the leader first saw the pod unschedulable, so time behind scheduling gates (Kueue) is not counted, and a leader change or a restart may start it over. Under the `envvar` agent credential transport (the default), the `start_expired` bound above re-places a Pending pod at 8 min first, so an unschedulable task ends with `start_expired` once its infra budget is spent and this timeout only applies under `exchange`. With the timeout off and the `exchange` transport, the pod waits for a node, holding its pool slot ([#1609](https://github.com/dexadata/dexaflow/issues/1609)). |
 | Control plane, its database or its Redis did not answer the agent before the task's code ran (Kubernetes, dedicated pods) | Pod reconciler, from the agent's outcome record | next reconcile sweep (30 s) after the agent gives up (2 minutes of retries for the spec and input reads) | TI failed with `control_plane_unavailable` on the infra rail: re-placed on the infra budget without spending a task retry. See [A start the control plane never answered is an infra failure](#a-start-the-control-plane-never-answered-is-an-infra-failure). |
@@ -171,18 +171,23 @@ leader's maintenance loop, which every 30 s performs **one ordered cycle**:
    and garbage-collects old finished pods;
 2. **then** the five reapers run.
 
-Between sweeps, the reconciler also settles a task pod as soon as the leader's
-pod watch sees it turn terminal: an `OOMKilled` container, an eviction, a pod
-the cluster stopped or one the node's garbage collector deleted after it
-finished is recorded within seconds instead of at the next sweep
+Between sweeps, the reconciler also settles a task pod that failed as soon as
+the leader's pod watch sees it: an `OOMKilled` container, an eviction, a pod
+the cluster stopped, or one the node's garbage collector deleted after it
+failed, is usually recorded within seconds instead of at the next sweep
 ([#2330](https://github.com/dexadata/dexaflow/issues/2330)). The event runs the
 sweep's own settle for that one pod, under the same lock as the cycle, so it
-never runs in the middle of a sweep or a reap, and it reads the watch's cache,
-so it adds no request to the apiserver. A pull still failing is settled when
-its 5 minute grace ends. The sweep keeps running as the resync: an event
-missed during a watch reconnect, a leader change or a failed write is settled
-at the next sweep. A pod deleted while it was still running has no outcome to
-read and stays the pod-lost reaper's.
+never runs in the middle of a sweep or a reap and waits for a cycle that is
+running; it reads the watch's cache, so it adds no request to the apiserver.
+Successes and reschedules are left to the agent's report and the sweep, and a
+pull still failing is settled when its 5 minute grace ends. The sweep keeps
+running as the resync: an event missed during a watch reconnect or a leader
+change, or a write that still failed after about 30 seconds of retries, is
+settled at the next sweep, except for a pod that is gone by then, which is
+the pod-lost reaper's, as before. A pod deleted while it was still running has
+no outcome to read and stays the reaper's too. Each settle from an event
+counts as `pod_event_settled` in `dexaflow_scheduler_decisions_total`, and
+`executor.pod_event_settle: false` turns the event path off.
 
 Each phase runs under its own budget of one interval (30 s): a sweep hung on a
 slow apiserver cannot starve the reap, and a reap pass over a large namespace
@@ -840,6 +845,7 @@ your Prometheus dashboard:
 | `pending_bound_image_pull`, `pending_bound_unschedulable` | The pod reconciler failed an attempt whose task pod stayed `Pending`: its image pull kept failing past 5 min (infra rail), or it stayed unschedulable past `executor.pending_timeout_seconds` (task failure), and deleted the pod ([#1609](https://github.com/dexadata/dexaflow/issues/1609)) |
 | `pending_bound_image_pull_started`, `pending_bound_unschedulable_started` | Such a bound found the attempt running since the sweep read its pod, so it settled nothing and left the pod alone. Healthy as a trickle |
 | `pending_bound_image_pull_gone`, `pending_bound_unschedulable_gone` | Such a bound found the attempt superseded or settled already (a `start_expired` re-place, a retry) and only collected the leftover pod |
+| `pod_event_settled` | The pod reconciler settled a failed task pod from its watch event, before the next sweep ([#2330](https://github.com/dexadata/dexaflow/issues/2330)) |
 | `pending_bound_unguarded` | The reconciler's outcome store cannot fail an attempt only before its start, so the bounds are off; a wiring bug, report it |
 | `agent_lost_log_marker_error`, `pod_lost_log_marker_error`, `warm_worker_lost_log_marker_error` | The final `killed: <reason>` line could not be appended to the reaped attempt's log; the reap stands, and the reason is still in the task's error message and the server log |
 

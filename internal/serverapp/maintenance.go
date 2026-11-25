@@ -192,7 +192,7 @@ func retentionConfig(sec config.RetentionSection) retention.Config {
 // never the primary path. Each phase runs under its own one-interval budget
 // (maintenancePhaseTimeout). Lite/subprocess never calls this: no pods, no
 // reaping.
-func startMaintenance(ctx context.Context, cs kubernetes.Interface, namespace string, reporter executor.OutcomeReporter, confirmer executor.InfraConfirmer, overrides overrideObservers, reaper *executor.Reaper, leading func() bool, logger *slog.Logger, podInformer *executor.PodInformer, settled executor.SettledRunChecker, pendingTimeout time.Duration) {
+func startMaintenance(ctx context.Context, cs kubernetes.Interface, namespace string, reporter executor.OutcomeReporter, confirmer executor.InfraConfirmer, overrides overrideObservers, reaper *executor.Reaper, leading func() bool, logger *slog.Logger, podInformer *executor.PodInformer, podEvents bool, settled executor.SettledRunChecker, pendingTimeout time.Duration) {
 	rec := executor.NewReconciler(cs, namespace, reporter)
 	// executor.pending_timeout_seconds: fail a task whose pod no node can take
 	// (#1609); zero keeps such a pod waiting.
@@ -213,11 +213,14 @@ func startMaintenance(ctx context.Context, cs kubernetes.Interface, namespace st
 	var cycle sync.Mutex
 	// Read task pods from the shared informer cache instead of a live LIST every
 	// tick when the informer is wired (PR-10); nil keeps the live LIST. With the
-	// informer, a pod that turns terminal is also settled from its watch event
-	// instead of on the next sweep (#2330); the sweep stays the resync.
+	// informer and executor.pod_event_settle on, a pod that fails is also
+	// settled from its watch event instead of on the next sweep (#2330); the
+	// sweep stays the resync.
 	if podInformer != nil {
 		rec.SetPodSnapshotter(podInformer)
-		go executor.NewPodEventSettler(rec, podInformer, leading, &cycle).Run(ctx)
+		if podEvents {
+			go executor.NewPodEventSettler(rec, podInformer, leading, &cycle).Run(ctx)
+		}
 	}
 	reaper.SetLastSweepCompleted(rec.LastSweepCompletedAt)
 	gatedtick.Start(ctx, "maintenance", reconcileInterval, leading, logger, func() {

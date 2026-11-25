@@ -66,6 +66,10 @@ type ExecutorSection struct {
 	// finished pods stay for the grace period, so they can be inspected with
 	// kubectl.
 	CollectSettledRunPods bool `mapstructure:"collect_settled_run_pods"`
+	// PodEventSettle settles a failed task pod from the pod watch's event
+	// instead of on the reconciler's next 30 s sweep (#2330). On by default;
+	// off leaves the sweep alone, as before 0.6.0.
+	PodEventSettle bool `mapstructure:"pod_event_settle"`
 	// PendingTimeoutSeconds, when positive, bounds how long a task pod may stay
 	// unschedulable (PodScheduled=False, reason Unschedulable): past it the pod
 	// is deleted and the task failed with a reason that names scheduling, so a

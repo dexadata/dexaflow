@@ -15,9 +15,14 @@ import (
 // pod the verdict collects, its delete.
 const podEventSettleTimeout = 10 * time.Second
 
-// podEventMaxRetries is how often a failed event settle is retried with
-// backoff before the attempt is left to the next sweep.
-const podEventMaxRetries = 5
+// podEventMaxRetries is how often a failed event settle is retried, backing
+// off from podEventRetryBase to podEventRetryMax (about 30 s in all), before
+// the attempt is left to the next sweep, or for a deleted pod to the reapers.
+const (
+	podEventMaxRetries = 5
+	podEventRetryBase  = time.Second
+	podEventRetryMax   = 30 * time.Second
+)
 
 // PodEventSettler settles a task pod's attempt as soon as the pod informer
 // sees it turn terminal (#2330), instead of on the reconciler's next 30 s
@@ -54,7 +59,7 @@ func NewPodEventSettler(rec *Reconciler, pods *PodInformer, leading func() bool,
 		leading: leading,
 		mu:      mu,
 		queue: workqueue.NewTypedRateLimitingQueueWithConfig(
-			workqueue.DefaultTypedControllerRateLimiter[string](),
+			workqueue.NewTypedItemExponentialFailureRateLimiter[string](podEventRetryBase, podEventRetryMax),
 			workqueue.TypedRateLimitingQueueConfig[string]{Name: "task-pod-events"},
 		),
 	}
@@ -66,7 +71,15 @@ func NewPodEventSettler(rec *Reconciler, pods *PodInformer, leading func() bool,
 	return s
 }
 
-// onUpdate queues a pod that is terminal now, and a pod waiting on a pull for
+// eventSettles reports whether a verdict is one the event path settles: a
+// failure, which is what waits on the sweep otherwise. A success or a
+// reschedule was reported by the agent itself, and a reschedule must not be
+// applied twice (see Reconcile), so those stay with the sweep.
+func eventSettles(v verdict) bool {
+	return v.terminal && (v.settle == settleFailed || v.settle == settleInfra)
+}
+
+// onUpdate queues a pod that failed now, and a pod waiting on a pull for
 // when its grace runs out. A pod that was already terminal is queued again
 // only when its status changed, so the informer's relists do not resettle it.
 func (s *PodEventSettler) onUpdate(oldObj, newObj any) {
@@ -78,7 +91,7 @@ func (s *PodEventSettler) onUpdate(oldObj, newObj any) {
 	if err != nil {
 		return
 	}
-	if classifyPod(pod).terminal {
+	if eventSettles(classifyPod(pod)) {
 		if old, ok := oldObj.(*corev1.Pod); ok && classifyPod(old).terminal && old.ResourceVersion == pod.ResourceVersion {
 			return
 		}
@@ -90,14 +103,17 @@ func (s *PodEventSettler) onUpdate(oldObj, newObj any) {
 	}
 }
 
-// onDelete keeps a terminal pod's last state and queues it; a pod deleted
-// while it ran is the reaper's, which reads liveness.
+// onDelete keeps a failed pod's last state and queues it, for a pod deleted
+// before its update was settled (a node's pod garbage collector). Most deletes
+// are the reconciler's own collections of pods it settled already; settling
+// those again is an attempt-guarded no-op. A pod deleted while it ran is the
+// reaper's, which reads liveness.
 func (s *PodEventSettler) onDelete(obj any) {
 	if tomb, ok := obj.(cache.DeletedFinalStateUnknown); ok {
 		obj = tomb.Obj
 	}
 	pod, ok := obj.(*corev1.Pod)
-	if !ok || !classifyPod(pod).terminal {
+	if !ok || !eventSettles(classifyPod(pod)) {
 		return
 	}
 	key, err := cache.MetaNamespaceKeyFunc(pod)
@@ -130,12 +146,20 @@ func (s *PodEventSettler) next(ctx context.Context) bool {
 		return true
 	}
 	s.queue.Forget(key)
+	s.gone.Delete(key)
 	return true
 }
 
 // settle runs the sweep's per-pod settle on the cached pod, or on the last
 // state of a deleted one, under the maintenance lock and only while leading.
+// The pod is read under the lock, so a sweep that ran meanwhile is seen.
 func (s *PodEventSettler) settle(ctx context.Context, key string) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !s.leading() {
+		s.gone.Delete(key)
+		return nil
+	}
 	pod, present := s.pods.cachedPod(key)
 	if !present {
 		v, ok := s.gone.LoadAndDelete(key)
@@ -148,16 +172,20 @@ func (s *PodEventSettler) settle(ctx context.Context, key string) error {
 	} else {
 		s.gone.Delete(key)
 	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if !s.leading() {
-		return nil
-	}
 	sctx, cancel := context.WithTimeout(ctx, podEventSettleTimeout)
 	defer cancel()
-	if err := s.rec.SettleFromEvent(sctx, pod, present); err != nil {
-		slog.Debug("settling task pod from its event; retrying", "pod", key, "error", err)
+	settled, err := s.rec.SettleFromEvent(sctx, pod, present)
+	if err != nil {
+		if !present {
+			// Keep the deleted pod's state for the retry: nothing else holds
+			// it, as the sweep no longer lists the pod.
+			s.gone.LoadOrStore(key, pod)
+		}
+		slog.Warn("settling a failed task pod from its event; retrying", "pod", key, "error", err)
 		return err
+	}
+	if settled {
+		s.rec.recordDecision("pod_event_settled")
 	}
 	return nil
 }

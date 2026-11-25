@@ -754,36 +754,30 @@ func (r *Reconciler) listTaskPods(ctx context.Context) ([]*corev1.Pod, error) {
 }
 
 // SettleFromEvent is the sweep's settle for one pod, run when the pod informer
-// sees the pod turn terminal (#2330): the same verdict, the same
-// attempt-guarded write, and the same immediate collection of a pod a Pending
-// bound or a reschedule settled. Age-based collection, the infra confirmation
-// pass and the settled-run collection stay with the sweep. present is false
-// for the last state of a pod already deleted, which is settled but not
-// collected. An error means the outcome was not recorded; the caller may
-// retry, and the next sweep retries anyway.
-func (r *Reconciler) SettleFromEvent(ctx context.Context, pod *corev1.Pod, present bool) error {
+// sees the pod fail (#2330): the same verdict, the same attempt-guarded write,
+// and the same immediate collection of a pod a Pending bound settled.
+// Age-based collection, the infra confirmation pass and the settled-run
+// collection stay with the sweep. present is false for the last state of a pod
+// already deleted, which is settled but not collected. It reports whether it
+// recorded an outcome; an error means the outcome was not recorded, and the
+// caller may retry.
+func (r *Reconciler) SettleFromEvent(ctx context.Context, pod *corev1.Pod, present bool) (bool, error) {
 	v := r.classify(pod, r.now())
 	if !v.terminal || v.settle == settleNothing {
-		return nil
+		return false, nil
 	}
 	if err := r.settlePod(ctx, pod, v); err != nil {
 		if errors.Is(err, errAttemptStarted) {
 			// A newer attempt started since the pod was read: nothing to
 			// settle, and the sweep decides about the pod.
-			return nil
+			return false, nil
 		}
-		return err
+		return false, err
 	}
-	if !present {
-		return nil
-	}
-	switch {
-	case v.collect:
+	if present && v.collect {
 		r.collectBound(ctx, pod)
-	case v.settle == settleReschedule:
-		r.collect(ctx, pod)
 	}
-	return nil
+	return true, nil
 }
 
 // settlePod records the pod's recovered outcome against its task instance,

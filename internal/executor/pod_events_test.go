@@ -2,6 +2,7 @@ package executor
 
 import (
 	"context"
+	"errors"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -10,17 +11,27 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes/fake"
+
+	"github.com/dexadata/dexaflow/internal/taskoutcome"
 )
 
 // syncReporter is a fakeReporter safe for the event worker's goroutine.
 type syncReporter struct {
 	mu  sync.Mutex
 	rep fakeReporter
+	// failures makes the next FailTask calls fail.
+	failures int
+	calls    int
 }
 
 func (s *syncReporter) FailTask(ctx context.Context, id string, try, epoch int, reason string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.calls++
+	if s.failures > 0 {
+		s.failures--
+		return errors.New("database down")
+	}
 	return s.rep.FailTask(ctx, id, try, epoch, reason)
 }
 
@@ -39,7 +50,41 @@ func (s *syncReporter) SucceedTask(ctx context.Context, id string, try, epoch in
 func (s *syncReporter) RescheduleTask(ctx context.Context, id string, try, epoch int, at time.Time) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.calls++
 	return s.rep.RescheduleTask(ctx, id, try, epoch, at)
+}
+
+func (s *syncReporter) failNext(n int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.failures = n
+}
+
+func (s *syncReporter) callCount() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.calls
+}
+
+// syncDecisions counts the recorded decisions.
+type syncDecisions struct {
+	mu   sync.Mutex
+	seen map[string]int
+}
+
+func (d *syncDecisions) RecordSchedulerDecision(name string) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if d.seen == nil {
+		d.seen = map[string]int{}
+	}
+	d.seen[name]++
+}
+
+func (d *syncDecisions) count(name string) int {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return d.seen[name]
 }
 
 func (s *syncReporter) outcome(id string) (settledOutcome, bool) {
@@ -56,13 +101,14 @@ type podEventsHarness struct {
 	pi      *PodInformer
 	rec     *Reconciler
 	rep     *syncReporter
+	dec     *syncDecisions
 	leading atomic.Bool
 	mu      sync.Mutex
 }
 
 func newPodEventsHarness(t *testing.T, pods ...*corev1.Pod) *podEventsHarness {
 	t.Helper()
-	h := &podEventsHarness{rep: &syncReporter{}}
+	h := &podEventsHarness{rep: &syncReporter{}, dec: &syncDecisions{}}
 	h.cs = fake.NewClientset()
 	for _, p := range pods {
 		if _, err := h.cs.CoreV1().Pods(p.Namespace).Create(context.Background(), p, metav1.CreateOptions{}); err != nil {
@@ -73,6 +119,7 @@ func newPodEventsHarness(t *testing.T, pods ...*corev1.Pod) *podEventsHarness {
 	h.pi = NewPodInformer(h.cs, "leoflow")
 	h.rec = NewReconciler(h.cs, "leoflow", h.rep)
 	h.rec.SetPodSnapshotter(h.pi)
+	h.rec.SetDecisionRecorder(h.dec)
 	settler := NewPodEventSettler(h.rec, h.pi, h.leading.Load, &h.mu)
 	ctx, cancel := context.WithCancel(context.Background())
 	t.Cleanup(cancel)
@@ -144,6 +191,9 @@ func TestPodEventSettlesAnOOMKilledPodWithinSeconds(t *testing.T) {
 	}
 	if reads := podReads(h.cs); reads != readsBefore {
 		t.Fatalf("the event path read the apiserver %d more times, want 0", reads-readsBefore)
+	}
+	if n := h.dec.count("pod_event_settled"); n != 1 {
+		t.Fatalf("pod_event_settled recorded %d times, want 1", n)
 	}
 }
 
@@ -217,4 +267,57 @@ func TestPodEventHoldsTheMaintenanceLock(t *testing.T) {
 	if !waitFor(t, func() bool { _, ok := h.rep.outcome("ti-oom"); return ok }) {
 		t.Fatal("not settled once the lock was released")
 	}
+}
+
+// TestPodEventLeavesARescheduleToTheSweep: a reschedule is applied once, by the
+// sweep, which collects the pod at once (ADR 0052). Neither the update that
+// ended the pod nor the delete of that collection applies it again: a redispatch
+// keeps the try number, and a second apply would re-park the live attempt.
+func TestPodEventLeavesARescheduleToTheSweep(t *testing.T) {
+	h := newPodEventsHarness(t, runningTaskPod("p-poke", "ti-poke"))
+	pod, err := h.cs.CoreV1().Pods("leoflow").Get(context.Background(), "p-poke", metav1.GetOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	withRecord(pod, taskoutcome.RescheduledAt(time.Now().Add(time.Minute)))
+	pod.Status.Phase = corev1.PodSucceeded
+	if _, err := h.cs.CoreV1().Pods("leoflow").UpdateStatus(context.Background(), pod, metav1.UpdateOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.cs.CoreV1().Pods("leoflow").Delete(context.Background(), "p-poke", metav1.DeleteOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(300 * time.Millisecond)
+	if n := h.rep.callCount(); n != 0 {
+		t.Fatalf("the event path applied a reschedule %d times, want 0", n)
+	}
+}
+
+// TestPodEventRetriesAFailedSettleOfADeletedPod: a deleted pod is not listed
+// by the sweep any more, so its last state is kept for the retry of a write
+// that failed.
+func TestPodEventRetriesAFailedSettleOfADeletedPod(t *testing.T) {
+	h := newPodEventsHarness(t, runningTaskPod("p-gone", "ti-gone"))
+	h.rep.failNext(1)
+	// Hold the cycle lock so the first settle runs on the deleted pod's last
+	// state, not on the cached one.
+	h.mu.Lock()
+	h.oomKill(t, "p-gone")
+	if err := h.cs.CoreV1().Pods("leoflow").Delete(context.Background(), "p-gone", metav1.DeleteOptions{}); err != nil {
+		h.mu.Unlock()
+		t.Fatal(err)
+	}
+	if !waitFor(t, func() bool { _, ok := h.pi.cachedPod("leoflow/p-gone"); return !ok }) {
+		h.mu.Unlock()
+		t.Fatal("the informer never saw the delete")
+	}
+	h.mu.Unlock()
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if _, ok := h.rep.outcome("ti-gone"); ok {
+			return
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	t.Fatalf("the deleted pod's failed settle was not retried (calls %d)", h.rep.callCount())
 }

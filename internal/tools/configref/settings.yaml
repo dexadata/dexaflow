@@ -945,6 +945,14 @@ settings:
       the `deletecollection` verb on pods, which the chart's executor Role grants
       only when `executor.collectSettledRunPods` is on; without it the server falls
       back to per-pod deletes. Helm: `executor.collectSettledRunPods`.
+  executor.pod_event_settle:
+    edition: Cluster
+    description: >-
+      Settle a task pod that failed (an `OOMKilled` container, an eviction, a pod
+      the cluster stopped) as soon as the leader's pod watch sees it, instead of at
+      the pod reconciler's next 30 second sweep. It reads the watch's cache, so it
+      adds no request to the Kubernetes API, and the sweep keeps running as the
+      resync. `false` leaves failed pods to the sweep, as before 0.6.0.
   executor.agent_path:
     edition: dev-only
     description: >-
