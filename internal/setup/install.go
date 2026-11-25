@@ -31,6 +31,7 @@ type EnsureOpts struct {
 	GOOS       string
 	GOARCH     string
 	Libc       string
+	Glibc      string // the host glibc version ("2.39") on glibc Linux, else ""
 	LookPath   func(string) (string, error)
 	RunVersion VersionFunc // probes a host interpreter's version; nil runs `--version`
 	Stat       func(string) (os.FileInfo, error)
@@ -231,8 +232,8 @@ func extractTarGz(data []byte, destDir string) error {
 	}
 }
 
-// extractEntry writes a single tar entry (directory, regular file, or symlink)
-// under destDir. The entry name is sanitized to stay within destDir (Zip Slip),
+// extractEntry writes a single tar entry (directory, regular file, symlink, or
+// hard link) under destDir. The entry name is sanitized to stay within destDir (Zip Slip),
 // and a symlink whose target would resolve outside destDir is refused — so a
 // malicious archive can neither write outside the extraction root nor plant an
 // escaping symlink that a later entry could write through.
@@ -253,40 +254,93 @@ func extractEntry(tr *tar.Reader, hdr *tar.Header, destDir, name string) error {
 		}
 		return os.MkdirAll(target, 0o750)
 	case tar.TypeReg:
-		if mkErr := os.MkdirAll(filepath.Dir(target), 0o750); mkErr != nil {
-			return fmt.Errorf("creating parent of %q: %w", target, mkErr)
-		}
-		// Symmetric to the dir branch: if a prior extract left a directory (or a
-		// symlink) where a regular file now belongs, O_TRUNC would fail EISDIR.
-		// Clear any non-regular entry first so the re-extract is idempotent across
-		// a TYPE change (directory -> file).
-		if fi, lerr := os.Lstat(target); lerr == nil && !fi.Mode().IsRegular() {
-			if rmErr := os.RemoveAll(target); rmErr != nil {
-				return fmt.Errorf("removing conflicting %q before file: %w", target, rmErr)
-			}
-		}
-		// Preserve only the executable bit (interpreters, scripts); everything
-		// else is owner read/write. This sidesteps trusting arbitrary archive
-		// mode bits while keeping the binaries runnable.
-		perm := os.FileMode(0o600)
-		if hdr.Mode&0o111 != 0 {
-			perm = 0o700
-		}
-		f, openErr := os.OpenFile(target, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, perm)
-		if openErr != nil {
-			return fmt.Errorf("creating %q: %w", target, openErr)
-		}
-		if _, cpErr := io.Copy(f, io.LimitReader(tr, maxPythonArchiveBytes)); cpErr != nil { //nolint:gosec // bounded by the archive cap
-			_ = f.Close() //nolint:errcheck // already returning an error
-			return fmt.Errorf("writing %q: %w", target, cpErr)
-		}
-		return f.Close()
+		return extractRegular(tr, hdr, target)
 	case tar.TypeSymlink:
 		return extractSymlink(hdr, destDir, target, name)
+	case tar.TypeLink:
+		return extractHardlink(hdr, destDir, target, name)
 	default:
 		// Skip device nodes, fifos, and other special types these archives don't use.
 		return nil
 	}
+}
+
+// extractRegular writes one regular-file entry at target.
+func extractRegular(tr *tar.Reader, hdr *tar.Header, target string) error {
+	if mkErr := os.MkdirAll(filepath.Dir(target), 0o750); mkErr != nil {
+		return fmt.Errorf("creating parent of %q: %w", target, mkErr)
+	}
+	// Symmetric to the dir branch: if a prior extract left a directory (or a
+	// symlink) where a regular file now belongs, O_TRUNC would fail EISDIR.
+	// Clear any non-regular entry first so the re-extract is idempotent across
+	// a TYPE change (directory -> file).
+	if fi, lerr := os.Lstat(target); lerr == nil && !fi.Mode().IsRegular() {
+		if rmErr := os.RemoveAll(target); rmErr != nil {
+			return fmt.Errorf("removing conflicting %q before file: %w", target, rmErr)
+		}
+	}
+	// Preserve only the executable bit (interpreters, scripts); everything
+	// else is owner read/write. This sidesteps trusting arbitrary archive
+	// mode bits while keeping the binaries runnable.
+	perm := os.FileMode(0o600)
+	if hdr.Mode&0o111 != 0 {
+		perm = 0o700
+	}
+	f, openErr := os.OpenFile(target, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, perm)
+	if openErr != nil {
+		return fmt.Errorf("creating %q: %w", target, openErr)
+	}
+	if _, cpErr := io.Copy(f, io.LimitReader(tr, maxPythonArchiveBytes)); cpErr != nil { //nolint:gosec // bounded by the archive cap
+		_ = f.Close() //nolint:errcheck // already returning an error
+		return fmt.Errorf("writing %q: %w", target, cpErr)
+	}
+	return f.Close()
+}
+
+// extractHardlink writes a hard-link entry as a copy of the file it names, which
+// the archive extracted before it (the self-contained PostgreSQL build links
+// its duplicate time zone files this way). The source must be a regular file
+// inside destDir: it is checked with Lstat, so a symlink the archive planted
+// cannot make the copy read from outside the extraction root. The copy keeps
+// only the executable bit, as a regular entry does.
+func extractHardlink(hdr *tar.Header, destDir, target, name string) error {
+	src, err := sanitizeArchivePath(destDir, hdr.Linkname)
+	if err != nil {
+		return fmt.Errorf("hard link %q: %w", name, err)
+	}
+	if src == target {
+		return nil
+	}
+	fi, err := os.Lstat(src)
+	if err != nil || !fi.Mode().IsRegular() {
+		return fmt.Errorf("hard link %q names %q, which is not a regular file extracted before it", name, hdr.Linkname)
+	}
+	if mkErr := os.MkdirAll(filepath.Dir(target), 0o750); mkErr != nil {
+		return fmt.Errorf("creating parent of %q: %w", target, mkErr)
+	}
+	if _, lerr := os.Lstat(target); lerr == nil {
+		if rmErr := os.RemoveAll(target); rmErr != nil {
+			return fmt.Errorf("removing conflicting %q before hard link: %w", target, rmErr)
+		}
+	}
+	in, err := os.Open(src) //nolint:gosec // src is inside destDir and a regular file (checked above)
+	if err != nil {
+		return fmt.Errorf("opening %q: %w", src, err)
+	}
+	defer func() { _ = in.Close() }() //nolint:errcheck // read-only file
+	perm := os.FileMode(0o600)
+	if fi.Mode()&0o111 != 0 {
+		perm = 0o700
+	}
+	out, err := os.OpenFile(target, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, perm) //nolint:gosec // target sanitized above
+	if err != nil {
+		return fmt.Errorf("creating %q: %w", target, err)
+	}
+	if _, cpErr := io.Copy(out, in); cpErr != nil {
+		_ = out.Close() //nolint:errcheck // already returning an error
+		return fmt.Errorf("writing %q: %w", target, cpErr)
+	}
+	return out.Close()
 }
 
 // extractSymlink creates one symlink entry safely. It refuses a link whose

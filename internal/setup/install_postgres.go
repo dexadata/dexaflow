@@ -14,7 +14,7 @@ import (
 )
 
 // maxPostgresArchiveBytes caps the relocatable PostgreSQL download. The real
-// archive is ~11 MB; the bound guards against a runaway/hostile response.
+// archive is ~11 MB (~38 MB for the self-contained build); the bound guards against a runaway/hostile response.
 const maxPostgresArchiveBytes = 150 << 20 // 150 MiB
 
 // pgVersionFile names the sentinel, written under Home/postgres after a
@@ -37,16 +37,18 @@ func EnsurePostgres(ctx context.Context, o EnsureOpts) (string, error) {
 	if stat == nil {
 		stat = os.Stat
 	}
-	// Short-circuit only when a COMPLETE install of the BUNDLED version is present.
-	// Keying on presence alone (the pre-#729 behavior) meant a clean upgrade never
-	// re-extracted — it silently kept the prior release's Postgres — and a partial
-	// extract (interrupted, or an older on-disk layout) was trusted blindly.
-	if _, err := stat(managed); err == nil && readManagedPostgresVersion(pgRoot) == pgVersion {
-		return binDir, nil
-	}
-	build, err := ResolvePostgres(o.GOOS, o.GOARCH, o.Libc)
+	build, err := ResolvePostgres(o.GOOS, o.GOARCH, o.Libc, o.Glibc)
 	if err != nil {
 		return "", err
+	}
+	// Short-circuit only when a COMPLETE install of the build this host gets is
+	// present. Keying on presence alone (the pre-#729 behavior) meant a clean
+	// upgrade never re-extracted (it silently kept the prior release's Postgres),
+	// and a partial extract (interrupted, or an older on-disk layout) was trusted
+	// blindly. Moving between the linked and the self-contained build re-extracts
+	// the same way; both are PostgreSQL 16, so the data directory carries over.
+	if _, serr := stat(managed); serr == nil && readManagedPostgresVersion(pgRoot) == build.Version {
+		return binDir, nil
 	}
 	logf(o.Logf, "downloading relocatable PostgreSQL %s for %s/%s...", build.Version, o.GOOS, o.GOARCH)
 	client := o.Client
@@ -106,6 +108,13 @@ func extractTarGzStrip(data []byte, destDir string, strip int) error {
 		name := stripComponents(hdr.Name, strip)
 		if name == "" {
 			continue // the stripped top-level dir itself
+		}
+		if hdr.Typeflag == tar.TypeLink {
+			// A hard link names its source by its full archive path; strip it the
+			// same way so it resolves under destDir.
+			if hdr.Linkname = stripComponents(hdr.Linkname, strip); hdr.Linkname == "" {
+				return fmt.Errorf("hard link %q names the stripped top-level directory", hdr.Name)
+			}
 		}
 		if err := extractEntry(tr, hdr, clean, name); err != nil {
 			return err

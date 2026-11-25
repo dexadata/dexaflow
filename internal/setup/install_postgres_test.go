@@ -292,3 +292,63 @@ func TestExtractTarGzStripFlattensTopDir(t *testing.T) {
 		t.Error("the top-level archive dir must be stripped, not present under dest")
 	}
 }
+
+// TestExtractTarGzStripHardlink covers the hard links of the self-contained
+// PostgreSQL build (its duplicate time zone files, #2540): the link names its
+// source by the full archive path, which is stripped like the entry name, and
+// the entry becomes a copy of that file.
+func TestExtractTarGzStripHardlink(t *testing.T) {
+	data := tarGz(t,
+		[]*tar.Header{
+			{Name: "pg-16/share/timezone/America/Santa_Isabel", Typeflag: tar.TypeReg, Mode: 0o644},
+			{Name: "pg-16/share/timezone/America/Tijuana", Linkname: "pg-16/share/timezone/America/Santa_Isabel", Typeflag: tar.TypeLink, Mode: 0o644},
+			{Name: "pg-16/bin/postgres", Typeflag: tar.TypeReg, Mode: 0o755},
+			{Name: "pg-16/bin/postmaster", Linkname: "pg-16/bin/postgres", Typeflag: tar.TypeLink, Mode: 0o755},
+		},
+		[]string{"TZif", "", "ELF", ""})
+	dest := t.TempDir()
+	for range 2 { // a re-extract over the first one works too
+		if err := extractTarGzStrip(data, dest, 1); err != nil {
+			t.Fatal(err)
+		}
+	}
+	b, err := os.ReadFile(filepath.Join(dest, "share", "timezone", "America", "Tijuana"))
+	if err != nil || string(b) != "TZif" {
+		t.Fatalf("hard-linked file = %q, %v; want the source's content", b, err)
+	}
+	fi, err := os.Stat(filepath.Join(dest, "bin", "postmaster"))
+	if err != nil || fi.Mode()&0o100 == 0 {
+		t.Fatalf("hard link to an executable: %v, mode %v; want it executable", err, fi)
+	}
+}
+
+// TestExtractTarGzStripRejectsBadHardlink proves a hard link can only copy a
+// regular file the archive already extracted inside the destination.
+func TestExtractTarGzStripRejectsBadHardlink(t *testing.T) {
+	outside := filepath.Join(t.TempDir(), "secret")
+	if err := os.WriteFile(outside, []byte("secret"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cases := map[string][]*tar.Header{
+		"escaping": {{Name: "pg/x", Linkname: "pg/../../../etc/passwd", Typeflag: tar.TypeLink}},
+		"absolute": {{Name: "pg/x", Linkname: outside, Typeflag: tar.TypeLink}},
+		"missing":  {{Name: "pg/x", Linkname: "pg/later", Typeflag: tar.TypeLink}},
+		"via a symlink": {
+			{Name: "pg/dir", Typeflag: tar.TypeDir, Mode: 0o755},
+			{Name: "pg/dir/sl", Linkname: "../dir", Typeflag: tar.TypeSymlink},
+			{Name: "pg/x", Linkname: "pg/dir/sl", Typeflag: tar.TypeLink},
+		},
+		"to the top directory": {{Name: "pg/x", Linkname: "pg", Typeflag: tar.TypeLink}},
+	}
+	for name, hdrs := range cases {
+		t.Run(name, func(t *testing.T) {
+			dest := t.TempDir()
+			if err := extractTarGzStrip(tarGz(t, hdrs, make([]string, len(hdrs))), dest, 1); err == nil {
+				t.Fatal("want the hard link refused")
+			}
+			if _, err := os.Stat(filepath.Join(dest, "x")); !os.IsNotExist(err) {
+				t.Errorf("the refused link was written: %v", err)
+			}
+		})
+	}
+}

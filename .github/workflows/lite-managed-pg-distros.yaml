@@ -1,10 +1,10 @@
-# Cold start of `dexaflow lite --postgres managed` on bare Ubuntu 22.04 and
-# 24.04 containers (#279): the bare image either boots, or Lite names the
-# missing system libraries with an apt-get command, and after running that
-# command it boots to /readyz. The relocatable PostgreSQL links libxml2,
-# Kerberos, OpenSSL 3, zstd and lz4 from the host and carries no ICU of its
-# own, so this is the gate that the pinned build keeps running on both LTS
-# releases. test/e2e/lite-managed-pg-distros.sh has the detail and runs the
+# Cold start of `dexaflow lite --postgres managed` on bare Ubuntu 22.04, 24.04
+# and 26.04 containers (#279, #2540). From glibc 2.36 on (24.04, 26.04) Lite
+# gets a self-contained PostgreSQL build and the bare image must boot. On 22.04
+# it gets the build that links libxml2, Kerberos, OpenSSL 3, zstd and lz4 from
+# the host: the bare image either boots, or Lite names the missing system
+# libraries with an apt-get command, and after running that command it boots
+# to /readyz. test/e2e/lite-managed-pg-distros.sh has the detail and runs the
 # same check locally.
 #
 # Path-filtered to what can change the outcome, because the Actions queue is
@@ -18,6 +18,7 @@ on:
     paths:
       - "internal/setup/postgres.go"
       - "internal/setup/install_postgres.go"
+      - "internal/setup/install.go"
       - "internal/cli/managed_postgres*.go"
       - "test/e2e/lite-managed-pg-distros.sh"
       - ".github/workflows/lite-managed-pg-distros.yaml"
@@ -26,6 +27,7 @@ on:
     paths:
       - "internal/setup/postgres.go"
       - "internal/setup/install_postgres.go"
+      - "internal/setup/install.go"
       - "internal/cli/managed_postgres*.go"
       - "test/e2e/lite-managed-pg-distros.sh"
       - ".github/workflows/lite-managed-pg-distros.yaml"
@@ -55,6 +57,7 @@ jobs:
         image:
           - mirror.gcr.io/library/ubuntu:22.04
           - mirror.gcr.io/library/ubuntu:24.04
+          - mirror.gcr.io/library/ubuntu:26.04
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
