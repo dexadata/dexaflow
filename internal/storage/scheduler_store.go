@@ -340,6 +340,31 @@ func (s *SchedulerStore) ListProvisionalInfraFailures(ctx context.Context) ([]ex
 	return out, nil
 }
 
+// TaskAttempts returns the attempt each listed task instance is on, keyed by
+// id, for the reconciler's abandoned pod teardown (#2430). An id with no row
+// is left out.
+func (s *SchedulerStore) TaskAttempts(ctx context.Context, taskInstanceIDs []string) (map[string]executor.AttemptState, error) {
+	ids := make([]pgtype.UUID, 0, len(taskInstanceIDs))
+	for _, id := range taskInstanceIDs {
+		u, err := parseUUID(id)
+		if err != nil {
+			return nil, fmt.Errorf("task instance id %q: %w", id, err)
+		}
+		ids = append(ids, u)
+	}
+	rows, err := s.q.TaskAttempts(ctx, ids)
+	if err != nil {
+		return nil, fmt.Errorf("reading task attempts: %w", err)
+	}
+	out := make(map[string]executor.AttemptState, len(rows))
+	for _, r := range rows {
+		out[uuidToString(r.ID)] = executor.AttemptState{
+			TryNumber: int(r.TryNumber), AttemptEpoch: int(r.AttemptEpoch), Live: r.Live,
+		}
+	}
+	return out, nil
+}
+
 // ConfirmInfraFailure stamps a provisional infra mark confirmed, guarded on
 // the exact attempt and on the mark still being provisional. It reports
 // whether a row was confirmed.
