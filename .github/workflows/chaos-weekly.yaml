@@ -38,7 +38,7 @@ env:
 jobs:
   chaos:
     name: k3d, chaos scenarios A to D
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 60
     services:
       postgres:
@@ -91,8 +91,11 @@ jobs:
         run: |
           for f in "$LOG_DIR"/*; do
             [ -f "$f" ] || continue
-            echo "::group::$(basename "$f") (last 400 lines)"
-            tail -n 400 "$f"
+            # A-*.log holds the stuck agent's goroutine dump (scenario A), which
+            # runs longer than a role log tail.
+            n=400; case "$(basename "$f")" in A-*) n=3000 ;; esac
+            echo "::group::$(basename "$f") (last $n lines)"
+            tail -n "$n" "$f"
             echo "::endgroup::"
           done
       - name: Upload the role logs
