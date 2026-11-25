@@ -102,8 +102,32 @@ func discoverOIDCFlow(ctx context.Context, cfg *config.ServerConfig, logger *slo
 	logger.Info("oidc login enabled",
 		"issuer", cfg.Auth.OIDC.Issuer,
 		"jit_provisioning", cfg.Auth.OIDC.JITProvisioning,
-		"break_glass_accounts", len(cfg.Auth.OIDC.BreakGlassEmails))
+		"break_glass_accounts", len(cfg.Auth.OIDC.BreakGlassEmails),
+		"logout", oidcLogoutMode(cfg.Auth.OIDC, flow.EndSessionEndpoint()))
+	warnLocalOnlyLogout(logger, cfg.Auth.OIDC, flow.EndSessionEndpoint())
 	return flow, nil
+}
+
+// oidcLogoutMode is what sign-out will actually end (#1165): "idp" only when it
+// is asked for and the issuer publishes an end_session_endpoint.
+func oidcLogoutMode(o config.OIDCSection, endSession string) string {
+	if o.Logout == config.OIDCLogoutLocal || endSession == "" {
+		return config.OIDCLogoutLocal
+	}
+	return config.OIDCLogoutIDP
+}
+
+// warnLocalOnlyLogout says at boot when auth.oidc.logout asks for the IdP
+// sign-out and the issuer cannot give it (Google publishes no
+// end_session_endpoint), so the operator learns it before a user reports that
+// sign-out signs them straight back in.
+func warnLocalOnlyLogout(logger *slog.Logger, o config.OIDCSection, endSession string) {
+	if o.Logout == config.OIDCLogoutLocal || endSession != "" {
+		return
+	}
+	logger.Warn("oidc: the issuer publishes no end_session_endpoint, so sign-out ends only this server's session "+
+		"and the identity provider session stays signed in; set auth.oidc.logout: local to silence this",
+		"issuer", o.Issuer)
 }
 
 // apiExtras are the API components a program built on pkg/server passed as
@@ -220,6 +244,7 @@ func oidcSettings(o config.OIDCSection) api.OIDCSettings {
 		BreakGlassEmails: o.BreakGlassEmails,
 		JITProvisioning:  o.JITProvisioning,
 		AutoRedirect:     o.AutoRedirect,
+		Logout:           o.Logout,
 	}
 }
 

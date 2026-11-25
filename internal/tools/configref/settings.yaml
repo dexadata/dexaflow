@@ -757,6 +757,26 @@ settings:
       sign-on**, so a denial lands on the page that explains it rather than bouncing
       back to the IdP forever, and suppressed by `?local=1`, so a break-glass account
       can always reach the password form without a values edit. Helm: `auth.oidc.autoRedirect`.
+  auth.oidc.logout:
+    edition: Cluster
+    description: >-
+      What sign-out ends. `idp` (the default) also ends the session at the identity
+      provider through its discovered `end_session_endpoint` (OpenID Connect
+      RP-Initiated Logout), so the sign-in button does not sign the user straight
+      back in. `local` ends only this server's session, for deployments where several
+      applications share the IdP session. An issuer that publishes no
+      `end_session_endpoint` (Google) gets the local sign-out either way, with a WARN
+      at boot, and so does a session that did not come from SSO (a break-glass
+      password login). `auth.external_signout_url`, when set, wins. See ADR 0109.
+      Helm: `auth.oidc.logout`.
+  auth.oidc.post_logout_redirect_url:
+    edition: Cluster
+    description: >-
+      Where the identity provider returns the browser after it ended its session
+      (`post_logout_redirect_uri`), typically this server's sign-in page
+      (`https://<host>/api/v2/auth/login?local=1`). It must be registered with the IdP,
+      like `redirect_url`, or the IdP refuses the sign-out. Empty sends none, and the
+      IdP shows its own signed-out page. Helm: `auth.oidc.postLogoutRedirectUrl`.
   auth.oidc.clock_skew_seconds:
     edition: Cluster
     description: >-

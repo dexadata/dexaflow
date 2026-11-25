@@ -19,6 +19,7 @@ func TestOIDCSettingsCarriesEveryField(t *testing.T) {
 		BreakGlassEmails: []string{"root@example.com"},
 		JITProvisioning:  true,
 		AutoRedirect:     true,
+		Logout:           "local",
 	}
 	got := reflect.ValueOf(oidcSettings(o))
 	src := reflect.ValueOf(o)

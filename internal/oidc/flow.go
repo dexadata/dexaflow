@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/url"
 	"time"
 
 	gooidc "github.com/coreos/go-oidc/v3/oidc"
@@ -31,6 +32,9 @@ type Flow struct {
 	verifier *Verifier
 	codec    *StateCodec
 	cfg      config.OIDCSection
+	// endSession is the discovered end_session_endpoint, or nil when the
+	// issuer publishes none (RP-Initiated Logout, #1165).
+	endSession *url.URL
 }
 
 // NewFlow discovers the issuer, pins it, and assembles the OAuth2 client and the
@@ -43,7 +47,12 @@ func NewFlow(ctx context.Context, cfg config.OIDCSection, hs256Secret string) (*
 	if err != nil {
 		return nil, fmt.Errorf("oidc discovery for %q: %w", cfg.Issuer, err)
 	}
+	endSession, err := discoverEndSession(provider)
+	if err != nil {
+		return nil, fmt.Errorf("oidc discovery for %q: %w", cfg.Issuer, err)
+	}
 	return &Flow{
+		endSession: endSession,
 		oauth: &oauth2.Config{
 			ClientID:     cfg.ClientID,
 			ClientSecret: cfg.ClientSecret,
@@ -55,6 +64,59 @@ func NewFlow(ctx context.Context, cfg config.OIDCSection, hs256Secret string) (*
 		codec:    NewStateCodec(hs256Secret),
 		cfg:      cfg,
 	}, nil
+}
+
+// discoverEndSession reads end_session_endpoint from the discovery document the
+// provider already fetched. Absent is not an error (Google publishes none); a
+// value that is not an absolute URL is, so a broken document fails boot rather
+// than the first sign-out.
+func discoverEndSession(provider *gooidc.Provider) (*url.URL, error) {
+	var doc struct {
+		EndSession string `json:"end_session_endpoint"` //nolint:tagliatelle // OpenID discovery field name
+	}
+	if err := provider.Claims(&doc); err != nil {
+		return nil, fmt.Errorf("reading end_session_endpoint: %w", err)
+	}
+	if doc.EndSession == "" {
+		return nil, nil //nolint:nilnil // absent is the documented no-endpoint answer
+	}
+	u, err := url.Parse(doc.EndSession)
+	if err != nil || (u.Scheme != "https" && u.Scheme != "http") || u.Host == "" {
+		return nil, fmt.Errorf("end_session_endpoint %q is not an absolute URL", doc.EndSession)
+	}
+	return u, nil
+}
+
+// EndSessionEndpoint returns the discovered end_session_endpoint, or "" when
+// the issuer publishes none.
+func (f *Flow) EndSessionEndpoint() string {
+	if f.endSession == nil {
+		return ""
+	}
+	return f.endSession.String()
+}
+
+// EndSessionURL builds the RP-Initiated Logout redirect (OpenID Connect
+// RP-Initiated Logout 1.0, section 2): the discovered endpoint, keeping its own
+// query, plus client_id, the ID token as id_token_hint when there is one, and
+// auth.oidc.post_logout_redirect_url when it is set. Empty values are left out,
+// since some IdPs refuse an empty parameter. ok is false when the issuer
+// publishes no end_session_endpoint.
+func (f *Flow) EndSessionURL(idTokenHint string) (string, bool) {
+	if f.endSession == nil {
+		return "", false
+	}
+	u := *f.endSession
+	q := u.Query()
+	q.Set("client_id", f.cfg.ClientID)
+	if idTokenHint != "" {
+		q.Set("id_token_hint", idTokenHint)
+	}
+	if f.cfg.PostLogoutRedirectURL != "" {
+		q.Set("post_logout_redirect_uri", f.cfg.PostLogoutRedirectURL)
+	}
+	u.RawQuery = q.Encode()
+	return u.String(), true
 }
 
 // GenerateCodeVerifier returns a fresh PKCE code verifier (high-entropy,

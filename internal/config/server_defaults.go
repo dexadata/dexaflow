@@ -121,6 +121,8 @@ var serverDefaults = map[string]any{
 	// that looks configured and is not. TestDocumentedEnvVarsBind caught this
 	// once before, and the rebase onto the session-cookie fix dropped it again.
 	"auth.oidc.auto_redirect":             false,
+	"auth.oidc.logout":                    OIDCLogoutIDP,
+	"auth.oidc.post_logout_redirect_url":  "",
 	"auth.oidc.clock_skew_seconds":        60,
 	"scheduler.loop_interval_ms":          1000,
 	"scheduler.enabled":                   true,

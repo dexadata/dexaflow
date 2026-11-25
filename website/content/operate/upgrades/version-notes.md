@@ -1249,3 +1249,18 @@ since the last check are replayed when it is noticed, at most a second later.
 Every log stream also publishes from its own queue now, in batches of up to
 256 lines per Redis round trip, so a follower costs a chatty task far less
 receive rate than before, under either mode.
+
+## Upgrading to 0.6.0: SSO sign-out ends the identity provider session
+
+Under `auth.provider: oidc`, sign-out now also ends the session at the identity
+provider ([#1165](https://github.com/dexadata/dexaflow/issues/1165),
+[ADR 0109](/project/adrs/0109-sso-sign-out-ends-the-idp-session/)), so the
+sign-in button no longer signs the user straight back in.
+
+| Your install | What the upgrade does |
+|---|---|
+| SSO with Entra, Okta, Keycloak or another issuer that publishes `end_session_endpoint` | Sign-out goes through the IdP, which shows its own signed-out page. Set `auth.oidc.postLogoutRedirectUrl` (and register it with the IdP) to come back to Dexaflow instead. Sessions opened before the upgrade sign out locally once. |
+| SSO with Google or Cognito (no `end_session_endpoint`) | Nothing changes. The server logs a warning at boot; set `auth.oidc.logout: local` to acknowledge it. |
+| Several applications share the IdP session and sign-out must not end it | Set `auth.oidc.logout: local`. |
+| `auth.externalSignoutUrl` is set | Nothing changes: it still decides where sign-out goes. |
+| No SSO | Nothing changes. |
