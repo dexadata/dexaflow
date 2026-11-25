@@ -13,7 +13,7 @@ serves no HTTP API).
      env var the server resolves. A disagreement between them is not a render
      error: it is a boot that reads no file and then fails closed on a tenant
      pin the operator can see configured in the ConfigMap right next to it. */ -}}
-{{- $oidcMountPath := "/etc/leoflow/oidc" -}}
+{{- $oidcMountPath := "/etc/dexaflow/oidc" -}}
 {{- /* HTTPS on the API listener (#638): only the roles that serve the API get
      the key, the env and the HTTPS probe scheme. The scheduler role probes the
      plain metrics port. */ -}}
@@ -532,18 +532,18 @@ spec:
             # mounted from agentTLS.serverCertSecret; the agent CA is delivered to
             # task pods via agentTLS.caConfigMap (the dispatcher mounts + selects it).
             - name: DEXAFLOW_SERVER_GRPC_TLS_CERT
-              value: /etc/leoflow/grpc-tls/tls.crt
+              value: /etc/dexaflow/grpc-tls/tls.crt
             - name: DEXAFLOW_SERVER_GRPC_TLS_KEY
-              value: /etc/leoflow/grpc-tls/tls.key
+              value: /etc/dexaflow/grpc-tls/tls.key
             - name: DEXAFLOW_EXECUTOR_AGENT_TLS_CA_CONFIGMAP
               value: {{ include "leoflow.agentTLS.caConfigMapName" .ctx | quote }}
             {{- end }}
             {{- if $httpTLS }}
             # HTTPS on the API listener (#638), from httpTLS.secretName.
             - name: DEXAFLOW_SERVER_HTTP_TLS_CERT
-              value: /etc/leoflow/http-tls/tls.crt
+              value: /etc/dexaflow/http-tls/tls.crt
             - name: DEXAFLOW_SERVER_HTTP_TLS_KEY
-              value: /etc/leoflow/http-tls/tls.key
+              value: /etc/dexaflow/http-tls/tls.key
             {{- end }}
             {{- if .ctx.Values.taskSecret.name }}
             # Mount a Kubernetes Secret read-only into every task pod so a task can
@@ -782,11 +782,11 @@ spec:
               value: {{ $admissionWebhook.url | quote }}
             {{- if $admissionWebhook.caConfigMap }}
             - name: DEXAFLOW_EXECUTION_ADMISSION_WEBHOOK_CA_FILE
-              value: /etc/leoflow/admission-ca/ca.crt
+              value: /etc/dexaflow/admission-ca/ca.crt
             {{- end }}
             {{- if $admissionWebhook.tokenSecret }}
             - name: DEXAFLOW_EXECUTION_ADMISSION_WEBHOOK_TOKEN_FILE
-              value: /etc/leoflow/admission-token/token
+              value: /etc/dexaflow/admission-token/token
             {{- end }}
             {{- if $admission.timeout }}
             - name: DEXAFLOW_EXECUTION_ADMISSION_TIMEOUT
@@ -845,10 +845,10 @@ spec:
             # #312 — Verified TLS to managed Redis (Memorystore
             # SERVER_AUTHENTICATION, ElastiCache in-transit, Azure Cache).
             # The CA bundle from the named ConfigMap is mounted read-only at
-            # /etc/leoflow/redis-ca/ca.crt and the server is told where to
+            # /etc/dexaflow/redis-ca/ca.crt and the server is told where to
             # find it via DEXAFLOW_REDIS_CA_FILE.
             - name: DEXAFLOW_REDIS_CA_FILE
-              value: /etc/leoflow/redis-ca/ca.crt
+              value: /etc/dexaflow/redis-ca/ca.crt
             {{- end }}
             {{- if .ctx.Values.redis.requireNoEviction }}
             # #2354: refuse to boot on a Redis that may evict XCom values.
@@ -1089,37 +1089,42 @@ spec:
             # are non-empty, never reading the files, so the dangling path is
             # harmless on api while scoping the env would CrashLoopBackOff it.
             - name: grpc-tls
-              mountPath: /etc/leoflow/grpc-tls
+              mountPath: /etc/dexaflow/grpc-tls
               readOnly: true
             {{- end }}
             {{- if $httpTLS }}
             - name: http-tls
-              mountPath: /etc/leoflow/http-tls
+              mountPath: /etc/dexaflow/http-tls
               readOnly: true
             {{- end }}
             {{- if .ctx.Values.database.caConfigMap }}
             # Managed-Postgres CA bundle (#315). The DSN references this path
-            # via `sslmode=verify-full&sslrootcert=/etc/leoflow/db-ca/ca.crt` —
+            # via `sslmode=verify-full&sslrootcert=/etc/dexaflow/db-ca/ca.crt`, and
             # pgx reads sslrootcert natively, so no Go-side wiring is needed.
+            - name: db-ca
+              mountPath: /etc/dexaflow/db-ca
+              readOnly: true
+            # The same bundle at the path from before the rename, so a DSN that
+            # pins sslrootcert=/etc/leoflow/db-ca/ca.crt keeps verifying (#1580).
             - name: db-ca
               mountPath: /etc/leoflow/db-ca
               readOnly: true
             {{- end }}
             {{- if .ctx.Values.redis.caConfigMap }}
             - name: redis-ca
-              mountPath: /etc/leoflow/redis-ca
+              mountPath: /etc/dexaflow/redis-ca
               readOnly: true
             {{- end }}
             {{- $admissionMount := ((.ctx.Values.execution.admission | default dict).webhook | default dict) }}
             {{- if and $admissionMount.url $admissionMount.caConfigMap (ne .role "api") }}
             - name: admission-ca
-              mountPath: /etc/leoflow/admission-ca
+              mountPath: /etc/dexaflow/admission-ca
               readOnly: true
             {{- end }}
             {{- if and $admissionMount.url $admissionMount.tokenSecret (ne .role "api") }}
             # The api role never dispatches, so the token never reaches its pod.
             - name: admission-token
-              mountPath: /etc/leoflow/admission-token
+              mountPath: /etc/dexaflow/admission-token
               readOnly: true
             {{- end }}
             {{- if .ctx.Values.auth.oidc.enabled }}

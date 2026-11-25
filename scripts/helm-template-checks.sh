@@ -226,11 +226,11 @@ OIDC_RENDERED=$(helm template dexaflow-test "$CHART" \
   --set 'auth.oidc.tenantClaims.example\.com=default')
 
 expect_in "$OIDC_RENDERED" 'value: "oidc"'                     "auth provider set to oidc when SSO is on"
-expect_in "$OIDC_RENDERED" 'value: "/etc/leoflow/oidc/config.yaml"' "DEXAFLOW_CONFIG points at the mounted OIDC file"
+expect_in "$OIDC_RENDERED" 'value: "/etc/dexaflow/oidc/config.yaml"' "DEXAFLOW_CONFIG points at the mounted OIDC file"
 expect_in "$OIDC_RENDERED" 'name: DEXAFLOW_AUTH_OIDC_ISSUER'    "OIDC issuer env entry in deployment"
 expect_in "$OIDC_RENDERED" 'name: DEXAFLOW_AUTH_OIDC_TENANT_CLAIM' "OIDC tenant claim env entry in deployment"
 expect_in "$OIDC_RENDERED" 'name: dexaflow-test-oidc'           "OIDC ConfigMap named <fullname>-oidc"
-expect_in "$OIDC_RENDERED" 'mountPath: /etc/leoflow/oidc'      "Deployment mounts the OIDC ConfigMap"
+expect_in "$OIDC_RENDERED" 'mountPath: /etc/dexaflow/oidc'      "Deployment mounts the OIDC ConfigMap"
 expect_in "$OIDC_RENDERED" '"example.com": "default"'          "dotted tenant_claims key survives the render quoted (#826)"
 expect_in "$OIDC_RENDERED" 'oidcClientSecret:'                 "IdP client secret in the chart-managed Secret"
 

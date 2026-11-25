@@ -52,17 +52,17 @@ tests:
           path: spec.template.spec.containers[0].env
           content:
             name: DEXAFLOW_SERVER_HTTP_TLS_CERT
-            value: /etc/leoflow/http-tls/tls.crt
+            value: /etc/dexaflow/http-tls/tls.crt
       - contains:
           path: spec.template.spec.containers[0].env
           content:
             name: DEXAFLOW_SERVER_HTTP_TLS_KEY
-            value: /etc/leoflow/http-tls/tls.key
+            value: /etc/dexaflow/http-tls/tls.key
       - contains:
           path: spec.template.spec.containers[0].volumeMounts
           content:
             name: http-tls
-            mountPath: /etc/leoflow/http-tls
+            mountPath: /etc/dexaflow/http-tls
             readOnly: true
       - contains:
           path: spec.template.spec.volumes
@@ -102,7 +102,7 @@ tests:
           path: spec.template.spec.containers[0].env
           content:
             name: DEXAFLOW_SERVER_HTTP_TLS_CERT
-            value: /etc/leoflow/http-tls/tls.crt
+            value: /etc/dexaflow/http-tls/tls.crt
         documentIndex: 0
       - equal:
           path: spec.template.spec.containers[0].readinessProbe.httpGet.scheme

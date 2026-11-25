@@ -66,9 +66,9 @@ Dexaflow's DB/API/UI. Wire it via the chart:
 ```bash
 kubectl -n dexaflow create secret generic gcp-sa-key --from-file=key.json=/path/to/key.json
 helm upgrade <release> <chart> -n dexaflow --reset-then-reuse-values \
-  --set taskSecret.name=gcp-sa-key --set taskSecret.mountPath=/etc/leoflow/secrets
+  --set taskSecret.name=gcp-sa-key --set taskSecret.mountPath=/etc/dexaflow/secrets
 ```
-Then set the connection's `key_path` to `/etc/leoflow/secrets/key.json`.
+Then set the connection's `key_path` to `/etc/dexaflow/secrets/key.json`.
 
 ### Key from GCP Secret Manager (`key_secret_name`)
 The connection references a Secret Manager secret name; the task fetches it at

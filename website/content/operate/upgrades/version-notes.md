@@ -1402,3 +1402,25 @@ names, so nothing changes in what it runs with.
 
 Task pods are not affected: the variables the server sets on them keep their
 names.
+
+## Upgrading to 0.6.0: chart defaults use the dexaflow paths
+
+The chart's defaults name dexaflow instead of leoflow
+([#1580](https://github.com/dexadata/dexaflow/issues/1580)): `config.logsDir`
+is `/var/log/dexaflow`, `taskSecret.mountPath` is `/etc/dexaflow/secrets`, the
+example ingress host is `dexaflow.local`, and the files the chart mounts into
+the control plane live under `/etc/dexaflow/`. Paths a user can name keep
+working at their old place.
+
+| Your install | What the upgrade does |
+|---|---|
+| Default `config.logsDir` | The logs volume is mounted at `/var/log/dexaflow`. Its content moves with it, so earlier logs stay readable. |
+| `config.logsDir` set | Nothing changes. |
+| A DSN with `sslrootcert=/etc/leoflow/db-ca/ca.crt` | Nothing changes: the CA bundle is mounted at `/etc/dexaflow/db-ca` and also at `/etc/leoflow/db-ca`, in the control plane and the migration Job. Move the DSN to the new path when convenient. |
+| A connection with `key_path` under `/etc/leoflow/secrets` and the default `taskSecret.mountPath` | Nothing changes: task pods get the Secret at `/etc/dexaflow/secrets` and also at `/etc/leoflow/secrets`. |
+| `taskSecret.mountPath` set | Nothing changes: the Secret is mounted once, where you set it. |
+| `extraEnv` pointing at a file under `/etc/leoflow/` that the chart mounts (OIDC, Redis CA, TLS, admission webhook) | Point it at `/etc/dexaflow/`. Only the database CA bundle is mounted at both paths. |
+
+`taskServiceAccount.name` keeps its default, `leoflow-task`: DAGs name it in
+`execution.service_account` and cloud IAM bindings name it too, so renaming it
+would cut task pods off from both.

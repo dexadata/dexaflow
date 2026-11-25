@@ -208,8 +208,37 @@ tests:
           path: spec.template.spec.containers[0].volumeMounts
           content:
             name: db-ca
+            mountPath: /etc/dexaflow/db-ca
+            readOnly: true
+      # And at the path from before the rename, so a DSN pinned there before
+      # 0.6.0 keeps verifying (#1580).
+      - contains:
+          path: spec.template.spec.containers[0].volumeMounts
+          content:
+            name: db-ca
             mountPath: /etc/leoflow/db-ca
             readOnly: true
+
+  # #1580: the defaults a user sees name dexaflow. The task Secret path is the
+  # server's dexaflow default, so the server also mounts it at the leoflow path.
+  - it: "#1580 defaults to the dexaflow logs dir and task Secret path"
+    template: deployment.yaml
+    set:
+      taskSecret.name: gcp-key
+      database.url: postgres://h/d
+      redis.url: redis://h/0
+      auth.jwtSecret: jwt
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: DEXAFLOW_LOGS_DIR
+            value: /var/log/dexaflow
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: DEXAFLOW_EXECUTOR_TASK_SECRET_MOUNT_PATH
+            value: /etc/dexaflow/secrets
 
   # #2354: strict eviction policy mode is off unless asked for, and on when
   # redis.requireNoEviction is set.
@@ -255,12 +284,12 @@ tests:
           path: spec.template.spec.containers[0].env
           content:
             name: DEXAFLOW_REDIS_CA_FILE
-            value: /etc/leoflow/redis-ca/ca.crt
+            value: /etc/dexaflow/redis-ca/ca.crt
       - notContains:
           path: spec.template.spec.containers[0].volumeMounts
           content:
             name: redis-ca
-            mountPath: /etc/leoflow/redis-ca
+            mountPath: /etc/dexaflow/redis-ca
             readOnly: true
 
   # #312 — When redis.caConfigMap is set, all three pieces must appear together:
@@ -278,12 +307,12 @@ tests:
           path: spec.template.spec.containers[0].env
           content:
             name: DEXAFLOW_REDIS_CA_FILE
-            value: /etc/leoflow/redis-ca/ca.crt
+            value: /etc/dexaflow/redis-ca/ca.crt
       - contains:
           path: spec.template.spec.containers[0].volumeMounts
           content:
             name: redis-ca
-            mountPath: /etc/leoflow/redis-ca
+            mountPath: /etc/dexaflow/redis-ca
             readOnly: true
       - contains:
           path: spec.template.spec.volumes
@@ -637,7 +666,7 @@ tests:
           path: spec.template.spec.containers[0].env
           content:
             name: DEXAFLOW_LOGS_DIR
-            value: /var/log/leoflow
+            value: /var/log/dexaflow
 
   - it: publishes every live-tail line under the legacy profile (logs.tail.publish always)
     template: deployment.yaml

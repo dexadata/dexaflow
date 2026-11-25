@@ -85,9 +85,9 @@ The key stays in the cluster's secret store; Dexaflow only mounts it.
 ```bash
 kubectl -n dexaflow create secret generic gcp-sa-key --from-file=key.json=/path/to/key.json
 helm upgrade <release> <chart> -n dexaflow --reset-then-reuse-values \
-  --set taskSecret.name=gcp-sa-key --set taskSecret.mountPath=/etc/leoflow/secrets
+  --set taskSecret.name=gcp-sa-key --set taskSecret.mountPath=/etc/dexaflow/secrets
 ```
-Then the Connection's Extra: `{ "key_path": "/etc/leoflow/secrets/key.json", "project": "my-project" }`.
+Then the Connection's Extra: `{ "key_path": "/etc/dexaflow/secrets/key.json", "project": "my-project" }`.
 
 ## Key from GCP Secret Manager (`key_secret_name`)
 

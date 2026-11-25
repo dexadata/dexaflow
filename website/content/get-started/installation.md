@@ -299,7 +299,7 @@ kubectl -n dexaflow create configmap rds-ca --from-file=ca.crt=./global-bundle.p
 helm install dexaflow oci://ghcr.io/dexadata/charts/dexaflow --version <VERSION> \
   -n dexaflow --create-namespace \
   --set database.caConfigMap=rds-ca \
-  --set database.url='postgres://USER:PASS@HOST:5432/dexaflow?sslmode=verify-full&sslrootcert=/etc/leoflow/db-ca/ca.crt' \
+  --set database.url='postgres://USER:PASS@HOST:5432/dexaflow?sslmode=verify-full&sslrootcert=/etc/dexaflow/db-ca/ca.crt' \
   ...
 ```
 
