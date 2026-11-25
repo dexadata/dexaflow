@@ -143,3 +143,70 @@ func TestRedisClusterLogTailSeesEverySubscriber(t *testing.T) {
 		stop()
 	}
 }
+
+// TestRedisClusterMemoryInfoReadsEveryMaster checks the eviction policy check
+// of #2354 on a Cluster: the policy is a setting of each node, so one master
+// with volatile-lru among noeviction masters must make the whole Redis unsafe
+// rather than depend on which node INFO happened to reach.
+func TestRedisClusterMemoryInfoReadsEveryMaster(t *testing.T) {
+	addr := os.Getenv("DEXAFLOW_TEST_REDIS_CLUSTER")
+	if addr == "" {
+		t.Skip("DEXAFLOW_TEST_REDIS_CLUSTER is not set; start one with scripts/redis-cluster-up.sh")
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	rd, err := storage.NewRedis(ctx, config.RedisSection{Cluster: config.RedisClusterSection{Addrs: []string{addr}}})
+	if err != nil {
+		t.Fatalf("NewRedis as a Cluster: %v", err)
+	}
+	defer rd.Close()
+	cc := rd.Client.(*redis.ClusterClient)
+
+	setPolicy := func(policy string) {
+		t.Helper()
+		if err := cc.ForEachMaster(ctx, func(ctx context.Context, n *redis.Client) error {
+			return n.ConfigSet(ctx, "maxmemory-policy", policy).Err()
+		}); err != nil {
+			t.Fatalf("CONFIG SET on every master: %v", err)
+		}
+	}
+	setPolicy("noeviction")
+	defer setPolicy("noeviction")
+
+	info, err := rd.MemoryInfo(ctx)
+	if err != nil {
+		t.Fatalf("MemoryInfo: %v", err)
+	}
+	if !info.EvictionSafe() {
+		t.Fatalf("every master runs noeviction, MemoryInfo says %q", info.Policy)
+	}
+
+	// One master, the last one CLUSTER SHARDS lists, evicts. Repeat the read
+	// so a check that asks one random node cannot pass by luck.
+	nodes, err := cc.ClusterShards(ctx).Result()
+	if err != nil {
+		t.Fatalf("CLUSTER SHARDS: %v", err)
+	}
+	var last string
+	for _, s := range nodes {
+		for _, n := range s.Nodes {
+			if n.Role == "master" {
+				last = fmt.Sprintf("%s:%d", n.IP, n.Port)
+			}
+		}
+	}
+	one := redis.NewClient(&redis.Options{Addr: last})
+	defer one.Close()
+	if err := one.ConfigSet(ctx, "maxmemory-policy", "volatile-lru").Err(); err != nil {
+		t.Fatalf("CONFIG SET on %s: %v", last, err)
+	}
+	for i := 0; i < 10; i++ {
+		info, err := rd.MemoryInfo(ctx)
+		if err != nil {
+			t.Fatalf("MemoryInfo: %v", err)
+		}
+		if info.EvictionSafe() || info.Policy != "volatile-lru" {
+			t.Fatalf("read %d: master %s runs volatile-lru, MemoryInfo says %q", i, last, info.Policy)
+		}
+	}
+}
