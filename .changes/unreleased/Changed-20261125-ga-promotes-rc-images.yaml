@@ -1,0 +1,3 @@
+kind: Changed
+body: '**A GA publishes the container images its last rc validated** (#878, ADR 0109): when nothing an image is built from changed since the rc, the GA images carry the rc''s layers byte for byte instead of a rebuild, so what the rc checks ran on is what ships. Their binaries report the GA version, and `--version` adds the rc they were built as.'
+time: 2026-11-25T19:00:00.000000+00:00
