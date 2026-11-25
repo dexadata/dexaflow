@@ -197,6 +197,7 @@ func startScheduler(ctx context.Context, cfg *config.ServerConfig, pg *storage.P
 	sched := scheduler.NewScheduler(store, logger,
 		time.Duration(cfg.Scheduler.LoopIntervalMS)*time.Millisecond)
 	sched.SetRecorder(metrics)
+	sched.SetLeaseTerms(lease)
 	// Bound the dispatch work of one tick, and of one tenant in a tick, so a
 	// wide fan-out cannot stall every other run and cron creation (#1596).
 	sched.SetDispatchTickBudget(cfg.Scheduler.Dispatch.TickBudget)

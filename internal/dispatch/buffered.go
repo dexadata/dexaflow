@@ -127,6 +127,9 @@ type BufferedDispatcher struct {
 	once   sync.Once
 	// maxWait is cfg.MaxWait resolved: zero means no bound.
 	maxWait time.Duration
+	// termCheck, when set, says whether this replica still holds the current
+	// scheduler lease term (SetTermCheck).
+	termCheck func(context.Context) bool
 }
 
 // NewBuffered constructs a BufferedDispatcher. BufferSize=0 returns a
@@ -276,6 +279,9 @@ func (b *BufferedDispatcher) dispatchOne(req dispatchRequest) {
 	if b.reofferExpired(req) {
 		return
 	}
+	if b.termSuperseded(req) {
+		return
+	}
 	// Use a background context: the caller's ctx may already be canceled by
 	// the time the worker picks the request up (a long tick has rolled over),
 	// but we already accepted responsibility for this dispatch — abandoning it
@@ -347,4 +353,43 @@ func (b *BufferedDispatcher) reportFailure(req dispatchRequest, reason string) {
 		b.logger.Error("reporting dispatch failure",
 			"run", req.runID, "task", req.task.TaskID, "error", err)
 	}
+}
+
+// termCheckTimeout bounds the lease read a worker makes before each pod
+// create, so a slow database cannot hold a worker.
+const termCheckTimeout = 2 * time.Second
+
+// SetTermCheck makes every worker ask check, right before the pod create,
+// whether this replica still holds the current scheduler lease term (ADR
+// 0106, point 5). A dispatch dequeued after another replica took a newer
+// term is dropped: the task stays queued, and the new leader's stale queued
+// reaper re-places it under a new attempt epoch. Call it before the first
+// Dispatch. Unset, every dispatch goes through, as before.
+func (b *BufferedDispatcher) SetTermCheck(check func(context.Context) bool) {
+	b.termCheck = check
+}
+
+// termSuperseded reports, and logs, a dispatch dropped by the term check.
+func (b *BufferedDispatcher) termSuperseded(req dispatchRequest) bool {
+	if b.termCheck == nil {
+		return false
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), termCheckTimeout)
+	defer cancel()
+	if b.termCheck(ctx) {
+		return false
+	}
+	b.logger.Warn("dropped a dispatch: another replica holds a newer scheduler lease term",
+		"run", req.runID, "dag", req.dagID, "task", req.task.TaskID)
+	if rec, ok := b.metrics.(staleTermRecorder); ok {
+		rec.RecordSchedulerDecision("dispatch_dropped_stale_term")
+	}
+	return true
+}
+
+// staleTermRecorder is the metrics side of a dropped dispatch, met by the
+// observability metrics. It is separate from MetricsRecorder so a recorder
+// without it keeps compiling.
+type staleTermRecorder interface {
+	RecordSchedulerDecision(decisionType string)
 }

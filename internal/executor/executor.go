@@ -43,6 +43,10 @@ type Request struct {
 	// request (ADR 0051 amendment). It is stamped into the pod's identity
 	// annotation so the exchanged token names this execution.
 	AttemptEpoch int
+	// LeaderTerm is the scheduler lease term of the leader that created this
+	// request (ADR 0106), 0 when unknown. It is stamped on the pod as
+	// LeaderTermAnnotation.
+	LeaderTerm int64
 
 	Image           string
 	ImagePullPolicy string
