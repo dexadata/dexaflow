@@ -84,6 +84,24 @@ across every IdP; see the worked example in
 `helm/dexaflow/examples/values-oidc-google.yaml` for the shape of the values
 file (swap `issuer`, `tenantClaim` and `tenantClaims` for your provider).
 
+## Sign-out
+
+Sign-out ends the identity provider's session too, through the
+`end_session_endpoint` the issuer publishes in its discovery document
+([ADR 0110](/project/adrs/0110-sso-sign-out-ends-the-idp-session/)). Entra, Okta
+and Keycloak publish one; Google and Cognito do not, and there sign-out ends
+only Dexaflow's session, with a warning at boot.
+
+- `auth.oidc.postLogoutRedirectUrl` is where the IdP returns the browser
+  afterwards, usually `https://<host>/api/v2/auth/login?local=1`. Register it
+  with the IdP as an allowed sign-out redirect (Entra: a redirect URI of the app
+  registration; Okta: "Sign-out redirect URIs"; Keycloak: "Valid post logout
+  redirect URIs"). Left empty, the IdP shows its own
+  signed-out page.
+- `auth.oidc.logout: local` keeps the IdP session, for deployments where several
+  applications share it and one sign-out must not end them all.
+- `auth.externalSignoutUrl`, when set, wins over both.
+
 ## Related
 
 - [Users, roles and API tokens](/operate/users-roles-tokens/): the built-in

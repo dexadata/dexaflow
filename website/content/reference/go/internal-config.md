@@ -185,6 +185,17 @@ const (
 )
 ```
 
+<a name="OIDCLogoutIDP"></a>OIDC sign\-out modes \(auth.oidc.logout\).
+
+```go
+const (
+    // OIDCLogoutIDP ends the identity provider's session too.
+    OIDCLogoutIDP = "idp"
+    // OIDCLogoutLocal ends only this server's session.
+    OIDCLogoutLocal = "local"
+)
+```
+
 <a name="LogTailPublishAlways"></a>Live\-tail publish modes \(logs.tail.publish\).
 
 ```go
@@ -1354,7 +1365,7 @@ type MetricsSection struct {
 ```
 
 <a name="OIDCSection"></a>
-## type [OIDCSection](<https://github.com/dexadata/dexaflow/blob/main/internal/config/server_auth.go#L237-L319>)
+## type [OIDCSection](<https://github.com/dexadata/dexaflow/blob/main/internal/config/server_auth.go#L237-L334>)
 
 OIDCSection configures the OIDC/SSO login flow \(Authorization Code \+ PKCE\). It is read only when auth.provider is "oidc", which is Pro\-gated and fails boot closed unless Issuer, ClientID, and RedirectURL are all set.
 
@@ -1439,6 +1450,21 @@ type OIDCSection struct {
     // behind an explicit ?local=1, so a denial still lands somewhere readable and
     // a break-glass account can always reach the form.
     AutoRedirect bool `mapstructure:"auto_redirect"`
+    // Logout decides what sign-out ends (#1165, ADR 0110). "idp" (the default)
+    // also ends the session at the identity provider, through its discovered
+    // end_session_endpoint (OpenID Connect RP-Initiated Logout), so the sign-in
+    // button does not sign the user straight back in. "local" ends only this
+    // server's session, for deployments where several applications share the
+    // IdP session and one sign-out must not end them all. An issuer that
+    // publishes no end_session_endpoint (Google) gets the local sign-out either
+    // way, with a warning at boot. auth.external_signout_url, when set, wins.
+    // Empty reads as "idp".
+    Logout string `mapstructure:"logout"`
+    // PostLogoutRedirectURL is where the identity provider returns the browser
+    // after it ended its session (post_logout_redirect_uri). It must be
+    // registered with the IdP, like RedirectURL. Empty sends none, and the IdP
+    // shows its own signed-out page.
+    PostLogoutRedirectURL string `mapstructure:"post_logout_redirect_url"`
     // ClockSkewSeconds is the tolerance applied to the ID token's exp/iat/nbf
     // checks to absorb small clock differences between the IdP and this server.
     // Defaults to 60.

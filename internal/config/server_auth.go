@@ -312,6 +312,21 @@ type OIDCSection struct {
 	// behind an explicit ?local=1, so a denial still lands somewhere readable and
 	// a break-glass account can always reach the form.
 	AutoRedirect bool `mapstructure:"auto_redirect"`
+	// Logout decides what sign-out ends (#1165, ADR 0110). "idp" (the default)
+	// also ends the session at the identity provider, through its discovered
+	// end_session_endpoint (OpenID Connect RP-Initiated Logout), so the sign-in
+	// button does not sign the user straight back in. "local" ends only this
+	// server's session, for deployments where several applications share the
+	// IdP session and one sign-out must not end them all. An issuer that
+	// publishes no end_session_endpoint (Google) gets the local sign-out either
+	// way, with a warning at boot. auth.external_signout_url, when set, wins.
+	// Empty reads as "idp".
+	Logout string `mapstructure:"logout"`
+	// PostLogoutRedirectURL is where the identity provider returns the browser
+	// after it ended its session (post_logout_redirect_uri). It must be
+	// registered with the IdP, like RedirectURL. Empty sends none, and the IdP
+	// shows its own signed-out page.
+	PostLogoutRedirectURL string `mapstructure:"post_logout_redirect_url"`
 	// ClockSkewSeconds is the tolerance applied to the ID token's exp/iat/nbf
 	// checks to absorb small clock differences between the IdP and this server.
 	// Defaults to 60.
@@ -394,7 +409,28 @@ func (c *ServerConfig) validateOIDC() error {
 	if !strings.HasPrefix(c.Auth.OIDC.Issuer, "https://") {
 		return fmt.Errorf("auth.oidc.issuer must be an https:// URL (got %q)", c.Auth.OIDC.Issuer)
 	}
-	return validateRedirectURL(c.Auth.OIDC.RedirectURL)
+	if err := validateRedirectURL(c.Auth.OIDC.RedirectURL); err != nil {
+		return err
+	}
+	return validateOIDCLogout(c.Auth.OIDC)
+}
+
+// OIDC sign-out modes (auth.oidc.logout).
+const (
+	// OIDCLogoutIDP ends the identity provider's session too.
+	OIDCLogoutIDP = "idp"
+	// OIDCLogoutLocal ends only this server's session.
+	OIDCLogoutLocal = "local"
+)
+
+// validateOIDCLogout checks auth.oidc.logout and auth.oidc.post_logout_redirect_url.
+func validateOIDCLogout(o OIDCSection) error {
+	switch o.Logout {
+	case "", OIDCLogoutIDP, OIDCLogoutLocal: // empty is the default, idp
+	default:
+		return fmt.Errorf("auth.oidc.logout must be %q or %q (got %q)", OIDCLogoutIDP, OIDCLogoutLocal, o.Logout)
+	}
+	return validateExternalAuthURL("auth.oidc.post_logout_redirect_url", o.PostLogoutRedirectURL)
 }
 
 // validateOIDCNames rejects a name that is present but blank.
@@ -511,6 +547,10 @@ const DefaultSessionCookieName = "_token"
 // not take its name, or each login would overwrite the other.
 const oidcStateCookieName = "_oidc_state"
 
+// oidcIDTokenCookieName keeps an SSO login's ID token for the IdP sign-out
+// (#1165), and is reserved for the same reason.
+const oidcIDTokenCookieName = "_oidc_idt"
+
 // sessionCookieNamePattern is an RFC 6265 cookie name: one or more token
 // characters, so no space, control character or separator such as ; or =.
 var sessionCookieNamePattern = regexp.MustCompile("^[!#$%&'*+.^_`|~0-9A-Za-z-]+$")
@@ -523,8 +563,9 @@ func validateSessionCookieName(name string, insecure bool) error {
 	if name == "" {
 		return nil
 	}
-	if !sessionCookieNamePattern.MatchString(name) || name == oidcStateCookieName {
-		return fmt.Errorf("auth.session_cookie_name must be a cookie name (letters, digits and !#$%%&'*+-.^_`|~, not %s) (got %q)", oidcStateCookieName, name)
+	if !sessionCookieNamePattern.MatchString(name) || name == oidcStateCookieName || name == oidcIDTokenCookieName {
+		return fmt.Errorf("auth.session_cookie_name must be a cookie name (letters, digits and !#$%%&'*+-.^_`|~, not %s or %s) (got %q)",
+			oidcStateCookieName, oidcIDTokenCookieName, name)
 	}
 	lower := strings.ToLower(name)
 	if insecure && (strings.HasPrefix(lower, "__host-") || strings.HasPrefix(lower, "__secure-")) {

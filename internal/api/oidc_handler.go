@@ -81,6 +81,9 @@ type OIDCSettings struct {
 	// AutoRedirect is auth.oidc.auto_redirect: start the login flow on the
 	// sign-in page instead of rendering it.
 	AutoRedirect bool
+	// Logout is auth.oidc.logout: "idp" (or empty) also ends the IdP session
+	// on sign-out, "local" ends only this server's (#1165).
+	Logout string
 }
 
 // oidcDeps bundles what the callback handler needs beyond the flow itself.
@@ -98,6 +101,10 @@ type oidcDeps struct {
 	// session names the session cookie, and its insecure drops Secure from the
 	// session and state cookies (see cookieSecure). Its zero value is the safe one.
 	session sessionCookieSpec
+	// keepIDToken keeps a browser login's ID token for the IdP sign-out, for
+	// idTokenTTL (see oidc_logout.go). False when sign-out stays local.
+	keepIDToken bool
+	idTokenTTL  time.Duration
 }
 
 // randomURLToken returns a cryptographically random, URL-safe token used for the
@@ -237,7 +244,7 @@ func oidcCallbackHandler(deps oidcDeps) gin.HandlerFunc {
 			abortSSOServerFailure(c, deps.logger, "minting session token", terr)
 			return
 		}
-		deps.finish(c, payload, identity, user, token)
+		deps.finish(c, payload, identity, user, token, rawIDToken)
 	}
 }
 
@@ -258,7 +265,7 @@ func markCLILogin(c *gin.Context, payload oidc.StatePayload) {
 // device sign-in ends on the page that asks for its user code. All are
 // audited as the same success, the CLI ones marked with their client and the
 // device one with its grant.
-func (d oidcDeps) finish(c *gin.Context, payload oidc.StatePayload, identity *oidc.VerifiedIdentity, user *auth.User, token string) {
+func (d oidcDeps) finish(c *gin.Context, payload oidc.StatePayload, identity *oidc.VerifiedIdentity, user *auth.User, token, rawIDToken string) {
 	extra := map[string]string{"subject": identity.Subject, "roles": strings.Join(user.Roles, ",")}
 	if payload.Device != nil {
 		extra["client"], extra["grant"] = "cli", deviceGrantType
@@ -268,6 +275,9 @@ func (d oidcDeps) finish(c *gin.Context, payload oidc.StatePayload, identity *oi
 	}
 	if payload.CLI == nil {
 		setSessionCookie(c, token, d.tokenTTL, d.session)
+		if d.keepIDToken {
+			setIDTokenCookie(c, rawIDToken, d.idTokenTTL, d.session.insecure, d.logger)
+		}
 		d.record(c, auditOIDCLoginSuccess, identity.Tenant, user.ID, identity.Email, "success", extra)
 		c.Redirect(http.StatusFound, sanitizeNext(payload.Next, ""))
 		return

@@ -116,7 +116,7 @@ func newServer(deps Dependencies) *gin.Engine {
 		r.POST("/api/v2/auth/token/renew", rateLimitByIP(renewLimiter), renewTokenHandler(deps.Auth.TokenRenewer, deps.Auth.TokenTTLSecs, deps.Auth.TokenMaxLifetimeSecs, deps.sessionCookie()))
 	}
 	// The Airflow UI redirects unauthenticated users to GET /api/v2/auth/login.
-	r.GET("/api/v2/auth/logout", logoutHandler(deps.sessionCookie(), deps.Auth.ExternalSignOutURL))
+	r.GET("/api/v2/auth/logout", logoutHandler(deps.sessionCookie(), deps.Auth.ExternalSignOutURL, idpLogoutFlow(deps.Auth.OIDCFlow, deps.Auth.OIDCSettings)))
 	pageOpts := loginPageOpts{
 		sso:            deps.Auth.OIDCFlow != nil,
 		breakGlass:     len(deps.Auth.OIDCSettings.BreakGlassEmails) > 0,
@@ -183,8 +183,10 @@ func newServer(deps Dependencies) *gin.Engine {
 			jwtSecret: deps.Auth.JWTSecret,
 			tokenTTL:  time.Duration(deps.Auth.TokenTTLSecs) * time.Second,
 			logger:    deps.Observability.Logger,
-
-			session: deps.sessionCookie(),
+			idTokenTTL: idTokenCookieTTL(time.Duration(deps.Auth.TokenTTLSecs)*time.Second,
+				deps.Auth.TokenMaxLifetimeSecs),
+			keepIDToken: idpLogoutFlow(deps.Auth.OIDCFlow, deps.Auth.OIDCSettings) != nil,
+			session:     deps.sessionCookie(),
 		}))
 	}
 	// Any signed-in user may read these; a scoped token needs dexaflow:read
