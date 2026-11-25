@@ -38,6 +38,11 @@
 #   test/e2e/daemonless-deploy-e2e.sh --assert-no-daemon   (run in the container)
 #   test/e2e/daemonless-deploy-e2e.sh --self-test
 set -euo pipefail
+# The fixtures this script runs against name the task namespace and the
+# database `leoflow`; the server's own defaults name them dexaflow since 0.6.0
+# (#2155), so the fixture names are pinned for the control plane here.
+export LEOFLOW_EXECUTOR_TASK_NAMESPACE="${LEOFLOW_EXECUTOR_TASK_NAMESPACE:-leoflow}"
+export LEOFLOW_DATABASE_URL="${LEOFLOW_DATABASE_URL:-postgres://leoflow:leoflow@localhost:5432/leoflow?sslmode=disable}"
 
 # assert_no_daemon fails unless no container daemon is reachable from here: no
 # container tool on PATH, no daemon socket under root (empty for the real
@@ -177,7 +182,7 @@ PY_VERSION="3.11" # python_version of examples/taskflow_sales/dexaflow.yaml
 REG_NAME="daemonless-registry.localhost" # k3d prefixes 'k3d-'; its own name, so it never meets deploy-e2e.sh's
 REG_PORT="${DEXAFLOW_E2E_REGISTRY_PORT:-5112}"
 REG_FULLNAME="k3d-${REG_NAME}"
-REG_HOST="${REG_FULLNAME}:${REG_PORT}" # the same ref on the host (loopback) and in the cluster
+REG_HOST="localhost:${REG_PORT}" # the same ref on the host (loopback) and in the cluster (k3d_registry_config mirror)
 BASE_REF="${REG_HOST}/dexaflow-runtime:py${PY_VERSION}-e2e"
 CLI_IMAGE="dexaflow-cli:daemonless-e2e"
 HTTP_PORT="${LEOFLOW_E2E_HTTP_PORT:-18080}"
@@ -237,7 +242,8 @@ docker build -f "$ROOT/deploy/Dockerfile.cli.release" -t "$CLI_IMAGE" "$WORKDIR/
 
 log "Creating the k3d registry ($REG_HOST) and cluster '$CLUSTER'"
 k3d registry create "$REG_NAME" --port "$REG_PORT" >/dev/null
-k3d cluster create "$CLUSTER" --registry-use "$REG_HOST" --wait
+k3d_registry_config "$WORKDIR/registries.yaml" "$REG_PORT" "$REG_FULLNAME"
+k3d cluster create "$CLUSTER" --registry-use "${REG_FULLNAME}:${REG_PORT}" --registry-config "$WORKDIR/registries.yaml" --wait
 kubectl create namespace leoflow
 for _ in $(seq 1 60); do
 	kubectl get serviceaccount default -n leoflow >/dev/null 2>&1 && break

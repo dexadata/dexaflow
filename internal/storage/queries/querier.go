@@ -1305,6 +1305,12 @@ type Querier interface {
 	// Sets or changes a tenant's suspension (#2181). A tenant already suspended
 	// keeps its suspended_at, so changing the reason does not restart the clock.
 	SuspendTenant(ctx context.Context, arg SuspendTenantParams) error
+	// The attempt each listed task instance is on, for the reconciler's abandoned
+	// pod teardown (#2430): the pods it lists are matched against it, and a pod
+	// whose attempt is not the live one (same try and epoch, state queued or
+	// running, the predicate RecordTaskHeartbeat answers by) is stopped. One read
+	// per sweep, by primary key, for the live task pods only.
+	TaskAttempts(ctx context.Context, ids []pgtype.UUID) ([]TaskAttemptsRow, error)
 	// The per-attempt fields the agent spec carries from the task instance row.
 	// first_reschedule_at is the time a reschedule-mode sensor first entered
 	// reschedule (NULL until it does), delivered to each re-dispatched pod so

@@ -599,6 +599,11 @@ func mountTaskSecret(pod *corev1.Pod, req Request) {
 	c.VolumeMounts = append(c.VolumeMounts, corev1.VolumeMount{
 		Name: taskSecretVolumeName, MountPath: req.TaskSecretMountPath, ReadOnly: true,
 	})
+	if req.TaskSecretAliasPath != "" && req.TaskSecretAliasPath != req.TaskSecretMountPath {
+		c.VolumeMounts = append(c.VolumeMounts, corev1.VolumeMount{
+			Name: taskSecretVolumeName, MountPath: req.TaskSecretAliasPath, ReadOnly: true,
+		})
+	}
 }
 
 // agentCAVolumeName / agentCADir / agentCAFile place the CA the agent uses to

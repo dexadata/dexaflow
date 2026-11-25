@@ -1,0 +1,4 @@
+kind: Fixed
+body: |-
+  An attempt that a verdict ended (a run or task instance marked `failed` or `success` through the API, a stopped tenant) now stops even when its agent cannot reach the control plane ([#2430](https://github.com/dexadata/dexaflow/issues/2430)). Before, only the agent's next heartbeat stopped it, so a partitioned agent ran its task to the end or its `execution_timeout`, overlapping the next attempt and holding a pool's external resource twice. On Kubernetes the scheduler leader now stops the pod of an attempt that stayed ended for 90 seconds, in place so its outcome record survives, metered as `abandoned_pod_teardown`. As a backstop for a pod the leader cannot reach, the agent stops its task once its heartbeats have gone unanswered for as long as the attempt's credential lives (10 minutes), as Airflow's supervisor does after `max_failed_heartbeats`.
+time: 2026-11-25T15:30:00.000000+00:00
