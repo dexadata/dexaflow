@@ -175,3 +175,27 @@ dump_task_instances() {
   curl -fsS -H "Authorization: Bearer $token" "$api/api/v2/dags/$dag/dagRuns/$run/taskInstances" 2>/dev/null |
     jq -r '.task_instances[] | "\(.task_id)\t\(.state)\ttry \(.try_number)\t\(.failure_reason // "")"' >&2 || true
 }
+
+# k3d_registry_config writes a k3s registries.yaml that lets the cluster pull
+# `localhost:<port>/...` from the k3d registry node <fullname> (#2469).
+#
+# The e2e scripts push from the host as `localhost:<port>`, the one registry
+# name every Docker sends over plain HTTP. Docker 29 (ubuntu-26.04 runners)
+# no longer resolves a `*.localhost` name to find that it is the loopback, so
+# a push to `k3d-<name>.localhost:<port>` goes out over HTTPS and fails with
+# "server gave HTTP response to HTTPS client". Inside the cluster `localhost`
+# is the node itself, so this mirror sends the same reference to the registry
+# container on the k3d network, where it listens on 5000. Pass the file to
+# `k3d cluster create --registry-config`; k3d merges it with the mirror that
+# `--registry-use` adds for the registry's own name.
+#
+# Usage: k3d_registry_config <file> <port> <fullname>
+k3d_registry_config() {
+  local file="$1" port="$2" fullname="$3"
+  cat >"$file" <<YAML
+mirrors:
+  "localhost:${port}":
+    endpoint:
+      - http://${fullname}:5000
+YAML
+}
