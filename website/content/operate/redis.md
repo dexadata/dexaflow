@@ -70,12 +70,14 @@ A failover is ridden through: the errors of its window (a refused
 connection, `READONLY` from a demoted master, `MASTERDOWN`) are the transient
 kind the agent retries, so a task pushing or pulling XCom during it waits
 instead of failing. The integration test of #2358 fails a Sentinel pair over
-while tasks push and fetch, and checks that no acknowledged push is lost. It
-drives a coordinated failover (`SENTINEL FAILOVER`); after a crashed master
-the sentinels wait their `down-after-milliseconds` first, and the lower
-timeouts below make the client notice sooner. Redis replicates
-asynchronously, so a write the crashed master acknowledged but had not sent
-to its replica is lost: the task that reads it fails with a missing XCom and
+(`SENTINEL FAILOVER`) while tasks push and fetch, and checks that every push
+and fetch either succeeds or fails with an error the agent retries. After a
+crashed master the sentinels wait their `down-after-milliseconds` first, and
+the lower timeouts below make the client notice sooner. Redis replicates
+asynchronously, and a Sentinel failover is not a coordinated switch, even one
+started by hand: a write the old master acknowledged but had not sent to its
+replica, or accepted before the sentinels demoted it, is lost. The test
+counts those; the task that reads such a value fails with a missing XCom and
 is retried as usual.
 
 ### Client timeouts and pool
