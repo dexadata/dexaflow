@@ -39,20 +39,26 @@ func FuzzScheduledSlots(f *testing.F) {
 			start = &s
 		}
 
-		if logical, due := nextScheduledRun(expr, last, now); due && logical.After(now) {
-			t.Fatalf("nextScheduledRun(%q) = %v, after now %v", expr, logical, now)
-		}
-		slots := dueScheduledSlots(expr, last, start, now, catchup, maxSlots)
-		if maxSlots > 0 && len(slots) > maxSlots {
-			t.Fatalf("dueScheduledSlots(%q) returned %d slots, cap %d", expr, len(slots), maxSlots)
-		}
-		for i, s := range slots {
-			if s.After(now) {
-				t.Fatalf("dueScheduledSlots(%q) slot %v after now %v", expr, s, now)
+		// Each input also runs in zones with daylight saving time, Lord Howe's
+		// a 30 minute shift, where the cron is read on wall-clock times (#2453).
+		for _, tz := range fuzzZones {
+			if logical, due := nextScheduledRun(expr, tz, last, now); due && logical.After(now) {
+				t.Fatalf("nextScheduledRun(%q) = %v, after now %v", expr, logical, now)
 			}
-			if i > 0 && !s.After(slots[i-1]) {
-				t.Fatalf("dueScheduledSlots(%q) slots not increasing: %v", expr, slots)
+			slots := dueScheduledSlots(expr, tz, last, start, now, catchup, maxSlots)
+			if maxSlots > 0 && len(slots) > maxSlots {
+				t.Fatalf("dueScheduledSlots(%q) returned %d slots, cap %d", expr, len(slots), maxSlots)
+			}
+			for i, s := range slots {
+				if s.After(now) {
+					t.Fatalf("dueScheduledSlots(%q) slot %v after now %v", expr, s, now)
+				}
+				if i > 0 && !s.After(slots[i-1]) {
+					t.Fatalf("dueScheduledSlots(%q) slots not increasing: %v", expr, slots)
+				}
 			}
 		}
 	})
 }
+
+var fuzzZones = []string{"", "America/New_York", "Australia/Lord_Howe", "+05:30"}

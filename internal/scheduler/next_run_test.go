@@ -36,30 +36,32 @@ func TestNextDueAtIsWhenTheDAGBecomesDue(t *testing.T) {
 	for _, expr := range schedules {
 		for _, shape := range shapes {
 			for _, catchup := range []bool{false, true} {
-				t.Run(fmt.Sprintf("%s/%s/catchup=%v", expr, shape.name, catchup), func(t *testing.T) {
-					// Arrange
-					d := ScheduledDAG{Schedule: expr, LastLogical: shape.last, StartDate: shape.start, Catchup: catchup}
-					if len(dueSlots(d, now)) > 0 {
-						// Already due: settle what is due now, as a tick would.
-						slots := dueSlots(d, now)
-						last := slots[len(slots)-1]
-						d.LastLogical = &last
-					}
+				for _, tz := range []string{"", "America/New_York", "+05:30"} {
+					t.Run(fmt.Sprintf("%s/%s/catchup=%v/tz=%s", expr, shape.name, catchup, tz), func(t *testing.T) {
+						// Arrange
+						d := ScheduledDAG{Schedule: expr, Timezone: tz, LastLogical: shape.last, StartDate: shape.start, Catchup: catchup}
+						if len(dueSlots(d, now)) > 0 {
+							// Already due: settle what is due now, as a tick would.
+							slots := dueSlots(d, now)
+							last := slots[len(slots)-1]
+							d.LastLogical = &last
+						}
 
-					// Act
-					next, ok := nextDueAt(d, now)
+						// Act
+						next, ok := nextDueAt(d, now)
 
-					// Assert
-					if !ok {
-						t.Fatalf("nextDueAt = never, want a time")
-					}
-					if before := next.Add(-time.Second); before.After(now) && len(dueSlots(d, before)) > 0 {
-						t.Errorf("due at %s, one second before nextDueAt %s", before, next)
-					}
-					if len(dueSlots(d, next.Add(2*nextDueMargin))) == 0 {
-						t.Errorf("nothing due shortly after nextDueAt %s", next)
-					}
-				})
+						// Assert
+						if !ok {
+							t.Fatalf("nextDueAt = never, want a time")
+						}
+						if before := next.Add(-time.Second); before.After(now) && len(dueSlots(d, before)) > 0 {
+							t.Errorf("due at %s, one second before nextDueAt %s", before, next)
+						}
+						if len(dueSlots(d, next.Add(2*nextDueMargin))) == 0 {
+							t.Errorf("nothing due shortly after nextDueAt %s", next)
+						}
+					})
+				}
 			}
 		}
 	}

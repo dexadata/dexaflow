@@ -101,11 +101,11 @@ func (s *Scheduler) scheduleDAG(ctx context.Context, d ScheduledDAG, now time.Ti
 	// validation (domain.ValidateSchedule) catches this earlier; this is the
 	// backstop for DAGs registered before the fix. A new version clears the
 	// stored "never", so a fixed schedule is picked up.
-	if !scheduleParseable(d.Schedule) {
-		if s.warnedSchedules[key] != d.Schedule {
-			s.logger.Warn("DAG has an unparseable cron schedule; it will not run on a schedule until fixed",
-				"tenant", d.TenantID, "dag", d.DagID, "schedule", d.Schedule)
-			s.warnedSchedules[key] = d.Schedule
+	if !scheduleParseable(d.Schedule, d.Timezone) {
+		if bad := d.Schedule + " " + d.Timezone; s.warnedSchedules[key] != bad {
+			s.logger.Warn("DAG has an unparseable cron schedule or time zone; it will not run on a schedule until fixed",
+				"tenant", d.TenantID, "dag", d.DagID, "schedule", d.Schedule, "timezone", d.Timezone)
+			s.warnedSchedules[key] = bad
 		}
 		return time.Time{}, true
 	}
@@ -204,12 +204,12 @@ func (s *Scheduler) observeScheduleDelay(d time.Duration) {
 // there is either a last_logical or a start_date floor.
 func dueSlots(d ScheduledDAG, now time.Time) []time.Time {
 	if d.LastLogical == nil && d.StartDate == nil {
-		if logical, due := nextScheduledRun(d.Schedule, d.LastLogical, now); due {
+		if logical, due := nextScheduledRun(d.Schedule, d.Timezone, d.LastLogical, now); due {
 			return []time.Time{logical}
 		}
 		return nil
 	}
-	return dueScheduledSlots(d.Schedule, d.LastLogical, d.StartDate, now, d.Catchup, maxCatchupSlotsPerTick)
+	return dueScheduledSlots(d.Schedule, d.Timezone, d.LastLogical, d.StartDate, now, d.Catchup, maxCatchupSlotsPerTick)
 }
 
 // hasHeadroom reports whether the DAG may take another active run without

@@ -53,7 +53,8 @@
     },
     "schedule_timezone": {
       "type": "string",
-      "default": "UTC"
+      "default": "UTC",
+      "description": "Zone the cron fields of schedule are read in, on wall-clock times: an IANA name ('America/Sao_Paulo') or a fixed offset ('+05:30', '-03:00'). The compiler takes it from the tzinfo of start_date, as Airflow does, and omits it for UTC."
     },
     "start_date": {
       "type": "string",

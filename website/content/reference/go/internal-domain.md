@@ -32,7 +32,9 @@ Package domain defines the core Dexaflow types \(DAG, Task, project config\) and
 - [func MinScheduleInterval\(expr string\) \(time.Duration, bool\)](<#MinScheduleInterval>)
 - [func NewTenantSchemaCompiler\(\) \*jsonschema.Compiler](<#NewTenantSchemaCompiler>)
 - [func ParseCron\(expr string\) \(cron.Schedule, error\)](<#ParseCron>)
+- [func ParseCronIn\(expr, tz string\) \(cron.Schedule, error\)](<#ParseCronIn>)
 - [func Safef\(class error, format string, a ...any\) error](<#Safef>)
+- [func ScheduleLocation\(tz string\) \(\*time.Location, error\)](<#ScheduleLocation>)
 - [func SourceModeApplies\(modeImage, image string, hasSource bool\) bool](<#SourceModeApplies>)
 - [func SupportedPythonVersions\(\) \(\[\]string, error\)](<#SupportedPythonVersions>)
 - [func TenantSchemaURL\(name string\) string](<#TenantSchemaURL>)
@@ -540,7 +542,7 @@ func NewTenantSchemaCompiler() *jsonschema.Compiler
 NewTenantSchemaCompiler returns a JSON Schema compiler for a schema a tenant wrote, such as a DAG param schema. Add the schema under TenantSchemaURL so errors never name a local path. It resolves references into the schema itself \(its "$defs"\) and the standard draft meta\-schemas the library ships, and refuses every other "$ref": no local file and no remote URL is loaded.
 
 <a name="ParseCron"></a>
-## func [ParseCron](<https://github.com/dexadata/dexaflow/blob/main/internal/domain/schedule.go#L62>)
+## func [ParseCron](<https://github.com/dexadata/dexaflow/blob/main/internal/domain/schedule.go#L68>)
 
 ```go
 func ParseCron(expr string) (cron.Schedule, error)
@@ -550,6 +552,15 @@ ParseCron parses a schedule with robfig/cron's ParseStandard. Every schedule par
 
 It first refuses a TZ= or CRON\_TZ= prefix with no space after it. ParseStandard \(robfig/cron v3.0.1\) cuts the zone name at the first space and panics with a slice out of range when there is none, so a schedule such as "TZ=UTC" in a dag.json would otherwise panic at registration and on every scheduler tick.
 
+<a name="ParseCronIn"></a>
+## func [ParseCronIn](<https://github.com/dexadata/dexaflow/blob/main/internal/domain/schedule_timezone.go#L86>)
+
+```go
+func ParseCronIn(expr, tz string) (cron.Schedule, error)
+```
+
+ParseCronIn is ParseCron with the cron fields read in the zone tz, the DAG's schedule\_timezone \(\#2453\), so "0 6 \* \* \*" with a start\_date in America/Sao\_Paulo fires at 06:00 there. Next then answers the same instant whatever the location of its argument, and returns it in that location. A CRON\_TZ= or TZ= prefix in the expression wins over tz. An @every schedule has no wall clock and is returned as parsed.
+
 <a name="Safef"></a>
 ## func [Safef](<https://github.com/dexadata/dexaflow/blob/main/internal/domain/safe_error.go#L56>)
 
@@ -558,6 +569,15 @@ func Safef(class error, format string, a ...any) error
 ```
 
 Safef builds a SafeError in class with the formatted message. The message is shown to API clients verbatim, so it must contain only facts the caller supplied or Dexaflow chose, never a driver, filesystem, or network error.
+
+<a name="ScheduleLocation"></a>
+## func [ScheduleLocation](<https://github.com/dexadata/dexaflow/blob/main/internal/domain/schedule_timezone.go#L31>)
+
+```go
+func ScheduleLocation(tz string) (*time.Location, error)
+```
+
+ScheduleLocation returns the location a DAG's cron schedule is evaluated in, from its schedule\_timezone \(\#2453\): empty or "UTC" is UTC, an IANA name such as "America/Sao\_Paulo" is that zone, daylight saving time included, and "\+HH:MM" or "\-HH:MM" is a fixed offset. "Local" is refused: the server's own zone is not a property of the DAG.
 
 <a name="SourceModeApplies"></a>
 ## func [SourceModeApplies](<https://github.com/dexadata/dexaflow/blob/main/internal/domain/source_mode.go#L28>)
@@ -1095,13 +1115,15 @@ func (d *DAGSpec) Validate() error
 Validate checks the DAGSpec against the canonical dag.json schema and returns a joined error describing every schema violation, or nil when valid.
 
 <a name="DAGSpec.ValidateSchedule"></a>
-### func \(\*DAGSpec\) [ValidateSchedule](<https://github.com/dexadata/dexaflow/blob/main/internal/domain/schedule.go#L38>)
+### func \(\*DAGSpec\) [ValidateSchedule](<https://github.com/dexadata/dexaflow/blob/main/internal/domain/schedule.go#L41>)
 
 ```go
 func (d *DAGSpec) ValidateSchedule() error
 ```
 
 ValidateSchedule checks that a DAG's cron schedule is parseable. An empty or absent schedule \(manual\-only\) and the recognized non\-cron Airflow schedules \(@once, @continuous\) are valid. A malformed cron expression, a 4\-field cron, a typo, is rejected here so it fails loudly at compile time; otherwise the scheduler silently can't parse it and the DAG simply never runs, with no error surfaced anywhere \(the worst failure mode\). The parser is robfig/cron's ParseStandard \(through ParseCron\), the same one the scheduler uses, so what validates here is exactly what the scheduler can run \(see scheduler/cron.go\).
+
+The schedule\_timezone the cron fields are read in must be a zone the server knows \(ScheduleLocation\), checked even for a manual\-only DAG.
 
 <a name="DagFilter"></a>
 ## type [DagFilter](<https://github.com/dexadata/dexaflow/blob/main/internal/domain/run.go#L34-L49>)

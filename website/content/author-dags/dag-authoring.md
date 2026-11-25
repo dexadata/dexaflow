@@ -312,7 +312,12 @@ Also supported:
 
 - **Trigger rules**: `all_success`, `all_failed`, `all_done`, `one_success`, `one_failed`.
 - **XCom**: TaskFlow data-flow (`transform(extract())`) is resolved automatically into typed inputs (`xcom_input`) — for `@task` **and** operator args.
-- **Schedule**: cron strings and presets (`@daily`, `0 * * * *`).
+- **Schedule**: cron strings and presets (`@daily`, `0 * * * *`), read in the
+  time zone of the DAG's `start_date`, as in Airflow: `schedule="0 6 * * *"`
+  with `start_date=pendulum.datetime(2026, 1, 1, tz="America/Sao_Paulo")` runs
+  at 06:00 in Sao Paulo, daylight saving time included. A naive or UTC
+  `start_date`, or none, reads it in UTC. See the
+  [0.6.0 upgrade note](/operate/upgrades/version-notes/#upgrading-to-060-cron-schedules-run-in-the-dags-time-zone).
 - **Dependencies**: linear ordering via TaskFlow calls or `a >> b`.
 - **`.override(...)` on a `@task`**: `estimate.override(task_id="estimate_03")(3)`
   builds the task with different operator arguments, as in Airflow. It takes the

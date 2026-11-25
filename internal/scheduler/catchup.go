@@ -10,7 +10,8 @@ import (
 
 // dueScheduledSlots returns the logical dates for which the scheduler should
 // create runs on the current tick (#129). It is the pure planner-side
-// decision: given the cron expression, the latest run's logical date (nil
+// decision: given the cron expression and the zone tz its fields are read in
+// (the DAG's schedule_timezone, #2453), the latest run's logical date (nil
 // if the DAG has never run), the DAG's start_date floor (nil for "no floor"),
 // "now", a catchup flag, and a per-tick cap, return the chronological list
 // of due slots.
@@ -31,19 +32,17 @@ import (
 // An unparseable cron expression yields nothing. nextScheduledRun + the
 // scheduleParseable backstop in createDueRuns already log the bad expression
 // once; this helper stays silent.
-func dueScheduledSlots(expr string, lastLogical, startDate *time.Time, now time.Time, catchup bool, maxSlots int) []time.Time {
-	schedule, err := domain.ParseCron(expr)
+func dueScheduledSlots(expr, tz string, lastLogical, startDate *time.Time, now time.Time, catchup bool, maxSlots int) []time.Time {
+	schedule, err := domain.ParseCronIn(expr, tz)
 	if err != nil {
 		return nil
 	}
-	// Normalise all time inputs to UTC. SpecSchedule.Next evaluates the cron
-	// fields in the argument's Location, so a seed in -0300 would treat
-	// "@daily = 0 0 * * *" as "local midnight" (03:00 UTC) instead of UTC
-	// midnight. pgx returns timestamptz values in the session TZ, which on
-	// many Lite deployments is not UTC — that produced the post-delete
-	// double-fire (one run at 00:00Z, another at 03:00Z for -0300 hosts).
-	// All cron logic in this package speaks UTC; do the coercion at the
-	// boundary so the inner loop never has to think about it.
+	// Normalise all time inputs to UTC. ParseCronIn pins the zone the cron
+	// fields are read in (the DAG's, UTC by default), so the location of a
+	// time no longer moves a slot: before it did, pgx returned timestamptz
+	// values in the session TZ, and on a -0300 Lite host "@daily" fired at
+	// 00:00Z and again at 03:00Z after a run was deleted. The coercion stays so
+	// every slot this package returns and stores is in UTC.
 	now = now.UTC()
 	if lastLogical != nil {
 		u := lastLogical.UTC()

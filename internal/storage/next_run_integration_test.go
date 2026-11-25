@@ -165,3 +165,44 @@ func TestSetNextRunAtSkipsALockedDAG(t *testing.T) {
 		t.Errorf("stored %s through a lock, want the write skipped", d.NextRunAt)
 	}
 }
+
+// TestScheduledDAGsCarriesTheScheduleTimezone covers #2453: the zone a DAG's
+// cron is read in reaches the scheduler from the registered spec, and a new
+// version that drops it falls back to UTC.
+func TestScheduledDAGsCarriesTheScheduleTimezone(t *testing.T) {
+	// Arrange
+	repo, sched, ctx := openRepo(t)
+	daily := "0 6 * * *"
+	tenant := limitedTenant(ctx, t, repo, "schedtz", domain.TenantLimitsUpdate{})
+	register := func(version, tz string) {
+		t.Helper()
+		spec := domain.DAGSpec{
+			SchemaVersion: "1.0", DagID: "sp", DagVersion: version, Image: "img:" + version,
+			Schedule: &daily, ScheduleTZ: tz,
+			Tasks: []domain.TaskSpec{{TaskID: "t", Type: domain.TaskTypeBash, Entrypoint: "true"}},
+		}
+		hash, err := spec.CanonicalHash()
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := repo.RegisterDagVersion(ctx, tenant, spec, hash); err != nil {
+			t.Fatal(err)
+		}
+	}
+	tid := tenantUUID(ctx, t, tenant)
+	now := time.Now().UTC()
+
+	// Act
+	register("v1", "America/Sao_Paulo")
+	first := listedIn(ctx, t, sched, tid, now)["sp"]
+	register("v2", "")
+	second := listedIn(ctx, t, sched, tid, now)["sp"]
+
+	// Assert
+	if first.Timezone != "America/Sao_Paulo" {
+		t.Errorf("v1 Timezone = %q, want America/Sao_Paulo", first.Timezone)
+	}
+	if loc, err := domain.ScheduleLocation(second.Timezone); err != nil || loc != time.UTC {
+		t.Errorf("v2 Timezone = %q (%v, %v), want UTC", second.Timezone, loc, err)
+	}
+}

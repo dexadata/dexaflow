@@ -569,7 +569,7 @@ RETURNING *;
 -- Only the DAGs that may be due are listed (#2175): no stored next_run_at yet,
 -- or one at or before now, the scheduler's clock. idx_dags_next_run (054)
 -- holds exactly the DAGs the first four conditions keep.
-SELECT d.tenant_id, d.dag_id, d.schedule, d.catchup, d.start_date, d.max_active_runs,
+SELECT d.tenant_id, d.dag_id, d.schedule, d.schedule_timezone, d.catchup, d.start_date, d.max_active_runs,
   d.next_run_at, d.schedule_epoch,
   (SELECT max(dr.logical_date) FROM dag_runs dr WHERE dr.dag_id = d.id) AS last_logical
 FROM dags d

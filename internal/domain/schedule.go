@@ -35,7 +35,13 @@ func IsOnceSchedule(expr string) bool {
 // surfaced anywhere (the worst failure mode). The parser is robfig/cron's
 // ParseStandard (through ParseCron), the same one the scheduler uses, so what
 // validates here is exactly what the scheduler can run (see scheduler/cron.go).
+//
+// The schedule_timezone the cron fields are read in must be a zone the server
+// knows (ScheduleLocation), checked even for a manual-only DAG.
 func (d *DAGSpec) ValidateSchedule() error {
+	if _, err := ScheduleLocation(d.ScheduleTZ); err != nil {
+		return fmt.Errorf("invalid schedule_timezone: %w", err)
+	}
 	if d.Schedule == nil {
 		return nil
 	}

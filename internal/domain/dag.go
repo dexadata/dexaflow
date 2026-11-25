@@ -340,6 +340,11 @@ func (d *DAGSpec) Validate() error {
 			return err
 		}
 	}
+	// A zone the server cannot load would leave the DAG unscheduled with only
+	// a log line to say why (#2453); refuse it while the author is looking.
+	if _, err := ScheduleLocation(d.ScheduleTZ); err != nil {
+		return fmt.Errorf("invalid schedule_timezone: %w", err)
+	}
 	s, err := schemas()
 	if err != nil {
 		return err

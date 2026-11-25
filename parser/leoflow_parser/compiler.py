@@ -14,6 +14,7 @@ import sys
 import warnings
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 # Per-project config arrives from the Go CLI via this env var. The CLI parses
 # dexaflow.yaml with gopkg.in/yaml.v3 and hands the resolved (defaults
@@ -82,6 +83,9 @@ def compile_dag(
     start_date = _start_date(dag)
     if start_date:
         spec["start_date"] = start_date
+    zone = _schedule_timezone(dag)
+    if zone:
+        spec["schedule_timezone"] = zone
     mar = getattr(dag, "max_active_runs", None)
     if isinstance(mar, int) and not isinstance(mar, bool) and mar > 0:
         spec["max_active_runs"] = mar
@@ -1366,14 +1370,20 @@ def _schedule(dag) -> str | None:
                      f"which would run it only when triggered. {advice}")
 
 
-def _start_date(dag) -> str | None:
-    """Serialize the DAG's start_date to an ISO-8601 string (the domain field is
-    a string; the schema wants date-time). Airflow's start_date is a datetime;
-    accept anything with isoformat() and fall back to str()."""
+def _start_date_value(dag):
+    """The DAG's start_date as declared, or None."""
     value = getattr(dag, "start_date", None)
     if value is None:
         # Airflow's tutorials set it in default_args; the DAG takes it from there.
         value = (getattr(dag, "default_args", None) or {}).get("start_date")
+    return value
+
+
+def _start_date(dag) -> str | None:
+    """Serialize the DAG's start_date to an ISO-8601 string (the domain field is
+    a string; the schema wants date-time). Airflow's start_date is a datetime;
+    accept anything with isoformat() and fall back to str()."""
+    value = _start_date_value(dag)
     if value is None:
         return None
     iso = getattr(value, "isoformat", None)
@@ -1381,6 +1391,42 @@ def _start_date(dag) -> str | None:
         return iso()
     text = str(value)
     return text or None
+
+
+_UTC_NAMES = frozenset({"UTC", "Etc/UTC", "Etc/UCT", "UCT", "Etc/Zulu", "Zulu", "GMT", "Etc/GMT",
+                        "Universal", "Etc/Universal"})
+
+
+def _schedule_timezone(dag) -> str | None:
+    """The zone the DAG's cron is read in, as Airflow takes it: the tzinfo of
+    the start_date (#2453). An IANA name when the tzinfo has one (zoneinfo's
+    ``key``, pendulum's ``name``), else the start_date's offset as ``+HH:MM``.
+    None for UTC, a naive start_date (Airflow's default zone, UTC) and no
+    start_date, so a UTC DAG keeps its compiled shape."""
+    value = _start_date_value(dag)
+    tzinfo = getattr(value, "tzinfo", None)
+    if tzinfo is None:
+        return None
+    for attr in ("key", "name", "zone"):
+        name = getattr(tzinfo, attr, None)
+        if isinstance(name, str) and _is_zone_name(name):
+            return None if name in _UTC_NAMES else name
+    offset = value.utcoffset()
+    if offset is None or not offset:
+        return None
+    minutes = int(offset.total_seconds()) // 60
+    sign = "-" if minutes < 0 else "+"
+    hours, minutes = divmod(abs(minutes), 60)
+    return f"{sign}{hours:02d}:{minutes:02d}"
+
+
+def _is_zone_name(name: str) -> bool:
+    """Whether name is a zone of the IANA database, which the server loads."""
+    try:
+        ZoneInfo(name)
+    except (ValueError, ZoneInfoNotFoundError):
+        return False
+    return True
 
 
 def _params(dag) -> dict[str, Any]:

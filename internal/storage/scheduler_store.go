@@ -808,6 +808,7 @@ func (s *SchedulerStore) ScheduledDAGs(ctx context.Context, now time.Time) ([]sc
 			TenantID:      uuidToString(r.TenantID),
 			DagID:         r.DagID,
 			Schedule:      strOrEmpty(r.Schedule),
+			Timezone:      strOrEmpty(r.ScheduleTimezone),
 			LastLogical:   timeFromAny(r.LastLogical),
 			StartDate:     timePtr(r.StartDate),
 			Catchup:       r.Catchup,
