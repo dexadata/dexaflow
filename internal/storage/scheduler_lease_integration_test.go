@@ -210,6 +210,16 @@ func TestSchedulerLeaseRenewalStepsDownOnANewerTerm(t *testing.T) {
 	// The first check after the session dropped may fail on the dead
 	// connection, which the watchdog counts as a failed check; the next one
 	// runs on a new session and finds the newer term.
+	cur, err := a.Current(ctx)
+	for i := 0; i < 2 && err != nil; i++ { // the first read may meet the dead session
+		cur, err = a.Current(ctx)
+	}
+	if err != nil || cur {
+		t.Fatalf("A reads its superseded term: current=%v err=%v, want false", cur, err)
+	}
+	if cur, err := b.Current(ctx); err != nil || !cur {
+		t.Fatalf("B's term is not current: %v %v", cur, err)
+	}
 	held, err := a.HoldsLock(ctx)
 	for i := 0; i < 2 && err != nil && !errors.Is(err, scheduler.ErrLeaseSuperseded); i++ {
 		held, err = a.HoldsLock(ctx)
