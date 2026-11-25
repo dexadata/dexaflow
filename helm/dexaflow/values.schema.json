@@ -671,6 +671,7 @@
               },
               "additionalProperties": false
             },
+            "leaseFencing": {},
             "poolStarvationThreshold": {
               "type": [
                 "string",
