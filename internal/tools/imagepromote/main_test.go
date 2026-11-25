@@ -75,7 +75,7 @@ func layerDigests(t *testing.T, img v1.Image) []v1.Hash {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var out []v1.Hash
+	out := make([]v1.Hash, 0, len(m.Layers))
 	for _, l := range m.Layers {
 		out = append(out, l.Digest)
 	}

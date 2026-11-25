@@ -49,8 +49,8 @@ const (
 )
 
 var (
-	releasePattern = regexp.MustCompile(`^v?[0-9]+\.[0-9]+\.[0-9]+$`)
-	rcPattern      = regexp.MustCompile(`^(v?)([0-9]+\.[0-9]+\.[0-9]+)-rc\.[0-9]+$`)
+	releasePattern = regexp.MustCompile(`^v?\d+\.\d+\.\d+$`)
+	rcPattern      = regexp.MustCompile(`^(v?)(\d+\.\d+\.\d+)-rc\.\d+$`)
 )
 
 type multiFlag []string
@@ -65,83 +65,100 @@ func main() {
 	}
 }
 
-func run(args []string, out io.Writer, opts ...remote.Option) error {
+type config struct {
+	release string
+	src     name.Reference
+	dsts    []name.Reference
+	dryRun  bool
+}
+
+func parseArgs(args []string) (config, error) {
 	fs := flag.NewFlagSet("imagepromote", flag.ContinueOnError)
 	release := fs.String("release", "", "the GA version the rc is promoted to, vX.Y.Z")
 	from := fs.String("from", "", "the rc image (tag or digest)")
 	dryRun := fs.Bool("dry-run", false, "build and verify the promoted image without writing it")
-	insecure := fs.Bool("insecure", false, "allow plain HTTP registries (a local rehearsal registry)")
 	var to multiFlag
 	fs.Var(&to, "to", "a destination reference; repeatable")
 	if err := fs.Parse(args); err != nil {
-		return err
+		return config{}, err
 	}
 	if !releasePattern.MatchString(*release) {
-		return fmt.Errorf("-release %q is not vX.Y.Z", *release)
+		return config{}, fmt.Errorf("-release %q is not vX.Y.Z", *release)
 	}
 	if *from == "" || len(to) == 0 {
-		return errors.New("-from and at least one -to are required")
+		return config{}, errors.New("-from and at least one -to are required")
 	}
-	var nameOpts []name.Option
-	if *insecure {
-		nameOpts = append(nameOpts, name.Insecure)
-	}
-	src, err := name.ParseReference(*from, nameOpts...)
+	src, err := name.ParseReference(*from)
 	if err != nil {
-		return fmt.Errorf("-from: %w", err)
+		return config{}, fmt.Errorf("-from: %w", err)
 	}
-	dsts := make([]name.Reference, 0, len(to))
+	cfg := config{release: *release, src: src, dryRun: *dryRun}
 	for _, t := range to {
-		d, err := name.ParseReference(t, nameOpts...)
-		if err != nil {
-			return fmt.Errorf("-to %q: %w", t, err)
+		d, perr := name.ParseReference(t)
+		if perr != nil {
+			return config{}, fmt.Errorf("-to %q: %w", t, perr)
 		}
-		dsts = append(dsts, d)
+		cfg.dsts = append(cfg.dsts, d)
 	}
+	return cfg, nil
+}
 
-	desc, err := remote.Get(src, opts...)
+func run(args []string, out io.Writer, opts ...remote.Option) error {
+	cfg, err := parseArgs(args)
 	if err != nil {
-		return fmt.Errorf("read %s: %w", src, err)
+		return err
 	}
-	var w remote.Taggable
-	var digest v1.Hash
-	if desc.MediaType.IsIndex() {
-		idx, err := desc.ImageIndex()
-		if err != nil {
-			return err
-		}
-		pidx, err := promoteIndex(idx, *release, src.Context().Name())
-		if err != nil {
-			return fmt.Errorf("%s: %w", src, err)
-		}
-		w = pidx
-		if digest, err = pidx.Digest(); err != nil {
-			return err
-		}
-	} else {
-		img, err := desc.Image()
-		if err != nil {
-			return err
-		}
-		pimg, err := promoteImage(img, *release, src.Context().Name())
-		if err != nil {
-			return fmt.Errorf("%s: %w", src, err)
-		}
-		w = pimg
-		if digest, err = pimg.Digest(); err != nil {
-			return err
-		}
+	w, digest, err := promoteRef(cfg.src, cfg.release, opts...)
+	if err != nil {
+		return err
 	}
-
-	for _, d := range dsts {
-		if !*dryRun {
-			if err := writeTaggable(d, w, opts...); err != nil {
-				return fmt.Errorf("write %s: %w", d, err)
+	for _, d := range cfg.dsts {
+		if !cfg.dryRun {
+			if werr := writeTaggable(d, w, opts...); werr != nil {
+				return fmt.Errorf("write %s: %w", d, werr)
 			}
 		}
-		fmt.Fprintf(out, "%s %s\n", d, digest)
+		if _, werr := fmt.Fprintf(out, "%s %s\n", d, digest); werr != nil {
+			return werr
+		}
 	}
 	return nil
+}
+
+// promoteRef reads src, an image or a list, and returns its promotion and the
+// promoted digest.
+func promoteRef(src name.Reference, release string, opts ...remote.Option) (remote.Taggable, v1.Hash, error) {
+	desc, err := remote.Get(src, opts...)
+	if err != nil {
+		return nil, v1.Hash{}, fmt.Errorf("read %s: %w", src, err)
+	}
+	repo := src.Context().Name()
+	if desc.MediaType.IsIndex() {
+		return promoteRefIndex(desc, src, release, repo)
+	}
+	img, err := desc.Image()
+	if err != nil {
+		return nil, v1.Hash{}, err
+	}
+	p, err := promoteImage(img, release, repo)
+	if err != nil {
+		return nil, v1.Hash{}, fmt.Errorf("%s: %w", src, err)
+	}
+	d, err := p.Digest()
+	return p, d, err
+}
+
+func promoteRefIndex(desc *remote.Descriptor, src name.Reference, release, repo string) (remote.Taggable, v1.Hash, error) {
+	idx, err := desc.ImageIndex()
+	if err != nil {
+		return nil, v1.Hash{}, err
+	}
+	p, err := promoteIndex(idx, release, repo)
+	if err != nil {
+		return nil, v1.Hash{}, fmt.Errorf("%s: %w", src, err)
+	}
+	d, err := p.Digest()
+	return p, d, err
 }
 
 func writeTaggable(ref name.Reference, t remote.Taggable, opts ...remote.Option) error {
@@ -201,7 +218,11 @@ func promoteIndex(idx v1.ImageIndex, release, repo string) (v1.ImageIndex, error
 	annotations[baseDigestAnnot] = srcDigest.String()
 	annotations[baseNameAnnot] = repo
 	if im.MediaType == "application/vnd.oci.image.index.v1+json" {
-		out = mutate.Annotations(out, annotations).(v1.ImageIndex)
+		annotated, ok := mutate.Annotations(out, annotations).(v1.ImageIndex)
+		if !ok {
+			return nil, errors.New("annotating the list did not return a list")
+		}
+		out = annotated
 	}
 	return out, nil
 }
@@ -247,10 +268,14 @@ func promoteImage(img v1.Image, release, repo string) (v1.Image, error) {
 	// Docker schema 2 manifests carry no annotations; the base digest is then
 	// only on the list and in the attestation.
 	if mt == "application/vnd.oci.image.manifest.v1+json" {
-		out = mutate.Annotations(out, map[string]string{
+		annotated, ok := mutate.Annotations(out, map[string]string{
 			baseDigestAnnot: srcDigest.String(),
 			baseNameAnnot:   repo,
 		}).(v1.Image)
+		if !ok {
+			return nil, errors.New("annotating the image did not return an image")
+		}
+		out = annotated
 	}
 	if err := sameLayers(img, out); err != nil {
 		return nil, err
