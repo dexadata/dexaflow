@@ -36,6 +36,8 @@ func main() { os.Exit(run()) }
 
 func run() int {
 	envcompat.MirrorProcess()
+	// A GA image promoted from its rc reports the GA version (ADR 0109).
+	version = versioninfo.Promoted(version)
 	// Answer `--version` before parsing flags — flag.Parse would reject an
 	// unknown --version — and before any stdout goes to the MCP channel, so an
 	// operator can ask the binary its version (#593). Print main.version: this
