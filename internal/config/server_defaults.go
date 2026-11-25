@@ -2,6 +2,7 @@ package config
 
 import (
 	"github.com/dexadata/dexaflow/internal/domain"
+	"github.com/dexadata/dexaflow/internal/version"
 )
 
 // serverDefaults lists every leaf key with its default so that AutomaticEnv and
@@ -27,7 +28,7 @@ var serverDefaults = map[string]any{
 	// Off by default: pools stay writable through the tenant-facing API under
 	// write:pool. Registered so AutomaticEnv binds the Helm-rendered env var.
 	"server.pools_read_only":  false,
-	"database.url":            "postgres://leoflow:leoflow@localhost:5432/leoflow?sslmode=disable",
+	"database.url":            DefaultDatabaseURL,
 	"database.max_open_conns": 25,
 	"database.max_idle_conns": 5,
 	// Pool tuning, all off by default (0) so an install that sets none of them
@@ -141,16 +142,16 @@ var serverDefaults = map[string]any{
 	// of every tenant, cron creation included.
 	"scheduler.dispatch.tick_budget":             "5s",
 	"scheduler.dispatch.max_per_tenant_per_tick": 0,
-	"executor.http.user_agent":                   "leoflow/0.1",
-	"executor.task_namespace":                    "leoflow",
+	"executor.http.user_agent":                   "dexaflow/" + version.Get().Version,
+	"executor.task_namespace":                    DefaultTaskNamespace,
 	"executor.type":                              "kubernetes",
-	"executor.agent_path":                        "leoflow-agent",
+	"executor.agent_path":                        DefaultAgentPath,
 	"executor.subprocess_workdir":                "",
 	"executor.agent_control_plane_addr":          "",
 	"executor.agent_tls_ca_configmap":            "",
 	"executor.task_service_account":              "",
 	"executor.task_secret_name":                  "",
-	"executor.task_secret_mount_path":            "/etc/leoflow/secrets",
+	"executor.task_secret_mount_path":            DefaultTaskSecretMountPath,
 	"executor.collect_settled_run_pods":          false,
 	"executor.defaults.staging_access_mode":      "ReadWriteMany",
 	// Execution allowlist (issue #629): allow every field and any priority
@@ -208,7 +209,7 @@ var serverDefaults = map[string]any{
 	"execution.worker_idle_ttl":          "5m",
 	"execution.max_pool_size":            8,
 	"execution.max_warm_pods_per_tenant": 100,
-	"logs.dir":                           "/var/log/leoflow",
+	"logs.dir":                           DefaultLogsDir,
 	"logs.backend":                       "disk",
 	"logs.persistence_enabled":           true,
 	"logs.tail.publish":                  LogTailPublishAlways,

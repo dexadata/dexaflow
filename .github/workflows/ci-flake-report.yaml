@@ -50,7 +50,7 @@ jobs:
             cat "$RUNNER_TEMP/report.md"
           } >"$RUNNER_TEMP/body.md"
           n="$(gh issue list --repo "$REPO" --state open --label ci --search "\"$title\" in:title" --json number,title \
-            --jq --arg t "$title" '[.[] | select(.title == $t)][0].number // empty')"
+            --jq "[.[] | select(.title == \"$title\")][0].number // empty")"
           if [ -n "$n" ]; then
             gh issue edit "$n" --repo "$REPO" --body-file "$RUNNER_TEMP/body.md"
           else

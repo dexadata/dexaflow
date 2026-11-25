@@ -363,7 +363,9 @@ func TestServerEnvBuilders(t *testing.T) {
 		}
 	}
 	clu := strings.Join(clusterServerEnv(liteEnvParams{host: "127.0.0.1", port: 8088, adminHash: "", adminEmail: "", jwtSecret: ""}, "/home/u/.leoflow/dev/kubeconfig"), "\n")
-	for _, must := range []string{"LEOFLOW_EXECUTOR_TYPE=kubernetes", "KUBECONFIG=/home/u/.leoflow/dev/kubeconfig", "LEOFLOW_EXECUTOR_AGENT_CONTROL_PLANE_ADDR=" + devHostGRPCAddr(8088)} {
+	// The task namespace is the one Lite creates in its cluster, named here
+	// because the server's own default is no longer that name (#2155).
+	for _, must := range []string{"LEOFLOW_EXECUTOR_TYPE=kubernetes", "KUBECONFIG=/home/u/.leoflow/dev/kubeconfig", "LEOFLOW_EXECUTOR_AGENT_CONTROL_PLANE_ADDR=" + devHostGRPCAddr(8088), "LEOFLOW_EXECUTOR_TASK_NAMESPACE=" + devNamespace} {
 		if !strings.Contains(clu, must) {
 			t.Errorf("clusterServerEnv missing %q", must)
 		}
