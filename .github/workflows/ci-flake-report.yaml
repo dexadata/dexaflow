@@ -1,0 +1,58 @@
+name: CI flake report
+
+# Weekly rerun report (#1576): scripts/ci-flake-report.sh counts the runs of
+# the last 7 days that needed a rerun, per workflow, and the jobs that failed
+# and then passed on a rerun of the same run. The report goes to the step
+# summary and replaces the body of the one open issue "CI flake report"
+# (label ci), so the rerun rate is read in one place every week and each
+# flaky job either has an issue labeled flaky or shows "none".
+on:
+  schedule:
+    - cron: "30 6 * * 1"
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+jobs:
+  report:
+    name: Rerun and flake report
+    runs-on: ubuntu-26.04
+    timeout-minutes: 15
+    permissions:
+      actions: read   # Read the runs and every attempt of their jobs.
+      issues: write   # Update the report issue.
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Write the report
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CI_FLAKE_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          bash scripts/ci-flake-report.sh 7 >"$RUNNER_TEMP/report.md"
+          cat "$RUNNER_TEMP/report.md" >>"$GITHUB_STEP_SUMMARY"
+      - name: Update the report issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          title="CI flake report"
+          {
+            printf 'Updated every Monday by the [CI flake report](%s/%s/actions/workflows/ci-flake-report.yaml) workflow (#1576).\n\n' "$GITHUB_SERVER_URL" "$REPO"
+            cat "$RUNNER_TEMP/report.md"
+          } >"$RUNNER_TEMP/body.md"
+          n="$(gh issue list --repo "$REPO" --state open --label ci --search "\"$title\" in:title" --json number,title \
+            --jq --arg t "$title" '[.[] | select(.title == $t)][0].number // empty')"
+          if [ -n "$n" ]; then
+            gh issue edit "$n" --repo "$REPO" --body-file "$RUNNER_TEMP/body.md"
+          else
+            gh issue create --repo "$REPO" --title "$title" --label ci --body-file "$RUNNER_TEMP/body.md"
+          fi

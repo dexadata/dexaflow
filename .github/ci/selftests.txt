@@ -38,6 +38,7 @@ scripts/check-startup-probe-budget.sh
 scripts/check-trivyignore-entries.sh
 scripts/check-workflow-pins.sh
 scripts/check-workflow-tag-runs.sh
+scripts/ci-flake-report.sh
 scripts/ci-heavy-gate.sh
 scripts/ci-install-k3d-kubectl.sh
 scripts/ci-install-playwright-deps.sh

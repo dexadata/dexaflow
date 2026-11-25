@@ -40,7 +40,7 @@ jobs:
   # is built.
   ci-gate:
     name: Required checks green on the tagged commit
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 20
     permissions:
       contents: read
@@ -68,7 +68,7 @@ jobs:
   chart-preflight:
     name: Chart preflight (version, lint, contract)
     needs: ci-gate
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 10
     # One build date for the run: the runtime image's amd64 and arm64 halves
     # build on different runners and must bake the same date (#1686).
@@ -115,7 +115,7 @@ jobs:
     # digests and the tag can be deleted and cut again instead of burning the
     # version (v0.5.10).
     needs: [chart-preflight, runtime-data-image-build]
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 30
     permissions:
       contents: write   # GoReleaser creates the GitHub release.
@@ -229,7 +229,7 @@ jobs:
     name: Build + push dexaflow-migrate image
     # Waits for the data image scan; see the release job.
     needs: [chart-preflight, runtime-data-image-build]
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 30
     permissions:
       contents: read
@@ -448,7 +448,7 @@ jobs:
     name: Publish dexaflow-runtime base (py${{ matrix.python }})
     # Waits for the data image scan; see the release job.
     needs: [runtime-image-build, runtime-data-image-build]
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 15
     strategy:
       fail-fast: false
@@ -719,7 +719,7 @@ jobs:
     # failed: cut-release.sh reads the run's conclusion and would re-draft a
     # release whose gates all passed.
     continue-on-error: true
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 10
     permissions:
       contents: read
@@ -789,7 +789,7 @@ jobs:
   runtime-data-image:
     name: Publish dexaflow-runtime data (py3.11)
     needs: runtime-data-image-build
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 15
     permissions:
       contents: read
@@ -895,7 +895,7 @@ jobs:
   install-smoke:
     name: Install smoke (${{ matrix.image }})
     needs: release
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 15
     container: ${{ matrix.image }}
     defaults:
@@ -996,7 +996,7 @@ jobs:
   # in the slim image. The Docker path side-steps the host-libs question
   # entirely AND exercises the postgres-retry fix (the race that motivated
   # this smoke in the first place: docker-compose health vs. TCP accept).
-  # Runs on the GitHub-hosted ubuntu-24.04 runner so Docker is already
+  # Runs on the GitHub-hosted ubuntu-26.04 runner so Docker is already
   # available — no `container:` field needed.
   # The managed path is gated on bare ubuntu:22.04 and ubuntu:24.04 by
   # lite-managed-pg-distros.yaml (#279):
@@ -1004,7 +1004,7 @@ jobs:
   lite-cold-start-smoke:
     name: Lite cold-start (boot + /readyz, docker PG)
     needs: release
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 15
     steps:
       - name: Install Dexaflow via the published install.sh
@@ -1163,7 +1163,7 @@ jobs:
   upgrade-smoke:
     name: Upgrade smoke (previous → ${{ github.ref_name }})
     needs: release
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 15
     container: mirror.gcr.io/library/ubuntu:24.04
     steps:
@@ -1211,7 +1211,7 @@ jobs:
   attest:
     name: Attest provenance and SBOMs
     needs: [release, migrate-image, runtime-image, runtime-data-image]
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 30
     permissions:
       contents: write       # Upload the provenance bundle to the release.
@@ -1323,7 +1323,7 @@ jobs:
   verify-server-signature:
     name: Verify dexaflow-server, dexaflow-mcp and dexaflow-cli image signatures
     needs: release
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 10
     permissions:
       contents: read
@@ -1412,7 +1412,7 @@ jobs:
     name: Gate release on install + lite-cold-start + upgrade + migrate + runtime image + server signature
     needs: [release, install-smoke, lite-cold-start-smoke, upgrade-smoke, migrate-image, runtime-image, runtime-data-image, verify-server-signature, attest]
     if: always() && needs.release.result == 'success'
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 15
     permissions:
       contents: write   # Edit the published release back to a draft on failure.
@@ -1491,7 +1491,7 @@ jobs:
     name: Promote (verify images, chart, py3.N, Latest)
     needs: gate
     if: needs.gate.result == 'success'
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-26.04
     timeout-minutes: 20
     permissions:
       contents: write   # Mark the release Latest.

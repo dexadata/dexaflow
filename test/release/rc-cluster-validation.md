@@ -391,7 +391,7 @@ the same carry-forward treatment for as long as #1089 stays open):
 
 ### §4.1 — #726: api role never receives the gRPC TLS private key (split mode)
 ```bash
-helm upgrade leoflow ... --set split.enabled=true --set agentTLS.enabled=true --set edition=pro
+helm upgrade leoflow ... --set split.enabled=true --set agentTLS.enabled=true
 kubectl get deploy -n leoflow            # expect an api and a scheduler deployment
 ```
 - **PASS:** the **api** pod's projected volumes contain **no `tls.key`**

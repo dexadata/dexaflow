@@ -164,6 +164,13 @@ backend, in three tiers:
 Logs, trigger, clear, and pause are served by the public `/api/v2/*` Dexaflow
 already exposes; the UI calls those directly.
 
+The SPA has no field for a task instance's failure reason, so the log view carries
+it: when the control plane recorded why an attempt failed, that attempt's logs
+start with an error-level `Failure reason: ...` line, above the lines the task
+wrote ([#945](https://github.com/dexadata/dexaflow/issues/945)). An attempt with
+no logs at all shows the reason under "No logs available for this attempt.". The
+same reason is served in full as `failure_reason` on the task-instance API.
+
 ## Serving & auth architecture
 
 ```

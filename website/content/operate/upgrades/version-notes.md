@@ -2,7 +2,7 @@
 title: "Version notes"
 linkTitle: "Version notes"
 weight: 10
-description: "What changes when a Cluster control plane upgrades to each 0.5.x release, and what to do about it."
+description: "What changes when a Cluster control plane upgrades to each 0.5.x and 0.6.x release, and what to do about it."
 ---
 
 One section per release: what changes when a Cluster control plane [upgrades](/operate/upgrades/) to it, and what to do. Read the sections between your version and the target before a `helm upgrade`.
@@ -1284,3 +1284,19 @@ first pass, and a time in the hour that is skipped runs one hour later
 repeated hour and not in the skipped one.
 
 An unknown zone is refused when the version is registered.
+
+## Upgrading to 0.6.0: the chart refuses unknown values
+
+The chart now validates your values against its `values.schema.json`
+([#2320](https://github.com/dexadata/dexaflow/issues/2320)) and refuses a key
+it does not have, or a value of the wrong shape, instead of ignoring it. See
+[Values are checked before anything renders](/operate/helm-chart/#values-are-checked-before-anything-renders).
+
+| Your install | What the upgrade does |
+|---|---|
+| Every value you set is one the chart reads | Nothing changes. |
+| A values file or `--set` carries a key the chart never had (a typo, a value from another chart, a value removed in an earlier release) | `helm upgrade` fails before anything changes in the cluster and names the key. Remove it or fix its spelling. It had no effect before. |
+| `helm upgrade --reuse-values` of a release whose stored values carry such a key | Same refusal. Run `helm get values <release>` to see them, then upgrade with `--reset-then-reuse-values` and the corrected values. |
+
+Check a values file before the upgrade with
+`helm template <release> oci://ghcr.io/dexadata/charts/dexaflow --version 0.6.0 -f <your values>`.
