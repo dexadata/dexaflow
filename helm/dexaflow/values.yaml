@@ -3,6 +3,12 @@
 # -- Install profile (#2323): `cluster` turns on the defaults the scheduler design assumes (buffered dispatch with 512 slots and 16 workers, Kubernetes client QPS 50 / burst 100 with a separate maintenance client at 20 / 40, and `GOMEMLIMIT` at `goMemLimit.percent` of the memory limit, and the live log tail published on demand); `legacy` keeps the defaults of charts before 0.5.10. Empty (default): a fresh install gets `cluster`, and `helm upgrade` keeps the profile of the live release, so a release installed before profiles stays `legacy`. `helm template` and GitOps renderers cannot see the live release and get `cluster`: set `legacy` there to keep an older release's values. Each value the profile governs wins over it once set. The dedicated database pools (`database.schedulerMaxConns`, `database.agentMaxConns`) are not part of the profile: they add connections on every pod, so size them against the Postgres connection budget and set them together by hand.
 profile: ""
 
+# -- Replaces the chart name in generated resource names and labels. Empty (default) uses the chart name.
+nameOverride: ""
+
+# -- Replaces the full generated name (release name plus chart name). Empty (default) derives it from the release and `nameOverride`.
+fullnameOverride: ""
+
 image:
   # -- Control-plane image. Published by GoReleaser on every tag, signed with cosign.
   repository: ghcr.io/dexadata/dexaflow-server

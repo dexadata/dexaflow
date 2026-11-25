@@ -7,6 +7,13 @@ too.
   `# --` comment that helm-docs turns into the README table; regenerate the
   README from `README.md.gotmpl`, never edit the table by hand.
   `scripts/check-values-doc-comments.sh` catches what helm-docs cannot see.
+- **`values.schema.json` is generated** from `values.yaml` by
+  `make gen-chart-schema` (`internal/tools/chartschema`); `go test ./...` fails
+  when it is stale. A section with keys refuses any other key, so a new value
+  needs only the regeneration. A map handed to Kubernetes as written (a
+  `resources` or security context) is listed under `open` in
+  `internal/tools/chartschema/overrides.yaml`, and a value that accepts a form
+  its default does not show is listed under `types`.
 - **Template logic has a unit test** under `dexaflow/tests/`
   (`helm unittest helm/dexaflow`).
 - **Upgrades from the previous release keep working.** Helm CI installs the

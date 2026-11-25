@@ -106,6 +106,38 @@ A first-class values reference on this site is a TODO for a later migration phas
   covers. See
   [The in-cluster builder](/operate/builders/#the-in-cluster-builder).
 
+## Values are checked before anything renders
+
+The chart ships a `values.schema.json`
+([#2320](https://github.com/dexadata/dexaflow/issues/2320)). `helm install`,
+`helm upgrade`, `helm template` and `helm lint` check your values against it
+first, and refuse:
+
+- a key the chart does not have, at the top level or inside any section it
+  defines, such as `replicaCount` misspelled `replicasCount`, or
+  `networkPolicy.enabled` written as `netpol.enabled`;
+- a value of the wrong shape, such as a map where the chart expects a number or
+  a list.
+
+Before this, both were ignored, so an install could run without the setting
+its operator believed was on. Helm names the offending path:
+
+```text
+Error: values don't meet the specifications of the schema(s) in the following chart(s):
+dexaflow:
+- at '': additional properties 'replicasCount' not allowed
+```
+
+Maps you fill in yourself (`podAnnotations`, `nodeSelector`, labels and
+annotations) and the objects the chart hands to Kubernetes as written
+(`resources`, `podSecurityContext`, `securityContext` and their migration job
+and builder counterparts) accept any key. A quoted number or boolean
+(`"30"`, `"true"`) is still accepted where the chart expects one.
+
+The schema is generated from `values.yaml` (`make gen-chart-schema`) and
+`go test ./...` fails when the two drift, so a new value is never refused by
+mistake.
+
 ## Migrations and the installation id
 
 The chart migrates the database in a pre-install/pre-upgrade hook Job
