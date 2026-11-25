@@ -1285,6 +1285,39 @@ repeated hour and not in the skipped one.
 
 An unknown zone is refused when the version is registered.
 
+## Upgrading to 0.6.0: trigger rules follow Airflow 3
+
+The scheduler now evaluates trigger rules as Airflow 3 does
+([#2346](https://github.com/dexadata/dexaflow/issues/2346),
+[ADR 0064](/project/adrs/0064-branching-and-skip/)), and `dexaflow compile`
+accepts four more: `none_failed`, `none_failed_min_one_success`,
+`none_skipped` and `always`. A DAG that uses only `all_success` (the default)
+or `all_done` does not change. The others change for DAGs already deployed,
+with no recompile:
+
+| Rule | Before 0.6.0 | From 0.6.0 |
+|---|---|---|
+| `one_success` | Waited for every upstream, then ran if one succeeded | Runs as soon as one upstream succeeds, while its siblings still run |
+| `one_success`, every upstream finished without a success | `skipped` | `upstream_failed`, or `skipped` when every upstream was skipped |
+| `one_success`, an upstream is `upstream_failed` | The task became `upstream_failed` at once | The `upstream_failed` upstream counts as a finished one without a success |
+| `one_failed` | Waited for every upstream, then ran if one failed | Runs as soon as one upstream fails or is `upstream_failed` |
+| `all_failed` | Became `upstream_failed` when an upstream was `upstream_failed` | Runs when every upstream is `failed` or `upstream_failed` |
+| `all_failed`, an upstream succeeds or is skipped | Skipped once every upstream finished | Skipped at once |
+
+The visible effect: a cleanup or alert task on `one_failed` or `all_failed`
+now runs after a failure deeper in the graph, where it was marked
+`upstream_failed` before, and a `one_success` task starts while its siblings
+are still running.
+
+The four new rules work as in Airflow: `none_failed` runs once no upstream
+failed, all skipped included; `none_failed_min_one_success` is the same but is
+skipped when every upstream was skipped (the usual join after a branch);
+`none_skipped` runs once every upstream finished and none was skipped, failed
+ones included; `always` runs at once, whatever its upstreams do. A DAG that
+uses one of them needs 0.6.0 on the control plane: rolling the control plane
+back below 0.6.0 leaves its tasks waiting. `one_done`, `all_skipped` and the
+`all_done_*` rules are still refused at compile.
+
 ## Upgrading to 0.6.0: the chart refuses unknown values
 
 The chart now validates your values against its `values.schema.json`
@@ -1300,3 +1333,19 @@ it does not have, or a value of the wrong shape, instead of ignoring it. See
 
 Check a values file before the upgrade with
 `helm template <release> oci://ghcr.io/dexadata/charts/dexaflow --version 0.6.0 -f <your values>`.
+
+## Upgrading to 0.6.0: server defaults use the dexaflow names
+
+Six server settings had defaults that still carried the old name. They now use
+`dexaflow` ([#2155](https://github.com/dexadata/dexaflow/issues/2155)). A
+setting you set yourself, through the chart, a config file or a
+`DEXAFLOW_*` or `LEOFLOW_*` variable, is not affected.
+
+| Setting | Before | 0.6.0 | If you relied on the old default |
+|---|---|---|---|
+| `executor.task_namespace` | `leoflow` | `dexaflow` | **Pin it before upgrading**: `DEXAFLOW_EXECUTOR_TASK_NAMESPACE=leoflow`. Task pods would otherwise go to a namespace the executor has no Role in. The chart always sets it, so a chart install is unaffected. |
+| `database.url` | `postgres://leoflow:leoflow@localhost:5432/leoflow` | `postgres://dexaflow:dexaflow@localhost:5432/dexaflow` | **Pin it before upgrading**: `DEXAFLOW_DATABASE_URL=<your URL>`. The server cannot tell which database you meant. The chart always sets it. |
+| `logs.dir` | `/var/log/leoflow` | `/var/log/dexaflow` | Nothing to do: on a host where only `/var/log/leoflow` exists, the server keeps writing there and logs a warning naming `DEXAFLOW_LOGS_DIR`. |
+| `executor.task_secret_mount_path` | `/etc/leoflow/secrets` | `/etc/dexaflow/secrets` | Nothing to do: at the default, the Secret is mounted at both paths, so a DAG that reads the old one keeps working. Move DAGs to the new path when convenient. |
+| `executor.agent_path` (subprocess executor) | `leoflow-agent` | `dexaflow-agent` | Nothing to do: on a host with only `leoflow-agent` on `PATH`, the server runs it and logs a warning. |
+| `executor.http.user_agent` | `leoflow/0.1` | `dexaflow/<server version>` | Pin it if a service you call matches on the old header. |

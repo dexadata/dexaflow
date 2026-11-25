@@ -21,11 +21,13 @@ cluster and no executor, so they run on a laptop with just Postgres up.
 | 7 | Code-only deploy: p50 of `dexaflow deploy` after a DAG code change, and the warm-up of the new version's pool | [`deploy_p50/`](deploy_p50/) | ✅ implemented |
 | 8 | Usage event trigger: what recording a usage event adds to a settle and to a 1,000-task cascade | [`usage_settle/`](usage_settle/) | ✅ implemented |
 | 9 | Primary key order: insert rate, WAL and index size of a random UUIDv4 key against a time-ordered UUIDv7 | [`uuid_keys/`](uuid_keys/) | ✅ implemented |
+| 10 | Noisy tenant: one tenant's 5,000 task fan-out must not move another tenant's schedule delay | [`noisy_tenant/`](noisy_tenant/) | ✅ implemented |
 
-Experiments 1, 4, 6, 7, 8 and 9 are built. The others are documented extension points.
+Experiments 1, 4, 6, 7, 8, 9 and 10 are built. The others are documented extension points.
 Experiments 4 and 7 drive a running control plane instead of the packages:
 Experiment 4 needs only an api role process and its Postgres, Experiment 7
-the CLI, and its warm-up half a cluster with warm pools on.
+the CLI, and its warm-up half a cluster with warm pools on. Experiment 10
+needs a cluster install with two tenants.
 
 ## Prerequisites
 
@@ -341,3 +343,46 @@ rows, the WAL per row, the sizes of the key index and of the table, and the
 rate of point lookups by key, as a table for
 [BASELINE.md](BASELINE.md#primary-key-order).
 
+## Experiment 10: noisy tenant
+
+One tenant at its limits must not delay another tenant's schedule (#2313).
+The quiet tenant runs `quiet_cron`, a two task DAG every minute; the noisy
+tenant runs `noisy_fanout`, one root, 5,000 independent sleepers and a join,
+all ready in the same tick. Both are under [`noisy_tenant/dags/`](noisy_tenant/dags/).
+
+It runs against a cluster install with the production profile, not a laptop:
+5,000 task pods are the point. Set it up once:
+
+1. Create the tenants `quiet` and `noisy` through the operator service API
+   ([Multitenancy](/operate/multitenancy/)), with the noisy tenant's
+   `default_pool_slots` at the size you want it to saturate.
+2. Create an API token in each tenant and deploy the DAGs with it: `noisy_fanout`
+   to `noisy`, and `quiet_cron` to `quiet`, more than once under other dag ids
+   (`quiet_cron_1` to `quiet_cron_5`) for more samples per minute. Unpause the
+   quiet DAGs and leave them running for a few minutes before you start.
+
+Then:
+
+```sh
+QUIET_TOKEN=... NOISY_TOKEN=... go run ./test/load/noisy_tenant \
+  --url "$DEXAFLOW_URL" --quiet-dags quiet_cron_1,quiet_cron_2,quiet_cron_3 \
+  --noisy-dag noisy_fanout --noisy-runs 1 --baseline 15m --noise 30m [--max-shift 2s]
+```
+
+The harness waits out a baseline window with only the quiet tenant running,
+triggers `--noisy-runs` runs of the fan-out, and waits out the noise window
+(plus `--settle`, so the last slots have started). It then reads every
+scheduled run of the quiet DAGs from the API and, per window, the p50 and p99
+of two delays from the run's slot: creation (`queued_at - run_after`, what
+`dexaflow_scheduler_schedule_delay_seconds` measures for all tenants together)
+and start (`start_date - run_after`, which adds dispatch). It exits 1 when a
+window has no quiet run, when a quiet run in the noise window never started, or
+when the noise window's p99 of either delay is more than `--max-shift` above
+the baseline's. `NOISY_FANOUT` and `NOISY_SLEEP_SECONDS` in the noisy DAG's
+environment change the width and the length of each sleeper.
+
+What protects the quiet tenant is each tenant's own pool and
+`scheduler.dispatch.max_per_tenant_per_tick`, which is `0` (no cap) by default:
+run the experiment once with the install's setting and once with a cap, and
+record both. A failure names which delay moved, creation (the scheduler's
+tick) or start (dispatch and pod start).

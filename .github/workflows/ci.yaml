@@ -903,7 +903,10 @@ jobs:
   ui-smoke:
     name: UI smoke (headless SPA crash check)
     if: github.event_name != 'push' || github.ref != 'refs/heads/main'
-    runs-on: ubuntu-26.04
+    # Stays on 24.04: this job boots Lite with the managed Postgres on the
+    # runner itself, and that build links libxml2.so.2, which the 26.04 image
+    # does not carry (#2540).
+    runs-on: ubuntu-24.04
     # 15 until the UI contract checks joined the job (#1932), which add about
     # two minutes to a job that used about nine.
     timeout-minutes: 20

@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/dexadata/dexaflow/internal/version"
 )
 
 func TestLoadServerAppliesDefaults(t *testing.T) {
@@ -13,17 +15,20 @@ func TestLoadServerAppliesDefaults(t *testing.T) {
 		t.Fatalf("LoadServer() error = %v", err)
 	}
 	checks := map[string]struct{ got, want any }{
-		"http_addr":         {c.Server.HTTPAddr, "0.0.0.0:8080"},
-		"metrics_addr":      {c.Server.MetricsAddr, "0.0.0.0:9090"},
-		"grpc_addr":         {c.Server.GRPCAddr, "0.0.0.0:9091"},
-		"logs.dir":          {c.Logs.Dir, "/var/log/leoflow"},
-		"database.url":      {c.Database.URL, "postgres://leoflow:leoflow@localhost:5432/leoflow?sslmode=disable"},
-		"max_open_conns":    {c.Database.MaxOpenConns, 25},
-		"redis.url":         {c.Redis.URL, ""},
-		"auth.provider":     {c.Auth.Provider, "jwt"},
-		"token_ttl":         {c.Auth.JWT.TokenTTLSeconds, 3600},
-		"loop_interval_ms":  {c.Scheduler.LoopIntervalMS, 1000},
-		"scheduler.enabled": {c.Scheduler.Enabled, true},
+		"http_addr":    {c.Server.HTTPAddr, "0.0.0.0:8080"},
+		"metrics_addr": {c.Server.MetricsAddr, "0.0.0.0:9090"},
+		"grpc_addr":    {c.Server.GRPCAddr, "0.0.0.0:9091"},
+		"logs.dir":     {c.Logs.Dir, "/var/log/dexaflow"},
+		"database.url": {c.Database.URL, "postgres://dexaflow:dexaflow@localhost:5432/dexaflow?sslmode=disable"},
+		// The dexaflow names are the defaults since 0.6.0 (#2155).
+		"executor.task_namespace":         {c.Executor.TaskNamespace, "dexaflow"},
+		"executor.task_secret_mount_path": {c.Executor.TaskSecretMountPath, "/etc/dexaflow/secrets"},
+		"max_open_conns":                  {c.Database.MaxOpenConns, 25},
+		"redis.url":                       {c.Redis.URL, ""},
+		"auth.provider":                   {c.Auth.Provider, "jwt"},
+		"token_ttl":                       {c.Auth.JWT.TokenTTLSeconds, 3600},
+		"loop_interval_ms":                {c.Scheduler.LoopIntervalMS, 1000},
+		"scheduler.enabled":               {c.Scheduler.Enabled, true},
 		// Default is sync passthrough (#127): Pro deployments opt in via values.yaml.
 		"scheduler.dispatch.buffer_size": {c.Scheduler.Dispatch.BufferSize, 0},
 		"scheduler.dispatch.workers":     {c.Scheduler.Dispatch.Workers, 0},
@@ -43,8 +48,9 @@ func TestLoadServerExecutorHTTPDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadServer() error = %v", err)
 	}
-	if c.Executor.HTTP.UserAgent != "leoflow/0.1" {
-		t.Errorf("user_agent = %q, want leoflow/0.1", c.Executor.HTTP.UserAgent)
+	// The default names the product and the build that sends it (#2155).
+	if want := "dexaflow/" + version.Get().Version; c.Executor.HTTP.UserAgent != want {
+		t.Errorf("user_agent = %q, want %q", c.Executor.HTTP.UserAgent, want)
 	}
 }
 
@@ -74,8 +80,8 @@ func TestLoadServerExecutorTypeDefault(t *testing.T) {
 	if c.Executor.Type != "kubernetes" {
 		t.Errorf("default executor.type = %q, want kubernetes", c.Executor.Type)
 	}
-	if c.Executor.AgentPath != "leoflow-agent" {
-		t.Errorf("default executor.agent_path = %q, want leoflow-agent", c.Executor.AgentPath)
+	if c.Executor.AgentPath != "dexaflow-agent" {
+		t.Errorf("default executor.agent_path = %q, want dexaflow-agent", c.Executor.AgentPath)
 	}
 	t.Setenv("LEOFLOW_EXECUTOR_TYPE", "subprocess")
 	c, err = LoadServer("", nil)

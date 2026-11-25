@@ -28,6 +28,7 @@ on:
       - E2E performance gates
       - E2E replaced database
       - Chaos weekly
+      - E2E Redis faults
       - Soak harness smoke (short, bounded)
       - Fuzz
       - Image scan

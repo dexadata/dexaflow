@@ -319,7 +319,7 @@ supported and how features are deprecated is in the
 - JWT authentication, RBAC, multi-tenant schema (OIDC-ready)
 - Kubernetes-native execution (no worker pool to manage)
 - Local development on Kubernetes (k3d/kind) or a dev-only subprocess executor (ADR 0015)
-- Trigger rules: `all_success`, `all_failed`, `all_done`, `one_success`, `one_failed`
+- Trigger rules with Airflow 3 semantics: `all_success`, `all_failed`, `all_done`, `one_success`, `one_failed`, `none_failed`, `none_failed_min_one_success`, `none_skipped`, `always`
 - Clear task instance to re-run failed tasks
 - Leader election via Postgres advisory locks
 - OpenSSF Best Practices compliance, signed releases (cosign), supply chain scanning (govulncheck + Trivy + CodeQL)

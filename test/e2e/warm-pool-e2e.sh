@@ -72,6 +72,11 @@ API="http://localhost:${HTTP_PORT}"
 GRPC_PORT="9091"
 HOST_ADDR="${LEOFLOW_E2E_HOST_ADDR:-$([ "$(uname -s)" = Linux ] && echo host.k3d.internal || echo host.docker.internal)}"
 DB_URL="${DEXAFLOW_E2E_DATABASE_URL:-${LEOFLOW_E2E_DATABASE_URL:-postgres://leoflow:leoflow@localhost:5432/leoflow?sslmode=disable}}"
+# The fixtures this script runs against name the task namespace and the
+# database `leoflow`; the server's own defaults name them dexaflow since 0.6.0
+# (#2155), so the fixture names are pinned for the control plane here.
+export LEOFLOW_EXECUTOR_TASK_NAMESPACE="${LEOFLOW_EXECUTOR_TASK_NAMESPACE:-leoflow}"
+export LEOFLOW_DATABASE_URL="${LEOFLOW_DATABASE_URL:-$DB_URL}"
 STAMP="$(date +%s)"
 SERVER_PID=""
 TOKEN=""

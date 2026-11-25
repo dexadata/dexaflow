@@ -1,0 +1,6 @@
+schema_version: "1.0"
+dag_id: noisy_fanout
+description: "Load Experiment 10: the noisy tenant's 5,000 task fan-out."
+owner: load
+tags:
+  - load

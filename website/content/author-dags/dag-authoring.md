@@ -310,7 +310,7 @@ The rule and its reasoning are in
 
 Also supported:
 
-- **Trigger rules**: `all_success`, `all_failed`, `all_done`, `one_success`, `one_failed`.
+- **Trigger rules**: `all_success`, `all_failed`, `all_done`, `one_success`, `one_failed`, `none_failed`, `none_failed_min_one_success`, `none_skipped`, `always`, with Airflow 3 semantics ([ADR 0064](/project/adrs/0064-branching-and-skip/)).
 - **XCom**: TaskFlow data-flow (`transform(extract())`) is resolved automatically into typed inputs (`xcom_input`) — for `@task` **and** operator args.
 - **Schedule**: cron strings and presets (`@daily`, `0 * * * *`), read in the
   time zone of the DAG's `start_date`, as in Airflow: `schedule="0 6 * * *"`
@@ -413,10 +413,8 @@ issue.
 - **A task skipping itself** (`raise AirflowSkipException`): the task fails
   instead of ending `skipped`. Planned with branching
   ([#2347](https://github.com/dexadata/dexaflow/issues/2347)).
-- **Trigger rules** other than `all_success`, `all_failed`, `all_done`,
-  `one_success`, `one_failed` (for example `none_failed_min_one_success`, the
-  usual join after a branch): refused. Planned in
-  [#2346](https://github.com/dexadata/dexaflow/issues/2346).
+- **Trigger rules** `one_done`, `all_skipped`, `all_done_min_one_success`
+  and `all_done_setup_success`: refused.
 - **Task groups** (`TaskGroup`, `@task_group`): refused at compile, with this
   advice in the message. Flatten the group into
   plain tasks and prefix the ids by hand (for example `extract_load` for
