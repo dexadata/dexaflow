@@ -1,6 +1,6 @@
 # Default values for the Dexaflow control plane chart.
 
-# -- Install profile (#2323): `cluster` turns on the defaults the scheduler design assumes (buffered dispatch with 512 slots and 16 workers, Kubernetes client QPS 50 / burst 100 with a separate maintenance client at 20 / 40, and `GOMEMLIMIT` at `goMemLimit.percent` of the memory limit, and the live log tail published on demand); `legacy` keeps the defaults of charts before 0.5.10. Empty (default): a fresh install gets `cluster`, and `helm upgrade` keeps the profile of the live release, so a release installed before profiles stays `legacy`. `helm template` and GitOps renderers cannot see the live release and get `cluster`: set `legacy` there to keep an older release's values. Each value the profile governs wins over it once set. The dedicated database pools (`database.schedulerMaxConns`, `database.agentMaxConns`) are not part of the profile: they add connections on every pod, so size them against the Postgres connection budget and set them together by hand.
+# -- Install profile (#2323): `cluster` turns on the defaults the scheduler design assumes (buffered dispatch with 512 slots and 16 workers, Kubernetes client QPS 50 / burst 100 with a separate maintenance client at 20 / 40, and `GOMEMLIMIT` at `goMemLimit.percent` of the memory limit, the live log tail published on demand, and leader writes fenced by the lease term); `legacy` keeps the defaults of charts before 0.5.10. Empty (default): a fresh install gets `cluster`, and `helm upgrade` keeps the profile of the live release, so a release installed before profiles stays `legacy`. `helm template` and GitOps renderers cannot see the live release and get `cluster`: set `legacy` there to keep an older release's values. Each value the profile governs wins over it once set. The dedicated database pools (`database.schedulerMaxConns`, `database.agentMaxConns`) are not part of the profile: they add connections on every pod, so size them against the Postgres connection budget and set them together by hand.
 profile: ""
 
 image:
@@ -251,6 +251,8 @@ config:
       bufferSize: null
       # -- (int) Goroutines creating task pods from the queue (`scheduler.dispatch.workers`). Unset: 16 under the cluster profile. Ignored while `bufferSize` is 0; 0 with a buffer means 1.
       workers: null
+    # -- (bool) Fence the leader's writes by its lease term (`scheduler.lease_fencing`, ADR 0106, #2329): every acquisition of leadership takes a new term, the scheduler's writers run on a dedicated pool (`database.schedulerMaxConns`, or 8 connections when unset) whose sessions carry it, a new leader ends the sessions of older terms, and the database refuses a write to runs or task instances from an older term, so a deposed leader cannot change them after a failover. Unset: on under the cluster profile, off under legacy. A set value wins over the profile.
+    leaseFencing: null
     # -- How long a task held only by its pool waits before the pool is reserved for it (`scheduler.pool_starvation_threshold`, ADR 0066), so smaller tasks cannot keep a larger one out forever. A duration such as `2m`; `0s` disables it. Empty renders nothing and keeps the server default of 60s.
     poolStarvationThreshold: ""
   cors:

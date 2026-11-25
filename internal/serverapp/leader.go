@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"os"
 	"time"
 
 	"k8s.io/client-go/kubernetes"
@@ -91,8 +92,15 @@ func startSchedulerSide(ctx context.Context, cfg *config.ServerConfig, pg *stora
 	// them; unset, schedPG is pg and nothing changes. The agent gRPC handlers
 	// above write their execution store through the agent pool, and read the
 	// repository they share with the API on the main pool.
-	schedPG, releaseSchedPG, perr := pg.ForScheduler(ctx, schedulerDatabase(cfg))
+	lease, closeLease, lerr := openSchedulerLease(ctx, cfg, logger)
+	if lerr != nil {
+		stopGRPCWithin(grpcSrv, grpcStopTimeout, logger, inflight.Count)
+		releaseAgentPG()
+		return nil, false, nil, lerr
+	}
+	schedPG, releaseSchedPG, perr := schedulerPool(ctx, pg, cfg, lease, metrics)
 	if perr != nil {
+		closeLease()
 		stopGRPCWithin(grpcSrv, grpcStopTimeout, logger, inflight.Count)
 		releaseAgentPG()
 		return nil, false, nil, fmt.Errorf("scheduler pool: %w", perr)
@@ -108,8 +116,9 @@ func startSchedulerSide(ctx context.Context, cfg *config.ServerConfig, pg *stora
 
 	drain := func() {}
 	if cfg.Scheduler.Enabled {
-		sched, dispatchOn, dispatchCloser, serr := startScheduler(ctx, cfg, schedPG, repo, schedExec, authn, warmReg, logSink, extraHooks, logger, metrics)
+		sched, dispatchOn, dispatchCloser, serr := startScheduler(ctx, cfg, schedPG, repo, schedExec, authn, warmReg, logSink, extraHooks, lease, closeLease, logger, metrics)
 		if serr != nil {
+			closeLease()
 			releaseSchedPG()
 			// Bounded, like every other stop of this server. At boot no stream is
 			// open yet, so the unbounded form could not actually hang here, but a
@@ -179,15 +188,10 @@ func agentExecStore(ctx context.Context, pg *storage.Postgres, execStore *storag
 	return execStore.OnPool(agentPG), release, nil
 }
 
-func startScheduler(ctx context.Context, cfg *config.ServerConfig, pg *storage.Postgres, repo *storage.Repository, execStore *storage.ExecutionStore, authn *auth.JWTAuthenticator, warmPools *agentrpc.WorkerRegistry, logSink logs.Sink, extraHooks []admission.Hook, logger *slog.Logger, metrics *observability.Metrics) (*scheduler.Scheduler, bool, io.Closer, error) {
-	// Built before the leader pool so a bad alert egress config cannot leak it.
+func startScheduler(ctx context.Context, cfg *config.ServerConfig, pg *storage.Postgres, repo *storage.Repository, execStore *storage.ExecutionStore, authn *auth.JWTAuthenticator, warmPools *agentrpc.WorkerRegistry, logSink logs.Sink, extraHooks []admission.Hook, lease *storage.SchedulerLease, closeLease func(), logger *slog.Logger, metrics *observability.Metrics) (*scheduler.Scheduler, bool, io.Closer, error) {
 	alertClient, err := alertHTTPClient(cfg.Scheduler.Alerts)
 	if err != nil {
 		return nil, false, nil, err
-	}
-	leaderPool, err := storage.NewLeaderPool(ctx, cfg.Database)
-	if err != nil {
-		return nil, false, nil, fmt.Errorf("leader pool: %w", err)
 	}
 	store := storage.NewSchedulerStore(pg)
 	sched := scheduler.NewScheduler(store, logger,
@@ -231,13 +235,11 @@ func startScheduler(ctx context.Context, cfg *config.ServerConfig, pg *storage.P
 	))
 	podDispatch, dispatchCloser, err := setupDispatch(ctx, cfg, sched, execStore, authn, store, warmPools, logSink, extraHooks, logger, metrics)
 	if err != nil {
-		leaderPool.Close()
 		return nil, false, nil, err
 	}
-	leader := storage.NewSchedulerLease(leaderPool)
 	go func() {
-		defer leaderPool.Close()
-		scheduler.CampaignAndRun(ctx, leader, sched, logger)
+		defer closeLease()
+		scheduler.CampaignAndRun(ctx, lease, sched, logger)
 	}()
 	return sched, podDispatch, dispatchCloser, nil
 }
@@ -252,4 +254,39 @@ func drainDispatch(closer io.Closer, logger *slog.Logger) {
 	if err := closer.Close(); err != nil {
 		logger.Error("draining dispatch pool on shutdown", "error", err)
 	}
+}
+
+// openSchedulerLease opens the leadership lease of a process that runs the
+// scheduler loop, nil for one that does not. With scheduler.lease_fencing on
+// it ends the sessions of older terms on every acquisition (ADR 0106).
+func openSchedulerLease(ctx context.Context, cfg *config.ServerConfig, logger *slog.Logger) (*storage.SchedulerLease, func(), error) {
+	if !cfg.Scheduler.Enabled {
+		return nil, func() {}, nil
+	}
+	lease, closeLease, err := storage.OpenSchedulerLease(ctx, cfg.Database)
+	if err != nil {
+		return nil, nil, fmt.Errorf("leader pool: %w", err)
+	}
+	if host, herr := os.Hostname(); herr == nil {
+		lease.SetHolder(host)
+	}
+	if cfg.Scheduler.LeaseFencing {
+		lease.EnableFencing()
+		logger.Info("scheduler leader writes are fenced by the lease term (scheduler.lease_fencing, ADR 0106)")
+	}
+	return lease, closeLease, nil
+}
+
+// schedulerPool returns the scheduler side's database handle: with fencing
+// on, a dedicated pool whose sessions carry the lease's term, otherwise
+// ForScheduler's.
+func schedulerPool(ctx context.Context, pg *storage.Postgres, cfg *config.ServerConfig, lease *storage.SchedulerLease, metrics *observability.Metrics) (*storage.Postgres, func(), error) {
+	if lease == nil || !cfg.Scheduler.LeaseFencing {
+		return pg.ForScheduler(ctx, schedulerDatabase(cfg))
+	}
+	var onFenced func()
+	if metrics != nil {
+		onFenced = func() { metrics.RecordSchedulerDecision("leader_write_fenced") }
+	}
+	return pg.ForFencedScheduler(ctx, cfg.Database, lease, onFenced)
 }

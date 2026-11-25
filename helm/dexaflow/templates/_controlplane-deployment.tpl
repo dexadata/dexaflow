@@ -410,6 +410,13 @@ spec:
             - name: LEOFLOW_SCHEDULER_POOL_STARVATION_THRESHOLD
               value: {{ . | quote }}
             {{- end }}
+            {{- /* Leader write fencing by lease term (ADR 0106, #2329): on under the
+                 cluster profile, nothing rendered under legacy unless set. */}}
+            {{- $fence := include "leoflow.profiled" (dict "ctx" .ctx "value" .ctx.Values.config.scheduler.leaseFencing "cluster" true) }}
+            {{- if $fence }}
+            - name: LEOFLOW_SCHEDULER_LEASE_FENCING
+              value: {{ $fence | quote }}
+            {{- end }}
             {{- /* Buffered dispatch (ADR 0031, #127): the tick enqueues, workers create
                  the pods. Unset under the legacy profile keeps the server default,
                  synchronous dispatch; the cluster profile (#2323) buffers 512 with

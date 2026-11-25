@@ -1,0 +1,3 @@
+kind: Added
+body: 'Scheduler leadership takes a new lease term on every acquisition, and a leader steps down as soon as another replica holds a newer one (`term_superseded`). With `scheduler.lease_fencing` on (Helm `config.scheduler.leaseFencing`, on under the `cluster` profile), the scheduler writes through a dedicated pool whose sessions carry the term, a new leader ends the sessions of older terms, and the database refuses writes to runs and task instances from an older term, so a deposed leader cannot change them after a failover. Migration 060 adds the `scheduler_lease` table and the fence triggers. ADR 0106. ([#2329](https://github.com/dexadata/dexaflow/issues/2329))'
+time: 2026-11-25T15:00:00.000000+00:00

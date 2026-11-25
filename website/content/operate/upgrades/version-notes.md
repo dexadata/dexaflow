@@ -257,6 +257,7 @@ holds, then re-run.
 | 057 (UUIDv7 keys) | 57 | nothing: one transaction with a 5 s `lock_timeout`, rolled back, and every statement can be repeated | 56; retry when `dag_runs` and `task_instances` are quiet |
 | 058 (user session cutoff) | 58 | nothing: one transaction with a 5 s `lock_timeout`, rolled back, and every statement can be repeated | 57; retry when `users` is quiet |
 | 059 (tenant row security policies) | 59 | nothing: one transaction with a 5 s `lock_timeout`, rolled back, and every statement can be repeated | 58; retry when the tenant tables are quiet |
+| 060 (scheduler lease term) | 60 | nothing: one transaction with a 5 s `lock_timeout`, rolled back, and every statement can be repeated | 59; retry when `dag_runs` and `task_instances` are quiet |
 
 **How to run `migrate force`.** The hook image is the `dexaflow-migrate`
 wrapper plus the SQL files at `/migrations`; it takes the golang-migrate CLI's
@@ -1249,3 +1250,39 @@ since the last check are replayed when it is noticed, at most a second later.
 Every log stream also publishes from its own queue now, in batches of up to
 256 lines per Redis round trip, so a follower costs a chatty task far less
 receive rate than before, under either mode.
+
+## Upgrading to 0.6.0: leader writes fenced by a lease term
+
+0.6.0 applies one migration, 060.
+
+- **`060_scheduler_lease`** creates the one-row table `scheduler_lease`, the
+  function `dexaflow_fence_leader_term()` and a statement trigger
+  `dexaflow_fence_leader_term` on `dag_runs`, `task_instances`,
+  `task_instance_history` and `staging_volumes`
+  ([ADR 0106](/project/adrs/0106-leader-writes-fenced-by-a-lease-term/),
+  [#2329](https://github.com/dexadata/dexaflow/issues/2329)). The trigger does
+  nothing for a session that carries no leader term, which is every session of
+  0.5.x and of a 0.6.0 server with `scheduler.lease_fencing` off. Creating a
+  trigger locks its table for an instant; the transaction waits at most
+  5 seconds for each lock.
+
+Every 0.6.0 scheduler takes a new lease term each time it becomes leader and
+steps down when another replica holds a newer one (`term_superseded` in
+`dexaflow_scheduler_step_downs_total`). During a rolling upgrade a 0.5.x
+replica still leads by the advisory lock alone and never moves the term, so
+the overlap is as safe as it was.
+
+| Your release | What changes |
+|---|---|
+| `cluster` profile (every fresh install since 0.5.10), `config.scheduler.leaseFencing` unset | Fencing turns on: the scheduler writes through a dedicated pool of `database.schedulerMaxConns` connections, or 8 when unset, and a deposed leader's writes are refused. Count the extra connections against your Postgres budget ([connection budget](/operate/control-plane-ha/#postgres-connection-budget)). |
+| `legacy` profile | Nothing, unless you set `config.scheduler.leaseFencing: true`. |
+| Behind PgBouncer in transaction mode | Set `config.scheduler.leaseFencing: false`: the term is a session setting. |
+
+**Rolling back 0.6.0.** The 0.5.x control plane boots against schema 060 with
+the warning `database schema is ahead of this binary; proceeding`; it never
+tags a session, so the trigger lets it through. To drop the table and the
+triggers as well:
+
+```sh
+migrate -path migrations -database "$DATABASE_URL" goto 59
+```
