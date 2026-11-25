@@ -509,3 +509,86 @@ func TestNoLogsEphemeralStoreOnlyForAttemptsThatRan(t *testing.T) {
 		})
 	}
 }
+
+// TestStoredLogsStartWithTheFailureReason is #945: a task that ran, wrote logs
+// and then failed showed its logs and never the cause the control plane
+// recorded, because the reason reached the log view only when there were no
+// logs at all. It now heads the stored lines, where a long log cannot bury it.
+func TestStoredLogsStartWithTheFailureReason(t *testing.T) {
+	const reason = "the task container was OOMKilled (exit 137); raise the task's memory limit."
+	tasks := &fakeTaskRepo{tis: []domain.TaskInstance{{
+		TaskID: "extract", TryNumber: 1, State: domain.TaskStateFailed, FailureReason: reason,
+	}}}
+	rec := authGet(logsServerWithTasks(&fakeLogReader{body: "line one\nline two\n"}, tasks), http.MethodGet,
+		"/api/v2/dags/etl/dagRuns/run-1/taskInstances/extract/logs/1", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("logs = %d, want 200", rec.Code)
+	}
+	if want := "Failure reason: " + reason + "\nline one\nline two\n"; rec.Body.String() != want {
+		t.Errorf("body = %q, want the reason then the stored lines %q", rec.Body.String(), want)
+	}
+}
+
+// TestStoredLogsStructuredStartWithTheFailureReason covers the formats the SPA
+// requests: the reason is the last event, at error level.
+func TestStoredLogsStructuredStartWithTheFailureReason(t *testing.T) {
+	const reason = "the image could not be pulled: manifest unknown."
+	tasks := &fakeTaskRepo{tis: []domain.TaskInstance{{
+		TaskID: "extract", TryNumber: 2, State: domain.TaskStateFailed, FailureReason: reason,
+	}}}
+	srv := logsServerWithTasks(&fakeLogReader{body: "line one\n"}, tasks)
+	for _, accept := range []string{"application/json", "application/x-ndjson"} {
+		req := httptest.NewRequestWithContext(context.Background(), http.MethodGet,
+			"/api/v2/dags/etl/dagRuns/run-1/taskInstances/extract/logs/2", http.NoBody)
+		req.Header.Set("Authorization", "Bearer token")
+		req.Header.Set("Accept", accept)
+		rec := httptest.NewRecorder()
+		srv.ServeHTTP(rec, req)
+		type event struct {
+			Event string `json:"event"`
+			Level string `json:"level"`
+		}
+		var events []event
+		if accept == "application/json" {
+			var got struct {
+				Content []event `json:"content"`
+			}
+			if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+				t.Fatal(err)
+			}
+			events = got.Content
+		} else {
+			for _, line := range strings.Split(strings.TrimSpace(rec.Body.String()), "\n") {
+				var e event
+				if err := json.Unmarshal([]byte(line), &e); err != nil {
+					t.Fatalf("%s: %q is not JSON: %v", accept, line, err)
+				}
+				events = append(events, e)
+			}
+		}
+		if len(events) < 2 {
+			t.Fatalf("%s: events = %+v, want the stored line and the reason", accept, events)
+		}
+		if first := events[0]; first.Event != "Failure reason: "+reason || first.Level != "error" {
+			t.Errorf("%s: first event = %+v, want the reason at error level", accept, first)
+		}
+		if last := events[len(events)-1]; last.Event != "line one" {
+			t.Errorf("%s: last event = %+v, want the stored line", accept, last)
+		}
+	}
+}
+
+// TestStoredLogsDoNotBorrowAnotherAttemptsReason keeps the reason pinned to its
+// own attempt, and leaves an attempt with no recorded cause exactly as stored.
+func TestStoredLogsDoNotBorrowAnotherAttemptsReason(t *testing.T) {
+	tasks := &fakeTaskRepo{tis: []domain.TaskInstance{{
+		TaskID: "extract", TryNumber: 2, State: domain.TaskStateFailed, FailureReason: "exit 137",
+	}}}
+	srv := logsServerWithTasks(&fakeLogReader{body: "line one\n"}, tasks)
+	for _, try := range []string{"1", "3"} {
+		rec := authGet(srv, http.MethodGet, "/api/v2/dags/etl/dagRuns/run-1/taskInstances/extract/logs/"+try, "")
+		if rec.Body.String() != "line one\n" {
+			t.Errorf("try %s: body = %q, want the stored lines only", try, rec.Body.String())
+		}
+	}
+}

@@ -221,6 +221,9 @@ func run() int {
 		// message), set by the executor's podEnv; empty outside a pod (ADR 0052).
 		TerminationLogPath: os.Getenv("LEOFLOW_TERMINATION_LOG_PATH"),
 		HeartbeatInterval:  agent.DefaultHeartbeatInterval,
+		// Stop the task once the control plane has been unreachable for as long
+		// as the attempt's credential lives (#2430).
+		MaxFailedHeartbeats: agent.DefaultMaxFailedHeartbeats,
 		// The heartbeat loop swaps a renewed bearer into this source (ADR 0055
 		// Fix #4); the per-RPC credential reads it on every subsequent call.
 		Token: tokens,
@@ -301,10 +304,11 @@ func runWarm(ctx context.Context, streamClient agentv1.AgentServiceClient, strea
 		// The pod's own name, injected by BuildWarmPod via the downward API. Sent
 		// up in WorkerRegister so the control plane binds a started attempt to it
 		// as the durable warm_worker_id (ADR 0058 N1d-a1). Empty off-cluster.
-		PodName:            os.Getenv("LEOFLOW_POD_NAME"),
-		ScratchDir:         scratchDir,
-		TerminationLogPath: os.Getenv("LEOFLOW_TERMINATION_LOG_PATH"),
-		HeartbeatInterval:  agent.DefaultHeartbeatInterval,
+		PodName:             os.Getenv("LEOFLOW_POD_NAME"),
+		ScratchDir:          scratchDir,
+		TerminationLogPath:  os.Getenv("LEOFLOW_TERMINATION_LOG_PATH"),
+		HeartbeatInterval:   agent.DefaultHeartbeatInterval,
+		MaxFailedHeartbeats: agent.DefaultMaxFailedHeartbeats,
 		// Warm-pool Hole B: on a not-leader rejection, re-dial the STREAM connection
 		// so a fresh Service backend can reach the scheduler leader (a single gRPC
 		// connection sticks to one backend). The work connection is untouched. The

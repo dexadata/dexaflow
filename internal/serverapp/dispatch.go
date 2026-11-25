@@ -308,10 +308,11 @@ func setupK8sDispatch(ctx context.Context, cfg *config.ServerConfig, sched *sche
 	// setupSubprocessDispatch, gated on agent process liveness instead (#916).
 	// The reaper's live pod reads and deletes go through the maintenance client,
 	// which is podExec's own client unless maintenance limits are set.
-	var reapPods executor.PodManager = podExec
+	reapExec := podExec
 	if mcs != cs {
-		reapPods = executor.NewKubernetesExecutor(mcs, cfg.Executor.TaskNamespace)
+		reapExec = executor.NewKubernetesExecutor(mcs, cfg.Executor.TaskNamespace)
 	}
+	var reapPods executor.PodManager = reapExec
 	// The destructive gate closes the moment this instance stops leading or
 	// starts stepping down: together with the run-context cancel, this keeps a
 	// draining leader from marking TIs failed or deleting pods on its way out,
@@ -354,7 +355,8 @@ func setupK8sDispatch(ctx context.Context, cfg *config.ServerConfig, sched *sche
 	// (ADR 0052 amendment, part 2). Lite never reaches this and keeps
 	// confirming at mark time.
 	store.SetProvisionalInfraMarks(true)
-	startMaintenance(ctx, mcs, cfg.Executor.TaskNamespace, execStore, store, overrideObservers{metrics: metrics, sink: markers}, reaper, sched.IsLeading, logger, snapshotter, settledRunCollection(cfg.Executor, execStore))
+	startMaintenance(ctx, mcs, cfg.Executor.TaskNamespace, execStore, store, overrideObservers{metrics: metrics, sink: markers}, reaper, sched.IsLeading, logger, snapshotter, settledRunCollection(cfg.Executor, execStore),
+		abandonedPods{attempts: store, stopper: reapExec})
 	startStagingGC(ctx, mcs, cfg.Executor.TaskNamespace, store, sched.IsLeading, logger, metrics)
 	// Warm-pool reconciler (ADR 0058 N1b2b, model A2): keeps min_idle warm workers
 	// ready per active dag_version. Started ONLY when warm pools are enabled, with

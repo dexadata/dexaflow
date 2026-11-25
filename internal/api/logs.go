@@ -29,8 +29,11 @@ type LogReader interface {
 // tails live lines. The caller has already parsed the try number (the route is a
 // catch-all shared with the single task-instance endpoint).
 //
-// tasks is consulted only on the no-logs path, to explain an empty log view; it
-// may be nil, which keeps that view exactly as it was.
+// tasks supplies the failure reason the control plane recorded for this attempt
+// (#945): it explains an empty log view, and it heads a stored log as an
+// error-level "Failure reason:" line, so a long log does not bury it, because the log view is the one place in
+// the stock Airflow UI an operator already looks when an attempt failed. It may
+// be nil, which serves the stored logs exactly as written.
 func serveLogs(c *gin.Context, reader LogReader, tasks TaskInstanceRepository, try int, ephemeralLogs bool) {
 	if reader == nil {
 		AbortProblem(c, http.StatusNotFound, "not found", "logs are not available")
@@ -55,21 +58,31 @@ func serveLogs(c *gin.Context, reader LogReader, tasks TaskInstanceRepository, t
 		}
 	}()
 	stored := &lastLineTracker{r: rc}
+	var header []structuredLogEvent
+	if reason, _ := attemptDetails(c, tasks, try); reason != "" {
+		header = []structuredLogEvent{{Event: failureReasonPrefix + reason, Level: "error"}}
+	}
 	switch negotiateLogFormat(c) {
 	case logFormatNDJSON:
-		serveNdjsonLogs(c, stored, try)
+		serveNdjsonLogs(c, stored, try, header)
 		if c.Query("follow") == "true" {
 			tailNdjson(c, reader, try, stored.served())
 		}
 		return
 	case logFormatJSON:
-		serveStructuredLogs(c, rc, try)
+		serveStructuredLogs(c, rc, try, header)
 		return
 	case logFormatPlain:
 		// fall through to the plain-text stream below.
 	}
 	c.Header("Content-Type", "text/plain; charset=utf-8")
 	c.Status(http.StatusOK)
+	for _, e := range header {
+		if _, werr := c.Writer.WriteString(e.Event + "\n"); werr != nil {
+			slog.Warn("streaming logs to client", "error", werr)
+			return
+		}
+	}
 	// Logs are stored as JSONL; the plain-text view emits just each message
 	// (DecodeLine tolerates legacy plain lines too).
 	scanner := bufio.NewScanner(stored)
@@ -202,6 +215,10 @@ func serveNoLogs(c *gin.Context, tasks TaskInstanceRepository, try int, ephemera
 	}
 	c.String(http.StatusOK, body.String())
 }
+
+// failureReasonPrefix labels the recorded cause where it heads stored log
+// lines, so it does not read as one more line the task wrote.
+const failureReasonPrefix = "Failure reason: "
 
 // ephemeralLogsMsg explains an empty log view for an attempt that ran while task
 // logs live on a pod's emptyDir (#1024): a control-plane restart dropped them, or

@@ -225,6 +225,12 @@ func (r *Reaper) mayReap(ctx context.Context) bool {
 	return true
 }
 
+// GateOpen is the reapers' destructive gate (mayReap) for another pass that
+// stops pods on the leader's behalf, the reconciler's abandoned pod teardown
+// (#2430): open only while ctx is live, this instance leads and is not
+// stepping down.
+func (r *Reaper) GateOpen(ctx context.Context) bool { return r.mayReap(ctx) }
+
 // SetLogSink wires the sink the agent-lost, pod-lost and warm-worker-lost
 // reapers use to append a final "killed: <reason>" marker to a reaped
 // attempt's log stream, so a killed task's log ends with the reason instead of
