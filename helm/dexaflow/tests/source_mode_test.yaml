@@ -22,9 +22,9 @@ tests:
     template: deployment.yaml
     asserts:
       - notExists:
-          path: spec.template.spec.containers[0].env[?(@.name == "LEOFLOW_EXECUTION_SOURCE_MODE_ENABLED")]
+          path: spec.template.spec.containers[0].env[?(@.name == "DEXAFLOW_EXECUTION_SOURCE_MODE_ENABLED")]
       - notExists:
-          path: spec.template.spec.containers[0].env[?(@.name == "LEOFLOW_EXECUTION_SOURCE_MODE_IMAGE")]
+          path: spec.template.spec.containers[0].env[?(@.name == "DEXAFLOW_EXECUTION_SOURCE_MODE_IMAGE")]
 
   # The server ignores the image while the mode is off, so the chart does too.
   - it: renders no source-mode env while off, even with an image set
@@ -33,9 +33,9 @@ tests:
       execution.sourceMode.image: ghcr.io/dexadata/dexaflow-runtime:0.5.3@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
     asserts:
       - notExists:
-          path: spec.template.spec.containers[0].env[?(@.name == "LEOFLOW_EXECUTION_SOURCE_MODE_ENABLED")]
+          path: spec.template.spec.containers[0].env[?(@.name == "DEXAFLOW_EXECUTION_SOURCE_MODE_ENABLED")]
       - notExists:
-          path: spec.template.spec.containers[0].env[?(@.name == "LEOFLOW_EXECUTION_SOURCE_MODE_IMAGE")]
+          path: spec.template.spec.containers[0].env[?(@.name == "DEXAFLOW_EXECUTION_SOURCE_MODE_IMAGE")]
 
   - it: renders both variables when on with a digest-pinned image
     template: deployment.yaml
@@ -46,12 +46,12 @@ tests:
       - contains:
           path: spec.template.spec.containers[0].env
           content:
-            name: LEOFLOW_EXECUTION_SOURCE_MODE_ENABLED
+            name: DEXAFLOW_EXECUTION_SOURCE_MODE_ENABLED
             value: "true"
       - contains:
           path: spec.template.spec.containers[0].env
           content:
-            name: LEOFLOW_EXECUTION_SOURCE_MODE_IMAGE
+            name: DEXAFLOW_EXECUTION_SOURCE_MODE_IMAGE
             value: ghcr.io/dexadata/dexaflow-runtime:0.5.3@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
 
   # Register (api) and dispatch (scheduler) both read the setting, so a split
@@ -69,13 +69,13 @@ tests:
       - contains:
           path: spec.template.spec.containers[0].env
           content:
-            name: LEOFLOW_EXECUTION_SOURCE_MODE_IMAGE
+            name: DEXAFLOW_EXECUTION_SOURCE_MODE_IMAGE
             value: registry.local/runtime@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
         documentIndex: 0
       - contains:
           path: spec.template.spec.containers[0].env
           content:
-            name: LEOFLOW_EXECUTION_SOURCE_MODE_IMAGE
+            name: DEXAFLOW_EXECUTION_SOURCE_MODE_IMAGE
             value: registry.local/runtime@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
         documentIndex: 1
 
@@ -123,7 +123,7 @@ tests:
       execution.sourceMode: null
     asserts:
       - notExists:
-          path: spec.template.spec.containers[0].env[?(@.name == "LEOFLOW_EXECUTION_SOURCE_MODE_ENABLED")]
+          path: spec.template.spec.containers[0].env[?(@.name == "DEXAFLOW_EXECUTION_SOURCE_MODE_ENABLED")]
 
   - it: renders both split Deployments when values without sourceMode are reused
     template: deployment.yaml
@@ -135,7 +135,7 @@ tests:
       - hasDocuments:
           count: 2
       - notExists:
-          path: spec.template.spec.containers[0].env[?(@.name == "LEOFLOW_EXECUTION_SOURCE_MODE_ENABLED")]
+          path: spec.template.spec.containers[0].env[?(@.name == "DEXAFLOW_EXECUTION_SOURCE_MODE_ENABLED")]
 
   # ADR 0095: warm pools for source-mode versions are a separate opt-in, off
   # by default, and only reach the server with the mode itself on.
@@ -146,7 +146,7 @@ tests:
       execution.sourceMode.image: ghcr.io/dexadata/dexaflow-runtime:0.5.3@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
     asserts:
       - notExists:
-          path: spec.template.spec.containers[0].env[?(@.name == "LEOFLOW_EXECUTION_SOURCE_MODE_WARM_POOLS")]
+          path: spec.template.spec.containers[0].env[?(@.name == "DEXAFLOW_EXECUTION_SOURCE_MODE_WARM_POOLS")]
 
   - it: renders the warm-pools variable when on with the mode on
     template: deployment.yaml
@@ -158,7 +158,7 @@ tests:
       - contains:
           path: spec.template.spec.containers[0].env
           content:
-            name: LEOFLOW_EXECUTION_SOURCE_MODE_WARM_POOLS
+            name: DEXAFLOW_EXECUTION_SOURCE_MODE_WARM_POOLS
             value: "true"
 
   - it: renders no warm-pools variable while the mode is off
@@ -167,4 +167,4 @@ tests:
       execution.sourceMode.warmPools: true
     asserts:
       - notExists:
-          path: spec.template.spec.containers[0].env[?(@.name == "LEOFLOW_EXECUTION_SOURCE_MODE_WARM_POOLS")]
+          path: spec.template.spec.containers[0].env[?(@.name == "DEXAFLOW_EXECUTION_SOURCE_MODE_WARM_POOLS")]

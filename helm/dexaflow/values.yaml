@@ -51,7 +51,7 @@ split:
 
 # -- Namespace where the control plane creates task pods + per-run staging PVCs.
 # The chart wires this into both the executor RBAC (Role/RoleBinding) AND the
-# server (LEOFLOW_EXECUTOR_TASK_NAMESPACE), so the server acts on exactly the
+# server (DEXAFLOW_EXECUTOR_TASK_NAMESPACE), so the server acts on exactly the
 # namespace it is granted (#480). Empty (the default) means
 # the release namespace on a fresh install. On `helm upgrade`, empty keeps the
 # namespace the running control plane already uses (charts before 0.5.4 defaulted
@@ -139,7 +139,7 @@ executor:
       memory: ""
     # -- Default size + StorageClass for the per-run staging volume when the DAG
     # enabled staging without pinning them (#743). Env-only override path: the
-    # chart mounts no server config file, so these render as LEOFLOW_* env. Empty
+    # chart mounts no server config file, so these render as DEXAFLOW_* env. Empty
     # leaves the PVC on the cluster's default StorageClass and an unset size.
     staging:
       # -- Default staging PVC size (e.g. `10Gi`). Empty = unset.
@@ -212,15 +212,15 @@ service:
   # -- Service annotations (e.g. cloud LB controller hints, ExternalDNS).
   annotations: {}
 
-# config maps to LEOFLOW_* env. Non-secret settings live here; secrets below.
+# config maps to DEXAFLOW_* env. Non-secret settings live here; secrets below.
 ui:
   # -- How often the bundled SPA re-polls DAG, run and task-instance state, in seconds. Empty uses the server's production-safe default of 30s. It is POLLING, so this multiplies request and query load by the number of open browser tabs, not by the number of users: 5s is thirty tabs' worth of traffic at 30s, and 1s is what `dexaflow lite` uses precisely because Lite is one person against a local database. Lower it when operators watch runs progress and the metadata database has room; the honest way to choose is to measure one refresh cycle against your own DAG count rather than to copy Lite (#1196). A zero or negative value is not an error and not a fast refresh: the server falls back to 30s, deliberately, so a misconfigured variable cannot drop the interval to 0 and hammer the database.
   autoRefreshIntervalSeconds: ""
-  # -- Theme for the bundled UI, in the shape of Airflow's `[api] theme` (#1289): `tokens` (Chakra design tokens, for example `colors.brand` with shades 50 to 950 and `fonts.heading`/`fonts.body`/`fonts.mono`), `globalCss`, `icon` and `icon_dark_mode`. Rendered as compact JSON in `LEOFLOW_UI_THEME`. Empty (the default) keeps the stock look. The server refuses to boot on an unknown top-level key, or an icon that is not an http(s) URL or a root-relative path.
+  # -- Theme for the bundled UI, in the shape of Airflow's `[api] theme` (#1289): `tokens` (Chakra design tokens, for example `colors.brand` with shades 50 to 950 and `fonts.heading`/`fonts.body`/`fonts.mono`), `globalCss`, `icon` and `icon_dark_mode`. Rendered as compact JSON in `DEXAFLOW_UI_THEME`. Empty (the default) keeps the stock look. The server refuses to boot on an unknown top-level key, or an icon that is not an http(s) URL or a root-relative path.
   theme: {}
   # -- Favicon URL for the UI, http(s) or root-relative. Empty keeps the stock icon.
   faviconUrl: ""
-  # -- Extra stylesheets every UI page loads, typically the web fonts a `theme` names (for example a Google Fonts CSS URL). Each must be http(s) or root-relative and contain no comma, because the list travels comma-joined in `LEOFLOW_UI_STYLESHEET_URLS`.
+  # -- Extra stylesheets every UI page loads, typically the web fonts a `theme` names (for example a Google Fonts CSS URL). Each must be http(s) or root-relative and contain no comma, because the list travels comma-joined in `DEXAFLOW_UI_STYLESHEET_URLS`.
   stylesheetUrls: []
   homeLink:
     # -- Text of an optional link from the UI back to the platform you serve it from, such as an internal portal (#1290). Shown on every page at the bottom-left, opens in the same tab. Set it together with `url`.
@@ -254,18 +254,18 @@ config:
     # -- How long a task held only by its pool waits before the pool is reserved for it (`scheduler.pool_starvation_threshold`, ADR 0066), so smaller tasks cannot keep a larger one out forever. A duration such as `2m`; `0s` disables it. Empty renders nothing and keeps the server default of 60s.
     poolStarvationThreshold: ""
   cors:
-    # -- CORS origins the API accepts (`server.cors.allowed_origins`). Dexaflow serves its UI same-origin with the API, so most deployments need no entry here. Empty (the default) renders nothing and leaves the server's own default in place, which is what every install has actually been running: this key was documented but read by no template until #1144, so whatever was set here was silently ignored. It now takes effect, so check the value you have. The previous documented default of `["*"]` is not restored and is now rejected at render time, because rendering it would have widened CORS to every origin on the next `helm upgrade` for anyone who only ever copied it out of this file; set `LEOFLOW_SERVER_CORS_ALLOWED_ORIGINS` through `extraEnv` if you want the wildcard deliberately. Rendered as a comma-joined `LEOFLOW_SERVER_CORS_ALLOWED_ORIGINS`, which viper splits back into a list.
+    # -- CORS origins the API accepts (`server.cors.allowed_origins`). Dexaflow serves its UI same-origin with the API, so most deployments need no entry here. Empty (the default) renders nothing and leaves the server's own default in place, which is what every install has actually been running: this key was documented but read by no template until #1144, so whatever was set here was silently ignored. It now takes effect, so check the value you have. The previous documented default of `["*"]` is not restored and is now rejected at render time, because rendering it would have widened CORS to every origin on the next `helm upgrade` for anyone who only ever copied it out of this file; set `DEXAFLOW_SERVER_CORS_ALLOWED_ORIGINS` through `extraEnv` if you want the wildcard deliberately. Rendered as a comma-joined `DEXAFLOW_SERVER_CORS_ALLOWED_ORIGINS`, which viper splits back into a list.
     allowedOrigins: []
-  # -- Proxy IPs/CIDRs whose `X-Forwarded-For` the server honors when resolving the client IP (`server.trusted_proxies`). Empty (default) trusts NO proxy, so a spoofed XFF cannot forge the client IP. Behind an ingress this MUST be set to the ingress/pod CIDR, otherwise every request is attributed to the ingress IP and the per-IP login rate-limit locks out the whole deployment on a few bad logins (#725). Rendered as a comma-joined `LEOFLOW_SERVER_TRUSTED_PROXIES` env var, which viper splits into a list.
+  # -- Proxy IPs/CIDRs whose `X-Forwarded-For` the server honors when resolving the client IP (`server.trusted_proxies`). Empty (default) trusts NO proxy, so a spoofed XFF cannot forge the client IP. Behind an ingress this MUST be set to the ingress/pod CIDR, otherwise every request is attributed to the ingress IP and the per-IP login rate-limit locks out the whole deployment on a few bad logins (#725). Rendered as a comma-joined `DEXAFLOW_SERVER_TRUSTED_PROXIES` env var, which viper splits into a list.
   trustedProxies: []
   alerts:
     # -- Refuse on-failure alert requests to loopback, private, link-local (including the `169.254.169.254` metadata address), shared, unspecified, multicast and broadcast addresses (`scheduler.alerts.block_private_destinations`). An alert's URL and headers come from a tenant's connection, so turn this on when tenants that do not trust each other share the engine. The check runs on the address actually dialed, after DNS resolution and on every redirect; with it on, alert requests ignore `HTTP_PROXY`/`HTTPS_PROXY`. Off by default, so an existing in-cluster alert endpoint keeps working.
     blockPrivateDestinations: false
-    # -- CIDRs or single addresses exempted from `blockPrivateDestinations` (`scheduler.alerts.allowed_cidrs`), e.g. an on-premises chat server. Rendered as a comma-joined `LEOFLOW_SCHEDULER_ALERTS_ALLOWED_CIDRS`. An invalid entry fails server startup.
+    # -- CIDRs or single addresses exempted from `blockPrivateDestinations` (`scheduler.alerts.allowed_cidrs`), e.g. an on-premises chat server. Rendered as a comma-joined `DEXAFLOW_SCHEDULER_ALERTS_ALLOWED_CIDRS`. An invalid entry fails server startup.
     allowedCIDRs: []
   # -- Make the tenant-facing pool API (`/api/v2/pools`) read-only (`server.pools_read_only`). Create, resize and delete answer 403 for every role, tenant `admin` included; list and get keep working. Turn it on when one engine serves many tenants and the platform operator sizes each tenant's pools, so no tenant can raise its own slot budget. It also makes a task naming a pool its tenant has not defined draw on `default_pool` instead of running unlimited. False (the default) renders nothing and keeps pools writable under `write:pool`.
   poolsReadOnly: false
-  # -- Start a DAG paused when it is registered for the first time (`dags_are_paused_at_creation`, Airflow's setting of the same name), so its schedule creates no run until someone unpauses it. A DAG's own `is_paused_upon_creation` wins over it. Applies only on creation: a redeploy never pauses or unpauses an existing DAG. Set `false` to register new DAGs active, as releases before 0.5.4 did. Rendered as `LEOFLOW_DAGS_ARE_PAUSED_AT_CREATION`.
+  # -- Start a DAG paused when it is registered for the first time (`dags_are_paused_at_creation`, Airflow's setting of the same name), so its schedule creates no run until someone unpauses it. A DAG's own `is_paused_upon_creation` wins over it. Applies only on creation: a redeploy never pauses or unpauses an existing DAG. Set `false` to register new DAGs active, as releases before 0.5.4 did. Rendered as `DEXAFLOW_DAGS_ARE_PAUSED_AT_CREATION`.
   dagsArePausedAtCreation: true
   # -- gRPC address task pods dial back to reach the control plane. Defaults to the in-cluster Service DNS on `ports.grpc` when empty. Override for cross-cluster or external task pods.
   agentControlPlaneAddr: ""
@@ -353,7 +353,7 @@ redis:
   url: ""
   # -- Name of a Secret with key `redisUrl` (takes precedence over `url`).
   existingSecret: ""
-  # -- Name of a ConfigMap with a `ca.crt` key containing the PEM CA bundle the client trusts when negotiating TLS to a `rediss://` URL (#312). Required when the managed-Redis server cert is signed by a provider / per-instance CA that is not in the system roots — Memorystore SERVER_AUTHENTICATION, ElastiCache in-transit encryption, Azure Cache for Redis. Mounted read-only at `/etc/leoflow/redis-ca` and exposed to the server via `LEOFLOW_REDIS_CA_FILE`. Leave empty when Redis uses a public CA or no TLS.
+  # -- Name of a ConfigMap with a `ca.crt` key containing the PEM CA bundle the client trusts when negotiating TLS to a `rediss://` URL (#312). Required when the managed-Redis server cert is signed by a provider / per-instance CA that is not in the system roots: Memorystore SERVER_AUTHENTICATION, ElastiCache in-transit encryption, Azure Cache for Redis. Mounted read-only at `/etc/leoflow/redis-ca` and exposed to the server via `DEXAFLOW_REDIS_CA_FILE`. Leave empty when Redis uses a public CA or no TLS.
   caConfigMap: ""
   # -- Refuse to boot unless Redis runs `maxmemory-policy noeviction`, or when the policy cannot be read (#2354). XCom values carry a TTL, so a `volatile-*` policy, the default of several managed services, evicts them first under memory pressure and the downstream task fails with "not found". Off, an unsafe policy logs a warning at boot, sets `dexaflow_redis_eviction_policy_safe` to 0 and fires `DexaflowRedisEvictionPolicyUnsafe`.
   requireNoEviction: false
@@ -392,7 +392,7 @@ auth:
   # CI pipelines that deploy with their provider's OIDC token instead of a
   # stored deploy token (ADR 0092, #1882). Off until `issuers` lists an entry.
   ciOidc:
-    # -- Trusted CI issuers, one entry per provider and tenant, rendered as JSON into `LEOFLOW_AUTH_CI_OIDC_ISSUERS` (`auth.ci_oidc.issuers`). Each entry has `name`, `provider` (`github`, `gitlab`, `cloudbuild` or `other`), `issuer` (the exact `iss`), `audience`, `tenant` (fixed here, never read from a claim), optional `jwks_url` and `max_lifetime_seconds`, and `rules`: `claims` (exact values or `path.Match` patterns, including one identity claim of the provider) mapped to a non-admin `role` of the tenant and optional `scopes`. See the operator guide, /operate/cicd-deploy/credentials/#deploying-without-a-stored-token-ci-oidc. Empty (the default) leaves the exchange off.
+    # -- Trusted CI issuers, one entry per provider and tenant, rendered as JSON into `DEXAFLOW_AUTH_CI_OIDC_ISSUERS` (`auth.ci_oidc.issuers`). Each entry has `name`, `provider` (`github`, `gitlab`, `cloudbuild` or `other`), `issuer` (the exact `iss`), `audience`, `tenant` (fixed here, never read from a claim), optional `jwks_url` and `max_lifetime_seconds`, and `rules`: `claims` (exact values or `path.Match` patterns, including one identity claim of the provider) mapped to a non-admin `role` of the tenant and optional `scopes`. See the operator guide, /operate/cicd-deploy/credentials/#deploying-without-a-stored-token-ci-oidc. Empty (the default) leaves the exchange off.
     issuers: []
     # -- Lifetime, in seconds, of the session a CI token is exchanged for, 300 to 43200 (`auth.ci_oidc.session_ttl_seconds`).
     sessionTtlSeconds: 3600
@@ -446,12 +446,12 @@ auth:
   # `serverDefaults`, and these two are deliberately not registered (a Google `hd`
   # key is a dotted domain, and viper's "." delimiter would split it into nested
   # maps and fail to decode, internal/config/server.go, #826). The server reads
-  # them straight from the YAML file named by `LEOFLOW_CONFIG`. The chart had no
+  # them straight from the YAML file named by `DEXAFLOW_CONFIG`. The chart had no
   # such file and no volume to put one in, so `auth.provider: oidc` could only ever
   # fail boot closed on the missing tenant pin (#1143).
   #
   # So the two maps (and ONLY the two maps) travel in a ConfigMap that the chart
-  # mounts read-only at /etc/leoflow/oidc and points `LEOFLOW_CONFIG` at. Every
+  # mounts read-only at /etc/leoflow/oidc and points `DEXAFLOW_CONFIG` at. Every
   # other key travels as an env var, the way the rest of this chart delivers server
   # settings. That the file is PARTIAL is the point, not an omission: viper ranks
   # env above file, and a key absent from a config file keeps the value it already
@@ -537,67 +537,70 @@ execution:
   warmRequireAttemptHomeSweep: false
   # Cluster source mode (ADR 0067): a DAG version whose `image` is exactly `sourceMode.image` and that carries its `dag.py` as `source` runs from that file on this runtime image, with no image build. See the docs page "Source mode" for what such a DAG can and cannot do, and exclude the `leoflow.io/dag-source` pod annotation in your log shipper before turning it on.
   sourceMode:
-    # -- Turn Cluster source mode on (ADR 0067). OFF by default: Cluster ignores a version's source and nothing below reaches the server. Renders `LEOFLOW_EXECUTION_SOURCE_MODE_ENABLED` and `LEOFLOW_EXECUTION_SOURCE_MODE_IMAGE` only when on. Requires `image`; the chart fails the render otherwise.
+    # -- Turn Cluster source mode on (ADR 0067). OFF by default: Cluster ignores a version's source and nothing below reaches the server. Renders `DEXAFLOW_EXECUTION_SOURCE_MODE_ENABLED` and `DEXAFLOW_EXECUTION_SOURCE_MODE_IMAGE` only when on. Requires `image`; the chart fails the render otherwise.
     enabled: false
     # -- The runtime image source-mode versions name as their `image`, pinned by a full digest: `name@sha256:` and 64 lowercase hex characters. A source-mode version must name this exact string as its image, byte for byte (pass it to `dexaflow compile` as the image). Required when `enabled`; the chart refuses a tag alone or a short digest, as the server does at boot. Ignored while `enabled` is false.
     image: ""
-    # -- Let source-mode versions run on warm workers (ADR 0095): the control plane sends the version's `dag.py` with each warm assignment, and the worker runs the attempt from it, as a dedicated source-mode pod runs from its projected `dag.py`. OFF by default: source-mode versions run on dedicated pods. Needs `warmPoolsEnabled` and a runtime `image` whose agent is from 0.5.7 or later; a warm worker on an older agent is never given a source-mode attempt, which then takes a dedicated pod, and is logged and counted in `dexaflow_scheduler_decisions_total{decision_type="warm_worker_no_source_delivery"}`. Rendered as `LEOFLOW_EXECUTION_SOURCE_MODE_WARM_POOLS` only when on. Ignored while `enabled` is false.
+    # -- Let source-mode versions run on warm workers (ADR 0095): the control plane sends the version's `dag.py` with each warm assignment, and the worker runs the attempt from it, as a dedicated source-mode pod runs from its projected `dag.py`. OFF by default: source-mode versions run on dedicated pods. Needs `warmPoolsEnabled` and a runtime `image` whose agent is from 0.5.7 or later; a warm worker on an older agent is never given a source-mode attempt, which then takes a dedicated pod, and is logged and counted in `dexaflow_scheduler_decisions_total{decision_type="warm_worker_no_source_delivery"}`. Rendered as `DEXAFLOW_EXECUTION_SOURCE_MODE_WARM_POOLS` only when on. Ignored while `enabled` is false.
     warmPools: false
   # -- Refill warm pools on events instead of every 30s: read the warm fleet from a pod informer instead of a LIST per tick, react at once when a warm pod is deleted, fails or is claimed, and create replacements in parallel (up to 4). The periodic tick stays as a backstop. Ignored while `warmPoolsEnabled` is false.
   warmPoolEventRefill: false
   # Dispatch admission hooks (ADR 0100): an endpoint of yours sees every task attempt before it gets a credential or a pod, and admits it (optionally changing its node selector, tolerations, priority class, labels and annotations), holds it or refuses it with a reason the task shows. See the docs page "Admission hooks". Nothing below reaches the server while `webhook.url` is empty.
   admission:
     webhook:
-      # -- Endpoint the control plane POSTs each attempt to. `https`, unless the host is loopback; the chart fails the render otherwise, as the server refuses to start. Empty (the default) installs no hook. Rendered as `LEOFLOW_EXECUTION_ADMISSION_WEBHOOK_URL` only when set.
+      # -- Endpoint the control plane POSTs each attempt to. `https`, unless the host is loopback; the chart fails the render otherwise, as the server refuses to start. Empty (the default) installs no hook. Rendered as `DEXAFLOW_EXECUTION_ADMISSION_WEBHOOK_URL` only when set.
       url: ""
       # -- Name of a ConfigMap with key `ca.crt` holding the PEM bundle the endpoint's certificate must chain to, mounted at `/etc/leoflow/admission-ca/ca.crt` on the roles that dispatch. Read at boot, so a changed bundle takes a restart. Empty uses the system roots. Ignored while `url` is empty.
       caConfigMap: ""
       # -- Name of a Secret with key `token` holding a bearer token sent as `Authorization: Bearer`, mounted at `/etc/leoflow/admission-token/token` on the roles that dispatch. The server reads it on every call, so a rotated Secret is picked up without a restart. Empty sends none. Ignored while `url` is empty.
       tokenSecret: ""
-    # -- How long the control plane waits for the endpoint, in `ms` or whole `s`, from `1ms` to `5s`; the chart refuses anything else, as the server does at boot. Empty keeps the server default, `500ms`. Rendered as `LEOFLOW_EXECUTION_ADMISSION_TIMEOUT` only with a `url`.
+    # -- How long the control plane waits for the endpoint, in `ms` or whole `s`, from `1ms` to `5s`; the chart refuses anything else, as the server does at boot. Empty keeps the server default, `500ms`. Rendered as `DEXAFLOW_EXECUTION_ADMISSION_TIMEOUT` only with a `url`.
     timeout: ""
-    # -- Admit an attempt unchanged when the endpoint errors, times out or is skipped after repeated failures, instead of holding it until the endpoint is back (and failing it after 15 minutes). The endpoint's own hold or refusal always applies. Rendered as `LEOFLOW_EXECUTION_ADMISSION_FAIL_OPEN` only when on with a `url`.
+    # -- Admit an attempt unchanged when the endpoint errors, times out or is skipped after repeated failures, instead of holding it until the endpoint is back (and failing it after 15 minutes). The endpoint's own hold or refusal always applies. Rendered as `DEXAFLOW_EXECUTION_ADMISSION_FAIL_OPEN` only when on with a `url`.
     failOpen: false
 
 # Cluster deploy defaults (#1704): what `dexaflow deploy` uses on this cluster for whatever the project's `dexaflow.yaml`, its workspace, its target and the person's CLI config leave unset, so a platform team states its registry once instead of in every repository. Served to signed-in users who may read DAGs on `GET /api/v2/deployDefaults`, read by `dexaflow deploy` and `dexaflow build --push`; the deploy prints where each value came from. None of these is a secret: never put registry credentials here.
 deploy:
   defaults:
-    # -- Image prefix a deploy pushes to, such as `ghcr.io/acme`: a host, an optional port and a path, lowercase, with no scheme, credentials, tag or trailing `/`. The image name defaults to the `dag_id`. Empty (the default) advertises none. Rendered as `LEOFLOW_DEPLOY_DEFAULTS_REGISTRY` only when set. The chart refuses a scheme, credentials, a tag, capitals, whitespace, quotes, a backslash, `$` or a trailing `/`, as the server does at boot.
+    # -- Image prefix a deploy pushes to, such as `ghcr.io/acme`: a host, an optional port and a path, lowercase, with no scheme, credentials, tag or trailing `/`. The image name defaults to the `dag_id`. Empty (the default) advertises none. Rendered as `DEXAFLOW_DEPLOY_DEFAULTS_REGISTRY` only when set. The chart refuses a scheme, credentials, a tag, capitals, whitespace, quotes, a backslash, `$` or a trailing `/`, as the server does at boot.
     registry: ""
-    # -- Platforms a deploy builds for, each `os/arch` or `os/arch/variant` (`[linux/amd64, linux/arm64]`). Empty (the default) leaves the built-in `linux/amd64`. A list (with `--set`, `deploy.defaults.platforms={linux/amd64,linux/arm64}`). Rendered comma-joined as `LEOFLOW_DEPLOY_DEFAULTS_PLATFORMS` only when set. The chart refuses a value that is not a list or a platform outside that form, as the server does at boot.
+    # -- Platforms a deploy builds for, each `os/arch` or `os/arch/variant` (`[linux/amd64, linux/arm64]`). Empty (the default) leaves the built-in `linux/amd64`. A list (with `--set`, `deploy.defaults.platforms={linux/amd64,linux/arm64}`). Rendered comma-joined as `DEXAFLOW_DEPLOY_DEFAULTS_PLATFORMS` only when set. The chart refuses a value that is not a list or a platform outside that form, as the server does at boot.
     platforms: []
-    # -- Base image of the generated Dockerfile for projects that set no `base_image`. Empty (the default) leaves the built-in one. Rendered as `LEOFLOW_DEPLOY_DEFAULTS_BASE_IMAGE` only when set. The chart refuses whitespace, quotes, a backslash or `$`, which `FROM` cannot carry, as the server does at boot.
+    # -- Base image of the generated Dockerfile for projects that set no `base_image`. Empty (the default) leaves the built-in one. Rendered as `DEXAFLOW_DEPLOY_DEFAULTS_BASE_IMAGE` only when set. The chart refuses whitespace, quotes, a backslash or `$`, which `FROM` cannot carry, as the server does at boot.
     baseImage: ""
-    # -- Advertise `execution.sourceMode.image` to `dexaflow deploy` as the runtime image for source mode (#1772): a deploy to this cluster that names no runtime image of its own then registers the DAG's `dag.py` on it, with no build and no push, and refuses a DAG that needs a build. The value served is the server's own runtime image, so nothing is copied by hand. Off (the default) advertises none. Rendered as `LEOFLOW_DEPLOY_DEFAULTS_SOURCE_MODE` only when on. Requires `execution.sourceMode.enabled`; the chart fails the render otherwise, as the server refuses to start.
+    # -- Advertise `execution.sourceMode.image` to `dexaflow deploy` as the runtime image for source mode (#1772): a deploy to this cluster that names no runtime image of its own then registers the DAG's `dag.py` on it, with no build and no push, and refuses a DAG that needs a build. The value served is the server's own runtime image, so nothing is copied by hand. Off (the default) advertises none. Rendered as `DEXAFLOW_DEPLOY_DEFAULTS_SOURCE_MODE` only when on. Requires `execution.sourceMode.enabled`; the chart fails the render otherwise, as the server refuses to start.
     sourceMode: false
     remoteBuilder:
       cloudBuild:
-        # -- Google Cloud project of the remote builder (Cloud Build, ADR 0083) a deploy to this cluster uses for builds no daemonless path covers (a project `Dockerfile`, `system_packages`, a package without wheels), when the project's `build.remote_builder`, its target and its workspace name none (#1890). Empty (the default) advertises none. Required when any other `cloudBuild` value is set. Rendered as `LEOFLOW_DEPLOY_DEFAULTS_REMOTE_BUILDER_CLOUD_BUILD_PROJECT` only when set. The person deploying signs in with `gcloud` and needs `roles/cloudbuild.builds.editor` there. The chart refuses a value that is not a project id, as the server does at boot.
+        # -- Google Cloud project of the remote builder (Cloud Build, ADR 0083) a deploy to this cluster uses for builds no daemonless path covers (a project `Dockerfile`, `system_packages`, a package without wheels), when the project's `build.remote_builder`, its target and its workspace name none (#1890). Empty (the default) advertises none. Required when any other `cloudBuild` value is set. Rendered as `DEXAFLOW_DEPLOY_DEFAULTS_REMOTE_BUILDER_CLOUD_BUILD_PROJECT` only when set. The person deploying signs in with `gcloud` and needs `roles/cloudbuild.builds.editor` there. The chart refuses a value that is not a project id, as the server does at boot.
         project: ""
-        # -- Cloud Build region of that remote builder, such as `us-central1`; required with `workerPool`. Empty uses gcloud's `builds/region`, else global. Rendered as `LEOFLOW_DEPLOY_DEFAULTS_REMOTE_BUILDER_CLOUD_BUILD_REGION` only when set.
+        # -- Cloud Build region of that remote builder, such as `us-central1`; required with `workerPool`. Empty uses gcloud's `builds/region`, else global. Rendered as `DEXAFLOW_DEPLOY_DEFAULTS_REMOTE_BUILDER_CLOUD_BUILD_REGION` only when set.
         region: ""
-        # -- Private pool of that remote builder, `projects/<project>/locations/<region>/workerPools/<name>`, in `region`. Rendered as `LEOFLOW_DEPLOY_DEFAULTS_REMOTE_BUILDER_CLOUD_BUILD_WORKER_POOL` only when set.
+        # -- Private pool of that remote builder, `projects/<project>/locations/<region>/workerPools/<name>`, in `region`. Rendered as `DEXAFLOW_DEPLOY_DEFAULTS_REMOTE_BUILDER_CLOUD_BUILD_WORKER_POOL` only when set.
         workerPool: ""
-        # -- Account the remote build runs as, `projects/<project>/serviceAccounts/<email>`. Rendered as `LEOFLOW_DEPLOY_DEFAULTS_REMOTE_BUILDER_CLOUD_BUILD_SERVICE_ACCOUNT` only when set.
+        # -- Account the remote build runs as, `projects/<project>/serviceAccounts/<email>`. Rendered as `DEXAFLOW_DEPLOY_DEFAULTS_REMOTE_BUILDER_CLOUD_BUILD_SERVICE_ACCOUNT` only when set.
         serviceAccount: ""
-    # -- Advertise the task ServiceAccount (`taskServiceAccount.name`, the server's `executor.task_service_account`) to `dexaflow deploy`, which then says which account tasks that set no `execution.service_account` run as (#1890). Reported only: nothing is written into `dag.json`. Off (the default) advertises none. Rendered as `LEOFLOW_DEPLOY_DEFAULTS_TASK_SERVICE_ACCOUNT` only when on. Requires `taskServiceAccount.create` (or `LEOFLOW_EXECUTOR_TASK_SERVICE_ACCOUNT` in `extraEnv`); the chart fails the render otherwise, as the server refuses to start.
+    # -- Advertise the task ServiceAccount (`taskServiceAccount.name`, the server's `executor.task_service_account`) to `dexaflow deploy`, which then says which account tasks that set no `execution.service_account` run as (#1890). Reported only: nothing is written into `dag.json`. Off (the default) advertises none. Rendered as `DEXAFLOW_DEPLOY_DEFAULTS_TASK_SERVICE_ACCOUNT` only when on. Requires `taskServiceAccount.create` (or `DEXAFLOW_EXECUTOR_TASK_SERVICE_ACCOUNT` in `extraEnv`); the chart fails the render otherwise, as the server refuses to start.
     taskServiceAccount: false
-    # -- Advertise the warm pool settings (`execution.warmPoolsEnabled`, `execution.minIdleWorkers`, `execution.maxPoolSize`) to `dexaflow deploy`, which then says whether warm pools are on and how many idle workers the DAG gets: its own `min_idle_workers`, else the cluster's, capped at the pool size (#1890). Reported only. Off (the default) advertises none. Rendered as `LEOFLOW_DEPLOY_DEFAULTS_WARM_POOLS` only when on.
+    # -- Advertise the warm pool settings (`execution.warmPoolsEnabled`, `execution.minIdleWorkers`, `execution.maxPoolSize`) to `dexaflow deploy`, which then says whether warm pools are on and how many idle workers the DAG gets: its own `min_idle_workers`, else the cluster's, capped at the pool size (#1890). Reported only. Off (the default) advertises none. Rendered as `DEXAFLOW_DEPLOY_DEFAULTS_WARM_POOLS` only when on.
     warmPools: false
-  # -- What the control plane does with an image not pinned by a full sha256 digest (`<repository>@sha256:<64 hex>`, #1703), when a DAG version is registered and when one is made current again. `"off"` (the default) accepts it, as before. `warn` accepts it with a warning in the answer (printed by `dexaflow push`, `dexaflow deploy` and `dexaflow rollback`), a log line, a count in `dexaflow_unpinned_image_total` and `require_digest` and `image_pinned` in the audit entry. `enforce` refuses it with a 400 naming the setting and the way out. `dexaflow deploy`, and the split path (`dexaflow compile` with its build and push flags, then `dexaflow push`), register the image by digest (#1703); a CLI from before that registers a tag on the split path, so start with `warn` to find those pipelines. Quote `"off"`: a bare `off` is YAML for false, which the chart also reads as off. Rendered as `LEOFLOW_DEPLOY_REQUIRE_DIGEST` only when `warn` or `enforce`. The chart refuses any other value, as the server does at boot.
+  # -- What the control plane does with an image not pinned by a full sha256 digest (`<repository>@sha256:<64 hex>`, #1703), when a DAG version is registered and when one is made current again. `"off"` (the default) accepts it, as before. `warn` accepts it with a warning in the answer (printed by `dexaflow push`, `dexaflow deploy` and `dexaflow rollback`), a log line, a count in `dexaflow_unpinned_image_total` and `require_digest` and `image_pinned` in the audit entry. `enforce` refuses it with a 400 naming the setting and the way out. `dexaflow deploy`, and the split path (`dexaflow compile` with its build and push flags, then `dexaflow push`), register the image by digest (#1703); a CLI from before that registers a tag on the split path, so start with `warn` to find those pipelines. Quote `"off"`: a bare `off` is YAML for false, which the chart also reads as off. Rendered as `DEXAFLOW_DEPLOY_REQUIRE_DIGEST` only when `warn` or `enforce`. The chart refuses any other value, as the server does at boot.
   requireDigest: "off"
 
 # -- Extra environment variables appended to the control-plane container, for
 # server settings this chart does not model as a first-class value (see
-# `docs/configuration.md` for the full `LEOFLOW_*` surface). Standard K8s `env`
+# `docs/configuration.md` for the full `DEXAFLOW_*` surface). Standard K8s `env`
 # entries, so `valueFrom` works, and a `value` is always rendered as a string
 # (Kubernetes rejects a numeric one). Appended AFTER the chart-managed entries; do
-# not use it to redefine one — the chart refuses to render an entry that shadows a
+# not use it to redefine one: the chart refuses to render an entry that shadows a
 # variable whose value it guards (the warm-pool / agent-credential coupling).
-# Example: `[{name: LEOFLOW_SCHEDULER_DISPATCH_WORKERS, value: "4"}]`.
+# Example: `[{name: DEXAFLOW_SCHEDULER_DISPATCH_WORKERS, value: "4"}]`. An entry
+# under the name before the rename (`LEOFLOW_*`) is rendered under its `DEXAFLOW_*`
+# name, so it still wins over the chart's own entry; with both names listed, the
+# `DEXAFLOW_*` one is rendered (#2156).
 extraEnv: []
 
-# secretKey (LEOFLOW_SECRET_KEY) is the 32-byte key the control plane uses to
+# secretKey (DEXAFLOW_SECRET_KEY) is the 32-byte key the control plane uses to
 # encrypt connection passwords + Extra blobs at rest (ADR 0019). Without it,
 # Connection management is disabled and the API rejects writes with 503
 # (Variables still work). Set it, or reference an existing secret.
@@ -686,7 +689,7 @@ migrations:
       drop: ["ALL"]
 
 # TLS for the agent <-> control plane gRPC channel (issue #58). Mandatory here,
-# not optional: this chart hardcodes LEOFLOW_UI_EDITION=pro (deployment.yaml; `pro` is the
+# not optional: this chart hardcodes DEXAFLOW_UI_EDITION=pro (deployment.yaml; `pro` is the
 # earlier name of the cluster edition) and the cluster edition server refuses to boot without a gRPC cert/key, so there is no plaintext
 # deployment to opt into. TLS stays ON — what is now optional is WHERE the cert
 # material comes from:
@@ -701,7 +704,7 @@ migrations:
 #     cluster-less `helm template` render cannot `lookup` the existing Secret, so
 #     auto-gen would rotate the CA on every sync. Use cert-manager for GitOps.
 agentTLS:
-  # -- Enable TLS on the agent ↔ control plane gRPC channel (#58). Keep this `true`: the chart marks every deployment as the cluster edition (`LEOFLOW_UI_EDITION=pro`, the earlier name of `cluster`, which the server still accepts), and that edition refuses to boot without a gRPC cert/key: setting this to `false` yields a crash-looping control plane ("the cluster edition requires TLS on the agent gRPC channel"), not a plaintext deployment. The same edition marker also rejects `LEOFLOW_AGENT_ALLOW_INSECURE_SECRETS=true`, so secrets cannot accidentally travel a plaintext channel. For a plaintext local loop use the Lite dev server, not this chart.
+  # -- Enable TLS on the agent ↔ control plane gRPC channel (#58). Keep this `true`: the chart marks every deployment as the cluster edition (`DEXAFLOW_UI_EDITION=pro`, the earlier name of `cluster`, which the server still accepts), and that edition refuses to boot without a gRPC cert/key: setting this to `false` yields a crash-looping control plane ("the cluster edition requires TLS on the agent gRPC channel"), not a plaintext deployment. The same edition marker also rejects `DEXAFLOW_AGENT_ALLOW_INSECURE_SECRETS=true`, so secrets cannot accidentally travel a plaintext channel. For a plaintext local loop use the Lite dev server, not this chart.
   enabled: true
   # -- Auto-generate a stable self-signed CA + gRPC server cert when neither `serverCertSecret` nor `caConfigMap` is supplied (#690), so `helm install` needs no cert-manager and no pre-created Secret. The material is minted once and reused on every `helm upgrade` (via `lookup`) so the CA never rotates and running agents keep trusting it. Fine for quickstart / simple clusters. Set `false` (and supply nothing) to force the old fail-fast when no cert is provided. **Not for GitOps** (ArgoCD/Flux): a cluster-less render can't `lookup` the live Secret and would rotate the CA every sync — use BYO/cert-manager there. For production, prefer BYO below (rotation, real chain of trust).
   autoGenerate: true
@@ -772,7 +775,7 @@ goMemLimit:
   # -- Share of `resources.limits.memory` given to `GOMEMLIMIT`, from 1 to 100. The rest is headroom for memory the Go runtime does not track but the container is charged for, such as cgo allocations and kernel page cache.
   percent: 80
 
-# -- Liveness/readiness probes for the leoflow-server container. Exposed so an operator can loosen the timeout under load: a busy scheduler can miss a 1s `/healthz` during a task-pod burst and be kubelet-killed mid-run, which cascades in-flight tasks to agent_lost (#860). Defaults are deliberately forgiving (5s liveness / 3s readiness timeout, 3 failures) rather than Kubernetes' 1s/3. /readyz bounds its own work at `readiness.timeoutSeconds` minus one second (rendered as `LEOFLOW_SERVER_PROBE_BUDGET`, #1050), so it answers before the kubelet gives up; raise the timeout to give a slow metadatabase more room. `readiness.timeoutSeconds` has a **floor of 3** and the render fails below it: a shorter kubelet timeout leaves the server under its 2s minimum and you get a bare timeout instead of a 503 naming the failing dependency (#1041). To react faster, lower `readiness.periodSeconds` or `failureThreshold` instead.
+# -- Liveness/readiness probes for the leoflow-server container. Exposed so an operator can loosen the timeout under load: a busy scheduler can miss a 1s `/healthz` during a task-pod burst and be kubelet-killed mid-run, which cascades in-flight tasks to agent_lost (#860). Defaults are deliberately forgiving (5s liveness / 3s readiness timeout, 3 failures) rather than Kubernetes' 1s/3. /readyz bounds its own work at `readiness.timeoutSeconds` minus one second (rendered as `DEXAFLOW_SERVER_PROBE_BUDGET`, #1050), so it answers before the kubelet gives up; raise the timeout to give a slow metadatabase more room. `readiness.timeoutSeconds` has a **floor of 3** and the render fails below it: a shorter kubelet timeout leaves the server under its 2s minimum and you get a bare timeout instead of a 503 naming the failing dependency (#1041). To react faster, lower `readiness.periodSeconds` or `failureThreshold` instead.
 probes:
   # -- Startup gate for the control-plane boot. Kubernetes runs neither the liveness nor the readiness probe until this one succeeds, so a slow boot reads as "not ready yet" instead of being killed and restarted. Without it liveness points at the same API listener the boot has not bound yet, and any boot-path dependency that is slow or stuck becomes a restart loop whose every cycle is recorded as `Completed exit=0`, because SIGTERM is handled cleanly (#1083). The budget is `periodSeconds * failureThreshold` = 180s, and it is sized from the server's own boot bounds rather than picked: the Postgres connect retry is 30s and runs TWICE (the request pool and the dedicated probe pool), the pod-informer warm-up is bounded at 10s (#1141), and on top of those sit credential detection for an object-store log sink and OIDC discovery, neither of which carries a bound of its own. That is 70s of code-defined budget before anything cloud-shaped, and a gate tighter than the boot would kill a pod that was about to come up, which is the loop again. Generous on purpose, because the two directions are not symmetric: a boot that FAILS returns an error and the process exits 1, so CrashLoopBackOff reports it promptly no matter what this says, and the gate only bounds a boot that HANGS, where a restart is a lottery ticket rather than a fix. The render refuses a budget at or below the liveness budget it replaces (10 + 3*20 = 70s), since that only moves the kill from one probe to the other. It probes `/healthz`, never `/readyz`: a failing startup probe RESTARTS the container, so gating it on dependency health would turn a database outage into a crash loop, which is the exact thing `/healthz` is deliberately static to avoid. Nothing is lost by that, because readiness still gates endpoint membership on `/readyz` once the gate opens. Set `enabled: false` to go back to liveness policing the boot.
   startup:
@@ -872,7 +875,7 @@ builder:
     pullPolicy: IfNotPresent
   # -- Pull secrets for the builder image, which must exist in `builder.namespace`, such as `[{name: regcred}]`.
   imagePullSecrets: []
-  # -- Advertise the builder on `/api/v2/deployDefaults` as the cluster's remote builder (`deploy.defaults.remote_builder.buildkit`, rendered as `LEOFLOW_DEPLOY_DEFAULTS_REMOTE_BUILDER_BUILDKIT_NAMESPACE` and `_POD_SELECTOR`), so a `dexaflow deploy` that needs a real build runs it here with `buildctl` instead of a local container daemon. A person who is not in `subjects`, or has no `buildctl` or `kubectl`, is passed over for the local daemon. The chart refuses it next to `deploy.defaults.remoteBuilder.cloudBuild`; set it to false to keep Cloud Build as the cluster's default.
+  # -- Advertise the builder on `/api/v2/deployDefaults` as the cluster's remote builder (`deploy.defaults.remote_builder.buildkit`, rendered as `DEXAFLOW_DEPLOY_DEFAULTS_REMOTE_BUILDER_BUILDKIT_NAMESPACE` and `_POD_SELECTOR`), so a `dexaflow deploy` that needs a real build runs it here with `buildctl` instead of a local container daemon. A person who is not in `subjects`, or has no `buildctl` or `kubectl`, is passed over for the local daemon. The chart refuses it next to `deploy.defaults.remoteBuilder.cloudBuild`; set it to false to keep Cloud Build as the cluster's default.
   advertise: true
   # -- Who may build: RBAC subjects bound to the builder Role, which allows `get` and `list` on pods and `create` and `get` on `pods/exec` in `builder.namespace` only. Each is `{kind: User|Group, name}` or `{kind: ServiceAccount, name, namespace}`. Everyone bound shares one daemon and its cache and can read what the others build, so bind people who already trust each other. Empty renders the Role with no binding.
   subjects: []

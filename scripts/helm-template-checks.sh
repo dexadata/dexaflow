@@ -42,29 +42,29 @@ expect_substring() {
 
 # Each line below is a contract the chart must honour. Add to this list as new
 # config keys land.
-expect_substring 'name: LEOFLOW_DATABASE_URL'  "DB URL env entry in deployment"
-expect_substring 'name: LEOFLOW_DATABASE_INSTALLATION_ID' "installation id env entry in deployment (ADR 0090)"
+expect_substring 'name: DEXAFLOW_DATABASE_URL'  "DB URL env entry in deployment"
+expect_substring 'name: DEXAFLOW_DATABASE_INSTALLATION_ID' "installation id env entry in deployment (ADR 0090)"
 expect_substring '-installation-configmap=dexaflow-test-installation' "installation ConfigMap flag on the migration Job (ADR 0090)"
-expect_substring 'name: LEOFLOW_HELM_RELEASE' "release env entry for the recovery hint in deployment (ADR 0090)"
-expect_substring 'name: LEOFLOW_REDIS_URL'     "Redis URL env entry in deployment"
-expect_substring 'name: LEOFLOW_AUTH_JWT_SECRET' "JWT secret env entry in deployment"
-expect_substring 'name: LEOFLOW_SECRET_KEY'    "Connection encryption key env entry in deployment (ADR 0019)"
+expect_substring 'name: DEXAFLOW_HELM_RELEASE' "release env entry for the recovery hint in deployment (ADR 0090)"
+expect_substring 'name: DEXAFLOW_REDIS_URL'     "Redis URL env entry in deployment"
+expect_substring 'name: DEXAFLOW_AUTH_JWT_SECRET' "JWT secret env entry in deployment"
+expect_substring 'name: DEXAFLOW_SECRET_KEY'    "Connection encryption key env entry in deployment (ADR 0019)"
 expect_substring 'jwtSecret:'                  "jwtSecret key in chart-managed Secret"
 expect_substring 'secretKey:'                  "secretKey in chart-managed Secret (ADR 0019)"
 # The warm-pool flag and the two agent-credential knobs it is coupled to (ADR
 # 0058 D2) are stamped on EVERY render, defaults included, so a `helm upgrade`
 # reasserts them over an out-of-band `kubectl set env`. Reaching the feature
 # through the chart at all is what these three make possible.
-expect_substring 'name: LEOFLOW_EXECUTION_WARM_POOLS_ENABLED'  "warm-pool flag env entry in deployment (ADR 0058)"
-expect_substring 'name: LEOFLOW_AUTH_AGENT_TOKEN_TRANSPORT'    "agent token transport env entry in deployment (ADR 0055)"
-expect_substring 'name: LEOFLOW_AUTH_SECRET_LIVENESS_MODE'     "secret liveness mode env entry in deployment (ADR 0055)"
+expect_substring 'name: DEXAFLOW_EXECUTION_WARM_POOLS_ENABLED'  "warm-pool flag env entry in deployment (ADR 0058)"
+expect_substring 'name: DEXAFLOW_AUTH_AGENT_TOKEN_TRANSPORT'    "agent token transport env entry in deployment (ADR 0055)"
+expect_substring 'name: DEXAFLOW_AUTH_SECRET_LIVENESS_MODE'     "secret liveness mode env entry in deployment (ADR 0055)"
 # The scope-by-declaration policy is stamped for the discoverability reason
 # rather than the coupling one (#803): it participates in no render-time guard,
 # but it is what decides whether a task receives the whole tenant vault, so the
 # chart has to be where an operator finds it and its default.
-expect_substring 'name: LEOFLOW_AUTH_SECRET_SCOPING'           "secret scoping policy env entry in deployment (ADR 0055)"
+expect_substring 'name: DEXAFLOW_AUTH_SECRET_SCOPING'           "secret scoping policy env entry in deployment (ADR 0055)"
 # The attempt credential ceiling is stamped for the same reason (#955).
-expect_substring 'name: LEOFLOW_AUTH_MAX_ATTEMPT_CREDENTIAL_LIFETIME' "attempt credential ceiling env entry in deployment (ADR 0055)"
+expect_substring 'name: DEXAFLOW_AUTH_MAX_ATTEMPT_CREDENTIAL_LIFETIME' "attempt credential ceiling env entry in deployment (ADR 0055)"
 
 # Migration Job must be hardened the same way as the Deployment (#174):
 # restricted-PSA clusters require runAsNonRoot+numeric runAsUser on EVERY
@@ -196,15 +196,15 @@ expect_in "$RENDERED" 'secretName: leoflow-agent-tls-fixture' "BYO server cert S
 # ---------------------------------------------------------------------------
 # OIDC / SSO (#1143). The chart exposed no auth.oidc.* key and mounted no server
 # config file, so SSO was not reachable at all: auth.oidc.tenant_claims is a MAP,
-# no LEOFLOW_AUTH_OIDC_* env var can carry one, and the server fails boot closed
+# no DEXAFLOW_AUTH_OIDC_* env var can carry one, and the server fails boot closed
 # without it. The checks below cover the two halves of the fix and the one thing
 # that must never travel with them.
 
 # Half 1: OFF renders nothing. $RENDERED above is a default (non-SSO) install, and
 # an operator upgrading onto this chart version without touching their values must
 # get the pod spec they already had.
-refute_in "$RENDERED" 'name: LEOFLOW_AUTH_PROVIDER' "no auth provider env on a non-SSO install"
-refute_in "$RENDERED" 'name: LEOFLOW_CONFIG'        "no server config file env on a non-SSO install"
+refute_in "$RENDERED" 'name: DEXAFLOW_AUTH_PROVIDER' "no auth provider env on a non-SSO install"
+refute_in "$RENDERED" 'name: DEXAFLOW_CONFIG'        "no server config file env on a non-SSO install"
 refute_in "$RENDERED" 'oidc-config'                 "no OIDC volume or ConfigMap on a non-SSO install"
 
 # Half 2: ON delivers the scalars as env and the two maps as a mounted file. The
@@ -226,9 +226,9 @@ OIDC_RENDERED=$(helm template dexaflow-test "$CHART" \
   --set 'auth.oidc.tenantClaims.example\.com=default')
 
 expect_in "$OIDC_RENDERED" 'value: "oidc"'                     "auth provider set to oidc when SSO is on"
-expect_in "$OIDC_RENDERED" 'value: "/etc/leoflow/oidc/config.yaml"' "LEOFLOW_CONFIG points at the mounted OIDC file"
-expect_in "$OIDC_RENDERED" 'name: LEOFLOW_AUTH_OIDC_ISSUER'    "OIDC issuer env entry in deployment"
-expect_in "$OIDC_RENDERED" 'name: LEOFLOW_AUTH_OIDC_TENANT_CLAIM' "OIDC tenant claim env entry in deployment"
+expect_in "$OIDC_RENDERED" 'value: "/etc/leoflow/oidc/config.yaml"' "DEXAFLOW_CONFIG points at the mounted OIDC file"
+expect_in "$OIDC_RENDERED" 'name: DEXAFLOW_AUTH_OIDC_ISSUER'    "OIDC issuer env entry in deployment"
+expect_in "$OIDC_RENDERED" 'name: DEXAFLOW_AUTH_OIDC_TENANT_CLAIM' "OIDC tenant claim env entry in deployment"
 expect_in "$OIDC_RENDERED" 'name: dexaflow-test-oidc'           "OIDC ConfigMap named <fullname>-oidc"
 expect_in "$OIDC_RENDERED" 'mountPath: /etc/leoflow/oidc'      "Deployment mounts the OIDC ConfigMap"
 expect_in "$OIDC_RENDERED" '"example.com": "default"'          "dotted tenant_claims key survives the render quoted (#826)"
@@ -270,6 +270,28 @@ OIDC_NO_PIN=$(helm template dexaflow-test "$CHART" \
   --set auth.oidc.clientId='helm-template-check-client-id' \
   --set auth.oidc.redirectUrl='https://leoflow.example.com/api/v2/auth/oidc/callback' 2>&1 || true)
 expect_in "$OIDC_NO_PIN" 'auth.oidc.tenantClaim, auth.oidc.tenantClaims' "render refused for an SSO install with no tenant pin"
+
+# #2156: the chart renders every variable under its DEXAFLOW_* name, on every
+# Deployment and the migration Job, so a fresh install shows no old name in its
+# pod specs. Task pods still receive LEOFLOW_SECRETS_* from the server; that is
+# not chart output.
+SPLIT_RENDERED=$(helm template dexaflow-test "$CHART" \
+  --set database.url='postgres://leoflow:p@db:5432/leoflow?sslmode=disable' \
+  --set redis.url='redis://r:6379/0' \
+  --set auth.jwtSecret='helm-template-check-jwt-fixture' \
+  --set secretKey='leoflow-tmpl-check-secret-key-32' \
+  --set agentTLS.serverCertSecret='leoflow-agent-tls-fixture' \
+  --set agentTLS.caConfigMap='leoflow-agent-ca-fixture' \
+  --set split.enabled=true \
+  --set logs.persistence.accessMode=ReadWriteMany)
+for render in "$RENDERED" "$SPLIT_RENDERED"; do
+  if grep -E '^\s*- name: "?LEOFLOW_|\$\(LEOFLOW_' <<<"$render" >&2; then
+    echo "FAIL: an env entry above still renders the LEOFLOW_ name (#2156)" >&2
+    fail=1
+  else
+    echo "OK:   every rendered env entry uses the DEXAFLOW_ name (#2156)"
+  fi
+done
 
 if [ "$fail" -ne 0 ]; then
   echo

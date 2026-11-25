@@ -28,12 +28,12 @@ tests:
       - contains:
           path: spec.template.spec.containers[0].env
           content:
-            name: LEOFLOW_DATABASE_MAX_OPEN_CONNS
+            name: DEXAFLOW_DATABASE_MAX_OPEN_CONNS
             value: "20"
       - contains:
           path: spec.template.spec.containers[0].env
           content:
-            name: LEOFLOW_DATABASE_MAX_IDLE_CONNS
+            name: DEXAFLOW_DATABASE_MAX_IDLE_CONNS
             value: "2"
 
   # Backward compatibility: an operator who sized the pool keeps their value.
@@ -46,12 +46,12 @@ tests:
       - contains:
           path: spec.template.spec.containers[0].env
           content:
-            name: LEOFLOW_DATABASE_MAX_OPEN_CONNS
+            name: DEXAFLOW_DATABASE_MAX_OPEN_CONNS
             value: "8"
       - contains:
           path: spec.template.spec.containers[0].env
           content:
-            name: LEOFLOW_DATABASE_MAX_IDLE_CONNS
+            name: DEXAFLOW_DATABASE_MAX_IDLE_CONNS
             value: "5"
 
   # ─── NOTES: boot budget warns, peak budget informs ──────────────────────

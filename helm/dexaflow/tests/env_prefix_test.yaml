@@ -1,0 +1,78 @@
+suite: control-plane env renders DEXAFLOW_* names, and extraEnv of either name wins (#2156)
+templates:
+  - deployment.yaml
+  - secret.yaml
+set:
+  database.url: postgres://h/d
+  redis.url: redis://h/0
+  auth.jwtSecret: jwt
+  agentTLS.serverCertSecret: dexaflow-tls
+  agentTLS.caConfigMap: dexaflow-ca
+tests:
+  - it: renders the chart's own variables under the DEXAFLOW_ name
+    template: deployment.yaml
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: DEXAFLOW_SCHEDULER_LOOP_INTERVAL_MS
+            value: "1000"
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LEOFLOW_SCHEDULER_LOOP_INTERVAL_MS
+            value: "1000"
+
+  # The server reads DEXAFLOW_* first, so an override kept under the old name
+  # would lose to the chart's DEXAFLOW_ entry. It is rendered under the new name,
+  # last, where Kubernetes' last-wins applies.
+  - it: renders an extraEnv entry under the LEOFLOW_ name as DEXAFLOW_, after the chart's own
+    template: deployment.yaml
+    set:
+      extraEnv:
+        - name: LEOFLOW_SCHEDULER_LOOP_INTERVAL_MS
+          value: "250"
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].env[-1]
+          value:
+            name: DEXAFLOW_SCHEDULER_LOOP_INTERVAL_MS
+            value: "250"
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: LEOFLOW_SCHEDULER_LOOP_INTERVAL_MS
+            value: "250"
+
+  - it: with both names in extraEnv, renders only the DEXAFLOW_ one, as the server would read it
+    template: deployment.yaml
+    set:
+      extraEnv:
+        - name: DEXAFLOW_SCHEDULER_LOOP_INTERVAL_MS
+          value: "300"
+        - name: LEOFLOW_SCHEDULER_LOOP_INTERVAL_MS
+          value: "250"
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].env[-1]
+          value:
+            name: DEXAFLOW_SCHEDULER_LOOP_INTERVAL_MS
+            value: "300"
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: DEXAFLOW_SCHEDULER_LOOP_INTERVAL_MS
+            value: "250"
+
+  - it: keeps a variable that is not a setting under its own name
+    template: deployment.yaml
+    set:
+      extraEnv:
+        - name: HTTPS_PROXY
+          value: http://proxy:3128
+    asserts:
+      - equal:
+          path: spec.template.spec.containers[0].env[-1]
+          value:
+            name: HTTPS_PROXY
+            value: http://proxy:3128

@@ -30,17 +30,17 @@ tests:
       - contains:
           path: spec.template.spec.containers[0].env
           content:
-            name: LEOFLOW_UI_THEME
+            name: DEXAFLOW_UI_THEME
             value: '{"tokens":{"colors":{"brand":{"500":{"value":"#3b82f6"}}}}}'
       - contains:
           path: spec.template.spec.containers[0].env
           content:
-            name: LEOFLOW_UI_FAVICON_URL
+            name: DEXAFLOW_UI_FAVICON_URL
             value: https://cdn.example.com/f.png
       - contains:
           path: spec.template.spec.containers[0].env
           content:
-            name: LEOFLOW_UI_STYLESHEET_URLS
+            name: DEXAFLOW_UI_STYLESHEET_URLS
             value: https://fonts.example.com/a.css,https://cdn.example.com/b.css
 
   - it: renders none of them when unset
@@ -49,15 +49,15 @@ tests:
       - notContains:
           path: spec.template.spec.containers[0].env
           content:
-            name: LEOFLOW_UI_THEME
+            name: DEXAFLOW_UI_THEME
             value: "{}"
       - notContains:
           path: spec.template.spec.containers[0].env
           content:
-            name: LEOFLOW_UI_FAVICON_URL
+            name: DEXAFLOW_UI_FAVICON_URL
             value: ""
       - notContains:
           path: spec.template.spec.containers[0].env
           content:
-            name: LEOFLOW_UI_STYLESHEET_URLS
+            name: DEXAFLOW_UI_STYLESHEET_URLS
             value: ""

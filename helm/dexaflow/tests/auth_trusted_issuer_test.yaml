@@ -24,16 +24,16 @@ tests:
       auth.trustedIssuer.allowedOrigins: ["https://portal.example.com"]
     template: deployment.yaml
     asserts:
-      - contains: {path: "spec.template.spec.containers[0].env", content: {name: LEOFLOW_AUTH_TRUSTED_ISSUER_ISSUER, value: https://portal.example.com}}
-      - contains: {path: "spec.template.spec.containers[0].env", content: {name: LEOFLOW_AUTH_TRUSTED_ISSUER_NAME, value: portal}}
-      - contains: {path: "spec.template.spec.containers[0].env", content: {name: LEOFLOW_AUTH_TRUSTED_ISSUER_JWKS_URL, value: https://portal.example.com/jwks}}
-      - contains: {path: "spec.template.spec.containers[0].env", content: {name: LEOFLOW_AUTH_TRUSTED_ISSUER_AUDIENCE, value: leoflow-engine}}
-      - contains: {path: "spec.template.spec.containers[0].env", content: {name: LEOFLOW_AUTH_TRUSTED_ISSUER_TENANT_CLAIM, value: tenant_id}}
-      - contains: {path: "spec.template.spec.containers[0].env", content: {name: LEOFLOW_AUTH_TRUSTED_ISSUER_ALLOWED_TENANTS, value: "acme,globex"}}
-      - contains: {path: "spec.template.spec.containers[0].env", content: {name: LEOFLOW_AUTH_TRUSTED_ISSUER_MAX_LIFETIME_SECONDS, value: "300"}}
-      - contains: {path: "spec.template.spec.containers[0].env", content: {name: LEOFLOW_AUTH_TRUSTED_ISSUER_ALLOWED_ORIGINS, value: "https://portal.example.com"}}
-      - contains: {path: "spec.template.spec.containers[0].env", content: {name: LEOFLOW_AUTH_TRUSTED_ISSUER_BEARER_MAX_LIFETIME_SECONDS, value: "0"}}
-      - notContains: {path: "spec.template.spec.containers[0].env", content: {name: LEOFLOW_AUTH_TRUSTED_ISSUER_BEARER_AUDIENCES, value: ""}}
+      - contains: {path: "spec.template.spec.containers[0].env", content: {name: DEXAFLOW_AUTH_TRUSTED_ISSUER_ISSUER, value: https://portal.example.com}}
+      - contains: {path: "spec.template.spec.containers[0].env", content: {name: DEXAFLOW_AUTH_TRUSTED_ISSUER_NAME, value: portal}}
+      - contains: {path: "spec.template.spec.containers[0].env", content: {name: DEXAFLOW_AUTH_TRUSTED_ISSUER_JWKS_URL, value: https://portal.example.com/jwks}}
+      - contains: {path: "spec.template.spec.containers[0].env", content: {name: DEXAFLOW_AUTH_TRUSTED_ISSUER_AUDIENCE, value: leoflow-engine}}
+      - contains: {path: "spec.template.spec.containers[0].env", content: {name: DEXAFLOW_AUTH_TRUSTED_ISSUER_TENANT_CLAIM, value: tenant_id}}
+      - contains: {path: "spec.template.spec.containers[0].env", content: {name: DEXAFLOW_AUTH_TRUSTED_ISSUER_ALLOWED_TENANTS, value: "acme,globex"}}
+      - contains: {path: "spec.template.spec.containers[0].env", content: {name: DEXAFLOW_AUTH_TRUSTED_ISSUER_MAX_LIFETIME_SECONDS, value: "300"}}
+      - contains: {path: "spec.template.spec.containers[0].env", content: {name: DEXAFLOW_AUTH_TRUSTED_ISSUER_ALLOWED_ORIGINS, value: "https://portal.example.com"}}
+      - contains: {path: "spec.template.spec.containers[0].env", content: {name: DEXAFLOW_AUTH_TRUSTED_ISSUER_BEARER_MAX_LIFETIME_SECONDS, value: "0"}}
+      - notContains: {path: "spec.template.spec.containers[0].env", content: {name: DEXAFLOW_AUTH_TRUSTED_ISSUER_BEARER_AUDIENCES, value: ""}}
 
   - it: renders the bearer mode when audiences are set (#1468)
     set:
@@ -47,8 +47,8 @@ tests:
       auth.trustedIssuer.bearerMaxLifetimeSeconds: 300
     template: deployment.yaml
     asserts:
-      - contains: {path: "spec.template.spec.containers[0].env", content: {name: LEOFLOW_AUTH_TRUSTED_ISSUER_BEARER_AUDIENCES, value: "leoflow-mcp,other-mcp"}}
-      - contains: {path: "spec.template.spec.containers[0].env", content: {name: LEOFLOW_AUTH_TRUSTED_ISSUER_BEARER_MAX_LIFETIME_SECONDS, value: "300"}}
+      - contains: {path: "spec.template.spec.containers[0].env", content: {name: DEXAFLOW_AUTH_TRUSTED_ISSUER_BEARER_AUDIENCES, value: "leoflow-mcp,other-mcp"}}
+      - contains: {path: "spec.template.spec.containers[0].env", content: {name: DEXAFLOW_AUTH_TRUSTED_ISSUER_BEARER_MAX_LIFETIME_SECONDS, value: "300"}}
 
   - it: renders the host binding when a pattern is set (#1463)
     set:
@@ -61,7 +61,7 @@ tests:
       auth.trustedIssuer.hostPattern: "{tenant}.example.com"
     template: deployment.yaml
     asserts:
-      - contains: {path: "spec.template.spec.containers[0].env", content: {name: LEOFLOW_AUTH_TRUSTED_ISSUER_HOST_PATTERN, value: "{tenant}.example.com"}}
+      - contains: {path: "spec.template.spec.containers[0].env", content: {name: DEXAFLOW_AUTH_TRUSTED_ISSUER_HOST_PATTERN, value: "{tenant}.example.com"}}
 
   - it: leaves the host binding off by default
     set:
@@ -73,7 +73,7 @@ tests:
       auth.trustedIssuer.allowedOrigins: ["https://portal.example.com"]
     template: deployment.yaml
     asserts:
-      - notContains: {path: "spec.template.spec.containers[0].env", content: {name: LEOFLOW_AUTH_TRUSTED_ISSUER_HOST_PATTERN, value: ""}}
+      - notContains: {path: "spec.template.spec.containers[0].env", content: {name: DEXAFLOW_AUTH_TRUSTED_ISSUER_HOST_PATTERN, value: ""}}
 
   - it: renders the deploy audience when one is set (#1773)
     set:
@@ -86,7 +86,7 @@ tests:
       auth.trustedIssuer.deployAudience: dexaflow-deploy
     template: deployment.yaml
     asserts:
-      - contains: {path: "spec.template.spec.containers[0].env", content: {name: LEOFLOW_AUTH_TRUSTED_ISSUER_DEPLOY_AUDIENCE, value: dexaflow-deploy}}
+      - contains: {path: "spec.template.spec.containers[0].env", content: {name: DEXAFLOW_AUTH_TRUSTED_ISSUER_DEPLOY_AUDIENCE, value: dexaflow-deploy}}
 
   - it: leaves the deploy audience off by default
     set:
@@ -98,12 +98,12 @@ tests:
       auth.trustedIssuer.allowedOrigins: ["https://portal.example.com"]
     template: deployment.yaml
     asserts:
-      - notContains: {path: "spec.template.spec.containers[0].env", content: {name: LEOFLOW_AUTH_TRUSTED_ISSUER_DEPLOY_AUDIENCE, value: ""}}
+      - notContains: {path: "spec.template.spec.containers[0].env", content: {name: DEXAFLOW_AUTH_TRUSTED_ISSUER_DEPLOY_AUDIENCE, value: ""}}
 
   - it: renders none of them when no issuer is set
     template: deployment.yaml
     asserts:
-      - notContains: {path: "spec.template.spec.containers[0].env", content: {name: LEOFLOW_AUTH_TRUSTED_ISSUER_TENANT_CLAIM, value: tenant_id}}
+      - notContains: {path: "spec.template.spec.containers[0].env", content: {name: DEXAFLOW_AUTH_TRUSTED_ISSUER_TENANT_CLAIM, value: tenant_id}}
 
   - it: refuses a deploy audience without an issuer (#1773)
     set:

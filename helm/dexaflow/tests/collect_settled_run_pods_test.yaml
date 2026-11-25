@@ -20,7 +20,7 @@ tests:
       - notContains:
           path: spec.template.spec.containers[0].env
           content:
-            name: LEOFLOW_EXECUTOR_COLLECT_SETTLED_RUN_PODS
+            name: DEXAFLOW_EXECUTOR_COLLECT_SETTLED_RUN_PODS
           any: true
 
   - it: executor.collectSettledRunPods turns the collection on
@@ -31,5 +31,5 @@ tests:
       - contains:
           path: spec.template.spec.containers[0].env
           content:
-            name: LEOFLOW_EXECUTOR_COLLECT_SETTLED_RUN_PODS
+            name: DEXAFLOW_EXECUTOR_COLLECT_SETTLED_RUN_PODS
             value: "true"

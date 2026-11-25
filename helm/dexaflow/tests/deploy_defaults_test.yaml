@@ -21,11 +21,11 @@ tests:
     template: deployment.yaml
     asserts:
       - notExists:
-          path: spec.template.spec.containers[0].env[?(@.name == "LEOFLOW_DEPLOY_DEFAULTS_REGISTRY")]
+          path: spec.template.spec.containers[0].env[?(@.name == "DEXAFLOW_DEPLOY_DEFAULTS_REGISTRY")]
       - notExists:
-          path: spec.template.spec.containers[0].env[?(@.name == "LEOFLOW_DEPLOY_DEFAULTS_PLATFORMS")]
+          path: spec.template.spec.containers[0].env[?(@.name == "DEXAFLOW_DEPLOY_DEFAULTS_PLATFORMS")]
       - notExists:
-          path: spec.template.spec.containers[0].env[?(@.name == "LEOFLOW_DEPLOY_DEFAULTS_BASE_IMAGE")]
+          path: spec.template.spec.containers[0].env[?(@.name == "DEXAFLOW_DEPLOY_DEFAULTS_BASE_IMAGE")]
 
   - it: renders each default that is set, platforms comma-joined
     template: deployment.yaml
@@ -37,17 +37,17 @@ tests:
       - contains:
           path: spec.template.spec.containers[0].env
           content:
-            name: LEOFLOW_DEPLOY_DEFAULTS_REGISTRY
+            name: DEXAFLOW_DEPLOY_DEFAULTS_REGISTRY
             value: ghcr.io/acme
       - contains:
           path: spec.template.spec.containers[0].env
           content:
-            name: LEOFLOW_DEPLOY_DEFAULTS_PLATFORMS
+            name: DEXAFLOW_DEPLOY_DEFAULTS_PLATFORMS
             value: linux/amd64,linux/arm64
       - contains:
           path: spec.template.spec.containers[0].env
           content:
-            name: LEOFLOW_DEPLOY_DEFAULTS_BASE_IMAGE
+            name: DEXAFLOW_DEPLOY_DEFAULTS_BASE_IMAGE
             value: ghcr.io/acme/base:1
 
   # The api role serves the endpoint; both Deployments share the env block.
@@ -63,7 +63,7 @@ tests:
       - contains:
           path: spec.template.spec.containers[0].env
           content:
-            name: LEOFLOW_DEPLOY_DEFAULTS_REGISTRY
+            name: DEXAFLOW_DEPLOY_DEFAULTS_REGISTRY
             value: ghcr.io/acme
 
   # The server refuses these at boot; the chart refuses them at render.
@@ -103,7 +103,7 @@ tests:
       - contains:
           path: spec.template.spec.containers[0].env
           content:
-            name: LEOFLOW_DEPLOY_DEFAULTS_REGISTRY
+            name: DEXAFLOW_DEPLOY_DEFAULTS_REGISTRY
             value: localhost:5000/dags
   - it: refuses a platform outside os/arch[/variant]
     template: deployment.yaml
@@ -157,7 +157,7 @@ tests:
       - contains:
           path: spec.template.spec.containers[0].env
           content:
-            name: LEOFLOW_DEPLOY_DEFAULTS_BASE_IMAGE
+            name: DEXAFLOW_DEPLOY_DEFAULTS_BASE_IMAGE
             value: python:3.12-slim@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef
 
   # Source mode advertised (#1772): the server serves its own
@@ -166,7 +166,7 @@ tests:
     template: deployment.yaml
     asserts:
       - notExists:
-          path: spec.template.spec.containers[0].env[?(@.name == "LEOFLOW_DEPLOY_DEFAULTS_SOURCE_MODE")]
+          path: spec.template.spec.containers[0].env[?(@.name == "DEXAFLOW_DEPLOY_DEFAULTS_SOURCE_MODE")]
   - it: renders the source mode default when source mode is on
     template: deployment.yaml
     set:
@@ -177,7 +177,7 @@ tests:
       - contains:
           path: spec.template.spec.containers[0].env
           content:
-            name: LEOFLOW_DEPLOY_DEFAULTS_SOURCE_MODE
+            name: DEXAFLOW_DEPLOY_DEFAULTS_SOURCE_MODE
             value: "true"
   # The api role serves GET /api/v2/deployDefaults, so it must carry the
   # source mode default when the control plane is split.
@@ -199,7 +199,7 @@ tests:
       - contains:
           path: spec.template.spec.containers[0].env
           content:
-            name: LEOFLOW_DEPLOY_DEFAULTS_SOURCE_MODE
+            name: DEXAFLOW_DEPLOY_DEFAULTS_SOURCE_MODE
             value: "true"
         documentIndex: 0
   - it: refuses the source mode default while source mode is off
@@ -215,20 +215,20 @@ tests:
     template: deployment.yaml
     asserts:
       - notExists:
-          path: spec.template.spec.containers[0].env[?(@.name == "LEOFLOW_DEPLOY_DEFAULTS_REMOTE_BUILDER_CLOUD_BUILD_PROJECT")]
+          path: spec.template.spec.containers[0].env[?(@.name == "DEXAFLOW_DEPLOY_DEFAULTS_REMOTE_BUILDER_CLOUD_BUILD_PROJECT")]
       - notExists:
-          path: spec.template.spec.containers[0].env[?(@.name == "LEOFLOW_DEPLOY_DEFAULTS_TASK_SERVICE_ACCOUNT")]
+          path: spec.template.spec.containers[0].env[?(@.name == "DEXAFLOW_DEPLOY_DEFAULTS_TASK_SERVICE_ACCOUNT")]
       - notExists:
-          path: spec.template.spec.containers[0].env[?(@.name == "LEOFLOW_DEPLOY_DEFAULTS_WARM_POOLS")]
+          path: spec.template.spec.containers[0].env[?(@.name == "DEXAFLOW_DEPLOY_DEFAULTS_WARM_POOLS")]
 
   # The in-cluster builder (#1883) is advertised once the chart runs it.
   - it: advertises no in-cluster builder while builder.enabled is false
     template: deployment.yaml
     asserts:
       - notExists:
-          path: spec.template.spec.containers[0].env[?(@.name == "LEOFLOW_DEPLOY_DEFAULTS_REMOTE_BUILDER_BUILDKIT_NAMESPACE")]
+          path: spec.template.spec.containers[0].env[?(@.name == "DEXAFLOW_DEPLOY_DEFAULTS_REMOTE_BUILDER_BUILDKIT_NAMESPACE")]
       - notExists:
-          path: spec.template.spec.containers[0].env[?(@.name == "LEOFLOW_DEPLOY_DEFAULTS_REMOTE_BUILDER_BUILDKIT_POD_SELECTOR")]
+          path: spec.template.spec.containers[0].env[?(@.name == "DEXAFLOW_DEPLOY_DEFAULTS_REMOTE_BUILDER_BUILDKIT_POD_SELECTOR")]
 
   - it: advertises the in-cluster builder with its namespace and the pod labels of this release
     template: deployment.yaml
@@ -239,12 +239,12 @@ tests:
       - contains:
           path: spec.template.spec.containers[0].env
           content:
-            name: LEOFLOW_DEPLOY_DEFAULTS_REMOTE_BUILDER_BUILDKIT_NAMESPACE
+            name: DEXAFLOW_DEPLOY_DEFAULTS_REMOTE_BUILDER_BUILDKIT_NAMESPACE
             value: dexaflow-builder
       - contains:
           path: spec.template.spec.containers[0].env
           content:
-            name: LEOFLOW_DEPLOY_DEFAULTS_REMOTE_BUILDER_BUILDKIT_POD_SELECTOR
+            name: DEXAFLOW_DEPLOY_DEFAULTS_REMOTE_BUILDER_BUILDKIT_POD_SELECTOR
             value: app.kubernetes.io/instance=leoflow,app.kubernetes.io/component=builder
 
   - it: keeps the in-cluster builder to itself with builder.advertise false
@@ -255,7 +255,7 @@ tests:
       builder.advertise: false
     asserts:
       - notExists:
-          path: spec.template.spec.containers[0].env[?(@.name == "LEOFLOW_DEPLOY_DEFAULTS_REMOTE_BUILDER_BUILDKIT_NAMESPACE")]
+          path: spec.template.spec.containers[0].env[?(@.name == "DEXAFLOW_DEPLOY_DEFAULTS_REMOTE_BUILDER_BUILDKIT_NAMESPACE")]
 
   - it: refuses to advertise the in-cluster builder next to a Cloud Build default
     template: deployment.yaml
@@ -278,7 +278,7 @@ tests:
       - contains:
           path: spec.template.spec.containers[0].env
           content:
-            name: LEOFLOW_DEPLOY_DEFAULTS_REMOTE_BUILDER_CLOUD_BUILD_PROJECT
+            name: DEXAFLOW_DEPLOY_DEFAULTS_REMOTE_BUILDER_CLOUD_BUILD_PROJECT
             value: acme-ci
 
   - it: renders each remote builder value that is set
@@ -292,22 +292,22 @@ tests:
       - contains:
           path: spec.template.spec.containers[0].env
           content:
-            name: LEOFLOW_DEPLOY_DEFAULTS_REMOTE_BUILDER_CLOUD_BUILD_PROJECT
+            name: DEXAFLOW_DEPLOY_DEFAULTS_REMOTE_BUILDER_CLOUD_BUILD_PROJECT
             value: acme-ci
       - contains:
           path: spec.template.spec.containers[0].env
           content:
-            name: LEOFLOW_DEPLOY_DEFAULTS_REMOTE_BUILDER_CLOUD_BUILD_REGION
+            name: DEXAFLOW_DEPLOY_DEFAULTS_REMOTE_BUILDER_CLOUD_BUILD_REGION
             value: us-central1
       - contains:
           path: spec.template.spec.containers[0].env
           content:
-            name: LEOFLOW_DEPLOY_DEFAULTS_REMOTE_BUILDER_CLOUD_BUILD_WORKER_POOL
+            name: DEXAFLOW_DEPLOY_DEFAULTS_REMOTE_BUILDER_CLOUD_BUILD_WORKER_POOL
             value: projects/acme-ci/locations/us-central1/workerPools/builds
       - contains:
           path: spec.template.spec.containers[0].env
           content:
-            name: LEOFLOW_DEPLOY_DEFAULTS_REMOTE_BUILDER_CLOUD_BUILD_SERVICE_ACCOUNT
+            name: DEXAFLOW_DEPLOY_DEFAULTS_REMOTE_BUILDER_CLOUD_BUILD_SERVICE_ACCOUNT
             value: projects/acme-ci/serviceAccounts/builder@acme-ci.iam.gserviceaccount.com
 
   - it: renders only the remote builder values that are set
@@ -318,10 +318,10 @@ tests:
       - contains:
           path: spec.template.spec.containers[0].env
           content:
-            name: LEOFLOW_DEPLOY_DEFAULTS_REMOTE_BUILDER_CLOUD_BUILD_PROJECT
+            name: DEXAFLOW_DEPLOY_DEFAULTS_REMOTE_BUILDER_CLOUD_BUILD_PROJECT
             value: acme-ci
       - notExists:
-          path: spec.template.spec.containers[0].env[?(@.name == "LEOFLOW_DEPLOY_DEFAULTS_REMOTE_BUILDER_CLOUD_BUILD_REGION")]
+          path: spec.template.spec.containers[0].env[?(@.name == "DEXAFLOW_DEPLOY_DEFAULTS_REMOTE_BUILDER_CLOUD_BUILD_REGION")]
 
   - it: refuses a remote builder without a project
     template: deployment.yaml
@@ -380,7 +380,7 @@ tests:
       - contains:
           path: spec.template.spec.containers[0].env
           content:
-            name: LEOFLOW_DEPLOY_DEFAULTS_TASK_SERVICE_ACCOUNT
+            name: DEXAFLOW_DEPLOY_DEFAULTS_TASK_SERVICE_ACCOUNT
             value: "true"
   - it: accepts the task service account default when extraEnv sets the account
     template: deployment.yaml
@@ -393,7 +393,7 @@ tests:
       - contains:
           path: spec.template.spec.containers[0].env
           content:
-            name: LEOFLOW_DEPLOY_DEFAULTS_TASK_SERVICE_ACCOUNT
+            name: DEXAFLOW_DEPLOY_DEFAULTS_TASK_SERVICE_ACCOUNT
             value: "true"
   - it: refuses the task service account default when no account is set
     template: deployment.yaml
@@ -411,7 +411,7 @@ tests:
       - contains:
           path: spec.template.spec.containers[0].env
           content:
-            name: LEOFLOW_DEPLOY_DEFAULTS_WARM_POOLS
+            name: DEXAFLOW_DEPLOY_DEFAULTS_WARM_POOLS
             value: "true"
 
   - it: renders the new defaults on the split api Deployment
@@ -427,10 +427,10 @@ tests:
       - contains:
           path: spec.template.spec.containers[0].env
           content:
-            name: LEOFLOW_DEPLOY_DEFAULTS_REMOTE_BUILDER_CLOUD_BUILD_PROJECT
+            name: DEXAFLOW_DEPLOY_DEFAULTS_REMOTE_BUILDER_CLOUD_BUILD_PROJECT
             value: acme-ci
       - contains:
           path: spec.template.spec.containers[0].env
           content:
-            name: LEOFLOW_DEPLOY_DEFAULTS_WARM_POOLS
+            name: DEXAFLOW_DEPLOY_DEFAULTS_WARM_POOLS
             value: "true"

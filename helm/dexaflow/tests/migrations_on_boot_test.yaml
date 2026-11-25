@@ -18,7 +18,7 @@ tests:
       - notContains:
           path: spec.template.spec.containers[0].env
           content:
-            name: LEOFLOW_DATABASE_MIGRATE_ON_BOOT
+            name: DEXAFLOW_DATABASE_MIGRATE_ON_BOOT
             value: "true"
 
   - it: turns self-migration on for the all role
@@ -29,7 +29,7 @@ tests:
       - contains:
           path: spec.template.spec.containers[0].env
           content:
-            name: LEOFLOW_DATABASE_MIGRATE_ON_BOOT
+            name: DEXAFLOW_DATABASE_MIGRATE_ON_BOOT
             value: "true"
 
   # The api role never migrates, whatever its DSN can do; the server refuses
@@ -44,7 +44,7 @@ tests:
       - notContains:
           path: spec.template.spec.containers[0].env
           content:
-            name: LEOFLOW_DATABASE_MIGRATE_ON_BOOT
+            name: DEXAFLOW_DATABASE_MIGRATE_ON_BOOT
             value: "true"
         documentSelector:
           path: metadata.name
@@ -52,7 +52,7 @@ tests:
       - contains:
           path: spec.template.spec.containers[0].env
           content:
-            name: LEOFLOW_DATABASE_MIGRATE_ON_BOOT
+            name: DEXAFLOW_DATABASE_MIGRATE_ON_BOOT
             value: "true"
         documentSelector:
           path: metadata.name

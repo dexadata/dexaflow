@@ -17,16 +17,16 @@ set:
   redis.url: redis://h/0
   auth.jwtSecret: jwt
 tests:
-  - it: no LEOFLOW_SERVER_TRUSTED_PROXIES env when config.trustedProxies is unset (default trust-none)
+  - it: no DEXAFLOW_SERVER_TRUSTED_PROXIES env when config.trustedProxies is unset (default trust-none)
     template: deployment.yaml
     asserts:
       - notContains:
           path: spec.template.spec.containers[0].env
           content:
-            name: LEOFLOW_SERVER_TRUSTED_PROXIES
+            name: DEXAFLOW_SERVER_TRUSTED_PROXIES
           any: true
 
-  - it: config.trustedProxies renders a comma-joined LEOFLOW_SERVER_TRUSTED_PROXIES env (viper splits it into a list)
+  - it: config.trustedProxies renders a comma-joined DEXAFLOW_SERVER_TRUSTED_PROXIES env (viper splits it into a list)
     template: deployment.yaml
     set:
       config.trustedProxies:
@@ -36,7 +36,7 @@ tests:
       - contains:
           path: spec.template.spec.containers[0].env
           content:
-            name: LEOFLOW_SERVER_TRUSTED_PROXIES
+            name: DEXAFLOW_SERVER_TRUSTED_PROXIES
             value: 10.0.0.0/8,192.168.1.1
 
   - it: no executor resource-default env when executor.defaults.resources is unset
@@ -45,12 +45,12 @@ tests:
       - notContains:
           path: spec.template.spec.containers[0].env
           content:
-            name: LEOFLOW_EXECUTOR_DEFAULTS_RESOURCES_CPU
+            name: DEXAFLOW_EXECUTOR_DEFAULTS_RESOURCES_CPU
           any: true
       - notContains:
           path: spec.template.spec.containers[0].env
           content:
-            name: LEOFLOW_EXECUTOR_DEFAULTS_RESOURCES_MEMORY
+            name: DEXAFLOW_EXECUTOR_DEFAULTS_RESOURCES_MEMORY
           any: true
 
   - it: executor.defaults.resources renders CPU + memory default env vars
@@ -62,12 +62,12 @@ tests:
       - contains:
           path: spec.template.spec.containers[0].env
           content:
-            name: LEOFLOW_EXECUTOR_DEFAULTS_RESOURCES_CPU
+            name: DEXAFLOW_EXECUTOR_DEFAULTS_RESOURCES_CPU
             value: 250m
       - contains:
           path: spec.template.spec.containers[0].env
           content:
-            name: LEOFLOW_EXECUTOR_DEFAULTS_RESOURCES_MEMORY
+            name: DEXAFLOW_EXECUTOR_DEFAULTS_RESOURCES_MEMORY
             value: 256Mi
 
   - it: no default task limit env when executor.defaults.limits is unset (#537)
@@ -76,12 +76,12 @@ tests:
       - notContains:
           path: spec.template.spec.containers[0].env
           content:
-            name: LEOFLOW_EXECUTOR_DEFAULTS_LIMITS_CPU
+            name: DEXAFLOW_EXECUTOR_DEFAULTS_LIMITS_CPU
           any: true
       - notContains:
           path: spec.template.spec.containers[0].env
           content:
-            name: LEOFLOW_EXECUTOR_DEFAULTS_LIMITS_MEMORY
+            name: DEXAFLOW_EXECUTOR_DEFAULTS_LIMITS_MEMORY
           any: true
 
   - it: executor.defaults.limits renders the default task limit env vars (#537)
@@ -93,12 +93,12 @@ tests:
       - contains:
           path: spec.template.spec.containers[0].env
           content:
-            name: LEOFLOW_EXECUTOR_DEFAULTS_LIMITS_CPU
+            name: DEXAFLOW_EXECUTOR_DEFAULTS_LIMITS_CPU
             value: "2"
       - contains:
           path: spec.template.spec.containers[0].env
           content:
-            name: LEOFLOW_EXECUTOR_DEFAULTS_LIMITS_MEMORY
+            name: DEXAFLOW_EXECUTOR_DEFAULTS_LIMITS_MEMORY
             value: 4Gi
 
   - it: no executor staging-default env when executor.defaults.staging is unset
@@ -107,12 +107,12 @@ tests:
       - notContains:
           path: spec.template.spec.containers[0].env
           content:
-            name: LEOFLOW_EXECUTOR_DEFAULTS_STAGING_SIZE
+            name: DEXAFLOW_EXECUTOR_DEFAULTS_STAGING_SIZE
           any: true
       - notContains:
           path: spec.template.spec.containers[0].env
           content:
-            name: LEOFLOW_EXECUTOR_DEFAULTS_STAGING_STORAGE_CLASS
+            name: DEXAFLOW_EXECUTOR_DEFAULTS_STAGING_STORAGE_CLASS
           any: true
 
   - it: executor.defaults.staging renders size + storageClass default env vars (#743)
@@ -124,12 +124,12 @@ tests:
       - contains:
           path: spec.template.spec.containers[0].env
           content:
-            name: LEOFLOW_EXECUTOR_DEFAULTS_STAGING_SIZE
+            name: DEXAFLOW_EXECUTOR_DEFAULTS_STAGING_SIZE
             value: 10Gi
       - contains:
           path: spec.template.spec.containers[0].env
           content:
-            name: LEOFLOW_EXECUTOR_DEFAULTS_STAGING_STORAGE_CLASS
+            name: DEXAFLOW_EXECUTOR_DEFAULTS_STAGING_STORAGE_CLASS
             value: efs-rwx
 
   # config.cors.allowedOrigins shipped in values.yaml documented as the API's CORS
@@ -141,16 +141,16 @@ tests:
   # would have widened CORS to every origin on the next `helm upgrade` for every
   # existing install, which is a silent loosening nobody asked for. Empty renders
   # nothing and leaves the server default exactly as it is today.
-  - it: no LEOFLOW_SERVER_CORS_ALLOWED_ORIGINS env by default (server keeps its own default)
+  - it: no DEXAFLOW_SERVER_CORS_ALLOWED_ORIGINS env by default (server keeps its own default)
     template: deployment.yaml
     asserts:
       - notContains:
           path: spec.template.spec.containers[0].env
           content:
-            name: LEOFLOW_SERVER_CORS_ALLOWED_ORIGINS
+            name: DEXAFLOW_SERVER_CORS_ALLOWED_ORIGINS
           any: true
 
-  - it: config.cors.allowedOrigins renders a comma-joined LEOFLOW_SERVER_CORS_ALLOWED_ORIGINS env
+  - it: config.cors.allowedOrigins renders a comma-joined DEXAFLOW_SERVER_CORS_ALLOWED_ORIGINS env
     template: deployment.yaml
     set:
       config.cors.allowedOrigins:
@@ -160,7 +160,7 @@ tests:
       - contains:
           path: spec.template.spec.containers[0].env
           content:
-            name: LEOFLOW_SERVER_CORS_ALLOWED_ORIGINS
+            name: DEXAFLOW_SERVER_CORS_ALLOWED_ORIGINS
             value: https://app.example.com,https://admin.example.com
           any: true
 

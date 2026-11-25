@@ -24,7 +24,7 @@ tests:
       - contains:
           path: spec.template.spec.containers[0].env
           content:
-            name: LEOFLOW_EXECUTOR_TASK_NAMESPACE
+            name: DEXAFLOW_EXECUTOR_TASK_NAMESPACE
             value: data-platform
 
   - it: the executor Role lives in that namespace

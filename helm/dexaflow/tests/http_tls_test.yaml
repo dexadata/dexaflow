@@ -22,7 +22,7 @@ tests:
       - notContains:
           path: spec.template.spec.containers[0].env
           content:
-            name: LEOFLOW_SERVER_HTTP_TLS_CERT
+            name: DEXAFLOW_SERVER_HTTP_TLS_CERT
           any: true
       - notContains:
           path: spec.template.spec.volumes
@@ -51,12 +51,12 @@ tests:
       - contains:
           path: spec.template.spec.containers[0].env
           content:
-            name: LEOFLOW_SERVER_HTTP_TLS_CERT
+            name: DEXAFLOW_SERVER_HTTP_TLS_CERT
             value: /etc/leoflow/http-tls/tls.crt
       - contains:
           path: spec.template.spec.containers[0].env
           content:
-            name: LEOFLOW_SERVER_HTTP_TLS_KEY
+            name: DEXAFLOW_SERVER_HTTP_TLS_KEY
             value: /etc/leoflow/http-tls/tls.key
       - contains:
           path: spec.template.spec.containers[0].volumeMounts
@@ -101,7 +101,7 @@ tests:
       - contains:
           path: spec.template.spec.containers[0].env
           content:
-            name: LEOFLOW_SERVER_HTTP_TLS_CERT
+            name: DEXAFLOW_SERVER_HTTP_TLS_CERT
             value: /etc/leoflow/http-tls/tls.crt
         documentIndex: 0
       - equal:
@@ -111,7 +111,7 @@ tests:
       - notContains:
           path: spec.template.spec.containers[0].env
           content:
-            name: LEOFLOW_SERVER_HTTP_TLS_CERT
+            name: DEXAFLOW_SERVER_HTTP_TLS_CERT
           any: true
         documentIndex: 1
       - notContains:
@@ -156,5 +156,5 @@ tests:
       - notContains:
           path: spec.template.spec.containers[0].env
           content:
-            name: LEOFLOW_SERVER_HTTP_TLS_CERT
+            name: DEXAFLOW_SERVER_HTTP_TLS_CERT
           any: true

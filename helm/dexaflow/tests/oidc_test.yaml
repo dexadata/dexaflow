@@ -52,12 +52,12 @@ tests:
       - notContains:
           path: spec.template.spec.containers[0].env
           content:
-            name: LEOFLOW_AUTH_PROVIDER
+            name: DEXAFLOW_AUTH_PROVIDER
             value: "oidc"
       - notContains:
           path: spec.template.spec.containers[0].env
           content:
-            name: LEOFLOW_CONFIG
+            name: DEXAFLOW_CONFIG
             value: /etc/leoflow/oidc/config.yaml
       - notContains:
           path: spec.template.spec.containers[0].volumeMounts
@@ -66,14 +66,14 @@ tests:
             mountPath: /etc/leoflow/oidc
             readOnly: true
 
-  # Property 2. LEOFLOW_CONFIG has to resolve to the file the volume actually
+  # Property 2. DEXAFLOW_CONFIG has to resolve to the file the volume actually
   # projects. A mismatch is not a render error: it is a server that reads no file
   # and then fails boot on a tenant pin the operator can see sitting in the
   # ConfigMap next to the pod, which is the most expensive possible way to spell a
   # typo. One template-local variable defines the path and all three sites read it;
   # this asserts the three agree in the OUTPUT, where a future refactor would break
   # them.
-  - it: points LEOFLOW_CONFIG at the file the oidc volume projects
+  - it: points DEXAFLOW_CONFIG at the file the oidc volume projects
     template: deployment.yaml
     set:
       auth.oidc.enabled: true
@@ -88,7 +88,7 @@ tests:
       - contains:
           path: spec.template.spec.containers[0].env
           content:
-            name: LEOFLOW_CONFIG
+            name: DEXAFLOW_CONFIG
             value: /etc/leoflow/oidc/config.yaml
       - contains:
           path: spec.template.spec.containers[0].volumeMounts
@@ -122,17 +122,17 @@ tests:
       - contains:
           path: spec.template.spec.containers[0].env
           content:
-            name: LEOFLOW_AUTH_PROVIDER
+            name: DEXAFLOW_AUTH_PROVIDER
             value: "oidc"
       - contains:
           path: spec.template.spec.containers[0].env
           content:
-            name: LEOFLOW_AUTH_OIDC_ISSUER
+            name: DEXAFLOW_AUTH_OIDC_ISSUER
             value: https://accounts.google.com
       - contains:
           path: spec.template.spec.containers[0].env
           content:
-            name: LEOFLOW_AUTH_OIDC_TENANT_CLAIM
+            name: DEXAFLOW_AUTH_OIDC_TENANT_CLAIM
             value: hd
       # Comma-joined rather than one variable per element: viper's decode hook
       # splits it back into the []string the server wants, the same mechanism
@@ -140,7 +140,7 @@ tests:
       - contains:
           path: spec.template.spec.containers[0].env
           content:
-            name: LEOFLOW_AUTH_OIDC_SCOPES
+            name: DEXAFLOW_AUTH_OIDC_SCOPES
             value: openid,email,profile
 
   # The flag that decides whether ANY login can complete. A login is matched to a
@@ -163,7 +163,7 @@ tests:
       - contains:
           path: spec.template.spec.containers[0].env
           content:
-            name: LEOFLOW_AUTH_OIDC_JIT_PROVISIONING
+            name: DEXAFLOW_AUTH_OIDC_JIT_PROVISIONING
             value: "true"
 
   # The three optional list/scalar keys are OMITTED when empty rather than stamped
@@ -184,17 +184,17 @@ tests:
       - notContains:
           path: spec.template.spec.containers[0].env
           content:
-            name: LEOFLOW_AUTH_OIDC_DEFAULT_ROLE
+            name: DEXAFLOW_AUTH_OIDC_DEFAULT_ROLE
             value: ""
       - notContains:
           path: spec.template.spec.containers[0].env
           content:
-            name: LEOFLOW_AUTH_OIDC_ALLOWED_EMAIL_DOMAINS
+            name: DEXAFLOW_AUTH_OIDC_ALLOWED_EMAIL_DOMAINS
             value: ""
       - notContains:
           path: spec.template.spec.containers[0].env
           content:
-            name: LEOFLOW_AUTH_OIDC_BREAK_GLASS_EMAILS
+            name: DEXAFLOW_AUTH_OIDC_BREAK_GLASS_EMAILS
             value: ""
 
   # Property 3. A ConfigMap is readable by anything with `get` on the namespace and
@@ -234,7 +234,7 @@ tests:
       - contains:
           path: spec.template.spec.containers[0].env
           content:
-            name: LEOFLOW_AUTH_OIDC_CLIENT_SECRET
+            name: DEXAFLOW_AUTH_OIDC_CLIENT_SECRET
             valueFrom:
               secretKeyRef:
                 name: leoflow-credentials
@@ -257,7 +257,7 @@ tests:
       - contains:
           path: spec.template.spec.containers[0].env
           content:
-            name: LEOFLOW_AUTH_OIDC_CLIENT_SECRET
+            name: DEXAFLOW_AUTH_OIDC_CLIENT_SECRET
             valueFrom:
               secretKeyRef:
                 name: my-idp-secret
@@ -280,7 +280,7 @@ tests:
       - notContains:
           path: spec.template.spec.containers[0].env
           content:
-            name: LEOFLOW_AUTH_OIDC_CLIENT_SECRET
+            name: DEXAFLOW_AUTH_OIDC_CLIENT_SECRET
             valueFrom:
               secretKeyRef:
                 name: leoflow-credentials
@@ -370,8 +370,8 @@ tests:
   # away from the mounted file and take the tenant pin, which has no other route,
   # with it. The resulting boot failure looks exactly like a missing pin the
   # operator can see configured in the ConfigMap. Refused only while SSO is on:
-  # pointing LEOFLOW_CONFIG at a file of your own is legitimate otherwise.
-  - it: refuses an extraEnv entry that repoints LEOFLOW_CONFIG while SSO is on
+  # pointing DEXAFLOW_CONFIG at a file of your own is legitimate otherwise.
+  - it: refuses an extraEnv entry that repoints DEXAFLOW_CONFIG while SSO is on
     template: deployment.yaml
     set:
       auth.oidc.enabled: true
@@ -386,7 +386,7 @@ tests:
           value: /etc/mine/config.yaml
     asserts:
       - failedTemplate:
-          errorPattern: "extraEnv must not set LEOFLOW_CONFIG"
+          errorPattern: "extraEnv must not set DEXAFLOW_CONFIG"
 
   # A ConfigMap volume's projection is not what the server re-reads: LoadServer
   # parses the file once at boot. Without this annotation an edited tenant map

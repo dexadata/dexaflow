@@ -485,7 +485,7 @@ jobs:
             -o jsonpath='{.metadata.annotations.helm\.sh/hook}')" \
             || { echo "::error::leoflow-credentials carries helm.sh/hook, which is the #1142 defect" >&2; exit 1; }
           ref="$(kubectl -n leoflow get deploy leoflow \
-            -o jsonpath='{.spec.template.spec.containers[0].env[?(@.name=="LEOFLOW_DATABASE_URL")].valueFrom.secretKeyRef.name}')"
+            -o jsonpath='{.spec.template.spec.containers[0].env[?(@.name=="DEXAFLOW_DATABASE_URL")].valueFrom.secretKeyRef.name}')"
           test "$ref" = "leoflow-credentials" \
             || { echo "::error::the Deployment reads '${ref}', not the durable Secret" >&2; exit 1; }
           if kubectl -n leoflow get secret leoflow-secrets >/dev/null 2>&1; then

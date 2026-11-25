@@ -20,7 +20,7 @@ tests:
       - notContains:
           path: spec.template.spec.containers[0].env
           content:
-            name: LEOFLOW_SCHEDULER_POOL_STARVATION_THRESHOLD
+            name: DEXAFLOW_SCHEDULER_POOL_STARVATION_THRESHOLD
           any: true
 
   - it: renders the threshold when set
@@ -31,5 +31,5 @@ tests:
       - contains:
           path: spec.template.spec.containers[0].env
           content:
-            name: LEOFLOW_SCHEDULER_POOL_STARVATION_THRESHOLD
+            name: DEXAFLOW_SCHEDULER_POOL_STARVATION_THRESHOLD
             value: 2m

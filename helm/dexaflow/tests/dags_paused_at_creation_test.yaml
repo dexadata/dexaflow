@@ -21,7 +21,7 @@ tests:
       - contains:
           path: spec.template.spec.containers[0].env
           content:
-            name: LEOFLOW_DAGS_ARE_PAUSED_AT_CREATION
+            name: DEXAFLOW_DAGS_ARE_PAUSED_AT_CREATION
             value: "true"
 
   - it: registers new DAGs active when config.dagsArePausedAtCreation is false
@@ -32,7 +32,7 @@ tests:
       - contains:
           path: spec.template.spec.containers[0].env
           content:
-            name: LEOFLOW_DAGS_ARE_PAUSED_AT_CREATION
+            name: DEXAFLOW_DAGS_ARE_PAUSED_AT_CREATION
             value: "false"
 
   # Registration is served by the api role; both Deployments share the env
@@ -49,5 +49,5 @@ tests:
       - contains:
           path: spec.template.spec.containers[0].env
           content:
-            name: LEOFLOW_DAGS_ARE_PAUSED_AT_CREATION
+            name: DEXAFLOW_DAGS_ARE_PAUSED_AT_CREATION
             value: "false"

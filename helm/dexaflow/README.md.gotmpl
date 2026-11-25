@@ -18,7 +18,7 @@ production-like install — distinct from the host-run `test/e2e/e2e.sh` smoke.
 | ServiceAccount + Role/RoleBinding | lets the control plane create/watch/delete **task pods** and read their logs in `taskNamespace` |
 | ClusterRole + ClusterRoleBinding | **only** when `auth.agentTokenTransport: exchange` — `create` on `tokenreviews` (cluster-scoped API). See [Agent credential transport](#agent-credential-transport-and-warm-worker-pools) |
 | Secret | holds inline DB/Redis/JWT/bootstrap credentials (skipped when you bring your own) |
-| ConfigMap | **only** when `auth.oidc.enabled`, the two OIDC settings that are maps and therefore have no env-var route (`tenantClaims`, `roleMappings`), mounted as the server's `LEOFLOW_CONFIG`. See [SSO with OIDC](#sso-with-oidc) |
+| ConfigMap | **only** when `auth.oidc.enabled`, the two OIDC settings that are maps and therefore have no env-var route (`tenantClaims`, `roleMappings`), mounted as the server's `DEXAFLOW_CONFIG`. See [SSO with OIDC](#sso-with-oidc) |
 | Job (hook) | runs `golang-migrate` before install/upgrade |
 | Ingress | optional |
 
@@ -284,7 +284,7 @@ redis:
 The chart then:
 
 1. Mounts the ConfigMap read-only at `/etc/leoflow/redis-ca/ca.crt`.
-2. Sets `LEOFLOW_REDIS_CA_FILE=/etc/leoflow/redis-ca/ca.crt` so the
+2. Sets `DEXAFLOW_REDIS_CA_FILE=/etc/leoflow/redis-ca/ca.crt` so the
    server overrides `tls.Config.RootCAs` instead of falling back to
    system roots.
 3. Refuses to boot if the file is missing or malformed (clear error
@@ -359,19 +359,26 @@ a real cluster, and unit tests do not clear it.
 ## Settings the chart does not model
 
 `extraEnv` appends raw env entries to the control-plane container, for any
-`LEOFLOW_*` setting without a first-class value (the full surface is in
+`DEXAFLOW_*` setting without a first-class value (the full surface is in
 [`docs/configuration.md`](https://github.com/dexadata/dexaflow/blob/main/docs/configuration.md)):
 
 ```yaml
 extraEnv:
-  - name: LEOFLOW_SCHEDULER_DISPATCH_WORKERS
+  - name: DEXAFLOW_SCHEDULER_DISPATCH_WORKERS
     value: "4"
 ```
 
+The chart renders every variable under its `DEXAFLOW_*` name since 0.6.0
+(#2156). An `extraEnv` entry under the name before the rename (`LEOFLOW_*`) is
+rendered under its `DEXAFLOW_*` name, after the chart's own entries, so it still
+wins over them; with both names listed, the `DEXAFLOW_*` entry is the one
+rendered, as the server would read it.
+
 It is an escape hatch, not an override: an entry redefining
-`LEOFLOW_EXECUTION_WARM_POOLS_ENABLED`, `LEOFLOW_AUTH_AGENT_TOKEN_TRANSPORT` or
-`LEOFLOW_AUTH_SECRET_LIVENESS_MODE` fails the render, because those three are the
-values the guard above validates against each other.
+`DEXAFLOW_EXECUTION_WARM_POOLS_ENABLED`, `DEXAFLOW_AUTH_AGENT_TOKEN_TRANSPORT` or
+`DEXAFLOW_AUTH_SECRET_LIVENESS_MODE` (or their `LEOFLOW_*` names) fails the
+render, because those three are the values the guard above validates against
+each other.
 
 ## SSO with OIDC
 
@@ -385,7 +392,7 @@ Viper binds env only for the scalar leaves the server registers, and those two a
 deliberately unregistered: a Google Workspace `hd` key is a domain, always dotted,
 and viper's `.` key delimiter would split it into nested maps and fail to decode
 (#826). The server reads them out-of-band from the YAML file named by
-`LEOFLOW_CONFIG`. The chart shipped no such file and no volume to put one in, so
+`DEXAFLOW_CONFIG`. The chart shipped no such file and no volume to put one in, so
 `auth.provider: oidc` could only ever fail boot closed on the missing tenant pin
 (#1143).
 
@@ -393,8 +400,8 @@ So the chart splits the delivery:
 
 | What | How |
 |---|---|
-| `issuer`, `clientId`, `redirectUrl`, `tenantClaim`, `scopes`, `groupsClaim`, `defaultRole`, `allowedEmailDomains`, `breakGlassEmails`, `jitProvisioning`, `clockSkewSeconds` | `LEOFLOW_AUTH_OIDC_*` env vars, the way the rest of this chart delivers server settings |
-| `tenantClaims`, `roleMappings` | a ConfigMap mounted read-only at `/etc/leoflow/oidc`, with `LEOFLOW_CONFIG` pointing at it |
+| `issuer`, `clientId`, `redirectUrl`, `tenantClaim`, `scopes`, `groupsClaim`, `defaultRole`, `allowedEmailDomains`, `breakGlassEmails`, `jitProvisioning`, `clockSkewSeconds` | `DEXAFLOW_AUTH_OIDC_*` env vars, the way the rest of this chart delivers server settings |
+| `tenantClaims`, `roleMappings` | a ConfigMap mounted read-only at `/etc/leoflow/oidc`, with `DEXAFLOW_CONFIG` pointing at it |
 | `clientSecret` | the chart-managed Secret (or `auth.oidc.existingSecret`), by `secretKeyRef`: never the ConfigMap |
 
 The mounted file is **partial on purpose**. Viper ranks env above a config file,
@@ -431,7 +438,7 @@ GitOps sync never shows, since Argo CD does not render `NOTES.txt`:
   boot failure on Kubernetes costs a values edit, an upgrade and a rollout to learn
   the next one.
 - a non-`https://` `issuer`.
-- an `extraEnv` entry setting `LEOFLOW_CONFIG` while SSO is on, which would repoint
+- an `extraEnv` entry setting `DEXAFLOW_CONFIG` (or `LEOFLOW_CONFIG`) while SSO is on, which would repoint
   the server away from the mounted file and take the tenant pin with it.
 
 `auth.oidc.jitProvisioning` defaults to `true` here, unlike the server's own

@@ -21,7 +21,7 @@ tests:
       - notContains:
           path: spec.template.spec.containers[0].env
           content:
-            name: LEOFLOW_AUTH_API_TOKENS_DISABLED
+            name: DEXAFLOW_AUTH_API_TOKENS_DISABLED
           any: true
 
   - it: turns the tokens off when auth.apiTokens.disabled is true
@@ -32,7 +32,7 @@ tests:
       - contains:
           path: spec.template.spec.containers[0].env
           content:
-            name: LEOFLOW_AUTH_API_TOKENS_DISABLED
+            name: DEXAFLOW_AUTH_API_TOKENS_DISABLED
             value: "true"
 
   # The api role serves the routes and authenticates requests, so the setting
@@ -50,7 +50,7 @@ tests:
       - contains:
           path: spec.template.spec.containers[0].env
           content:
-            name: LEOFLOW_AUTH_API_TOKENS_DISABLED
+            name: DEXAFLOW_AUTH_API_TOKENS_DISABLED
             value: "true"
 
   # helm upgrade --reuse-values from a release before this value existed
@@ -63,5 +63,5 @@ tests:
       - notContains:
           path: spec.template.spec.containers[0].env
           content:
-            name: LEOFLOW_AUTH_API_TOKENS_DISABLED
+            name: DEXAFLOW_AUTH_API_TOKENS_DISABLED
           any: true

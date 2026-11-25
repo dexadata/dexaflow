@@ -2,7 +2,7 @@
 title: "Version notes"
 linkTitle: "Version notes"
 weight: 10
-description: "What changes when a Cluster control plane upgrades to each 0.5.x release, and what to do about it."
+description: "What changes when a Cluster control plane upgrades to each 0.5.x and 0.6.x release, and what to do about it."
 ---
 
 One section per release: what changes when a Cluster control plane [upgrades](/operate/upgrades/) to it, and what to do. Read the sections between your version and the target before a `helm upgrade`.
@@ -1249,3 +1249,21 @@ since the last check are replayed when it is noticed, at most a second later.
 Every log stream also publishes from its own queue now, in batches of up to
 256 lines per Redis round trip, so a follower costs a chatty task far less
 receive rate than before, under either mode.
+
+## Upgrading to 0.6.0: the chart renders DEXAFLOW_* variables
+
+The chart renders every control-plane variable under its `DEXAFLOW_*` name
+instead of `LEOFLOW_*`
+([#2156](https://github.com/dexadata/dexaflow/issues/2156)), so
+`kubectl describe` and the pod spec show the new name. The server reads both
+names, so nothing changes in what it runs with.
+
+| Your install | What the upgrade does |
+|---|---|
+| No `extraEnv` | The Deployments roll once with the new names. Nothing else changes. |
+| `extraEnv` entries under `LEOFLOW_*` names | They are rendered under their `DEXAFLOW_*` names and still win over the chart's own entries. Move them to the new names when convenient. |
+| `extraEnv` sets the same setting under both names | Only the `DEXAFLOW_*` entry is rendered, the one the server would read. |
+| Tooling that reads the pod spec for a `LEOFLOW_*` name (a policy, a script, a dashboard) | It no longer finds it. Read the `DEXAFLOW_*` name. |
+
+Task pods are not affected: the variables the server sets on them keep their
+names.

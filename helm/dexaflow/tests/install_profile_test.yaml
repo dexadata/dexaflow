@@ -23,22 +23,22 @@ tests:
           value: cluster
       - contains:
           path: spec.template.spec.containers[0].env
-          content: {name: LEOFLOW_SCHEDULER_DISPATCH_BUFFER_SIZE, value: "512"}
+          content: {name: DEXAFLOW_SCHEDULER_DISPATCH_BUFFER_SIZE, value: "512"}
       - contains:
           path: spec.template.spec.containers[0].env
-          content: {name: LEOFLOW_SCHEDULER_DISPATCH_WORKERS, value: "16"}
+          content: {name: DEXAFLOW_SCHEDULER_DISPATCH_WORKERS, value: "16"}
       - contains:
           path: spec.template.spec.containers[0].env
-          content: {name: LEOFLOW_EXECUTOR_KUBE_CLIENT_QPS, value: "50"}
+          content: {name: DEXAFLOW_EXECUTOR_KUBE_CLIENT_QPS, value: "50"}
       - contains:
           path: spec.template.spec.containers[0].env
-          content: {name: LEOFLOW_EXECUTOR_KUBE_CLIENT_BURST, value: "100"}
+          content: {name: DEXAFLOW_EXECUTOR_KUBE_CLIENT_BURST, value: "100"}
       - contains:
           path: spec.template.spec.containers[0].env
-          content: {name: LEOFLOW_EXECUTOR_KUBE_CLIENT_MAINTENANCE_QPS, value: "20"}
+          content: {name: DEXAFLOW_EXECUTOR_KUBE_CLIENT_MAINTENANCE_QPS, value: "20"}
       - contains:
           path: spec.template.spec.containers[0].env
-          content: {name: LEOFLOW_EXECUTOR_KUBE_CLIENT_MAINTENANCE_BURST, value: "40"}
+          content: {name: DEXAFLOW_EXECUTOR_KUBE_CLIENT_MAINTENANCE_BURST, value: "40"}
       - contains:
           path: spec.template.spec.containers[0].env
           content: {name: GOMEMLIMIT, value: 409MiB}
@@ -46,7 +46,7 @@ tests:
       # out of the profile and are set by hand.
       - notContains:
           path: spec.template.spec.containers[0].env
-          content: {name: LEOFLOW_DATABASE_SCHEDULER_MAX_CONNS}
+          content: {name: DEXAFLOW_DATABASE_SCHEDULER_MAX_CONNS}
           any: true
 
   - it: every value the profile governs wins once set, 0 and false included
@@ -59,14 +59,14 @@ tests:
     asserts:
       - notContains:
           path: spec.template.spec.containers[0].env
-          content: {name: LEOFLOW_SCHEDULER_DISPATCH_BUFFER_SIZE}
+          content: {name: DEXAFLOW_SCHEDULER_DISPATCH_BUFFER_SIZE}
           any: true
       - contains:
           path: spec.template.spec.containers[0].env
-          content: {name: LEOFLOW_EXECUTOR_KUBE_CLIENT_QPS, value: "80"}
+          content: {name: DEXAFLOW_EXECUTOR_KUBE_CLIENT_QPS, value: "80"}
       - notContains:
           path: spec.template.spec.containers[0].env
-          content: {name: LEOFLOW_EXECUTOR_KUBE_CLIENT_MAINTENANCE_QPS}
+          content: {name: DEXAFLOW_EXECUTOR_KUBE_CLIENT_MAINTENANCE_QPS}
           any: true
       - notContains:
           path: spec.template.spec.containers[0].env
@@ -93,11 +93,11 @@ tests:
           value: legacy
       - notContains:
           path: spec.template.spec.containers[0].env
-          content: {name: LEOFLOW_SCHEDULER_DISPATCH_BUFFER_SIZE}
+          content: {name: DEXAFLOW_SCHEDULER_DISPATCH_BUFFER_SIZE}
           any: true
       - notContains:
           path: spec.template.spec.containers[0].env
-          content: {name: LEOFLOW_EXECUTOR_KUBE_CLIENT_QPS}
+          content: {name: DEXAFLOW_EXECUTOR_KUBE_CLIENT_QPS}
           any: true
       - notContains:
           path: spec.template.spec.containers[0].env
@@ -137,7 +137,7 @@ tests:
           value: legacy
       - notContains:
           path: spec.template.spec.containers[0].env
-          content: {name: LEOFLOW_SCHEDULER_DISPATCH_BUFFER_SIZE}
+          content: {name: DEXAFLOW_SCHEDULER_DISPATCH_BUFFER_SIZE}
           any: true
       - notContains:
           path: spec.template.spec.containers[0].env
@@ -167,7 +167,7 @@ tests:
           value: cluster
       - contains:
           path: spec.template.spec.containers[0].env
-          content: {name: LEOFLOW_SCHEDULER_DISPATCH_BUFFER_SIZE, value: "512"}
+          content: {name: DEXAFLOW_SCHEDULER_DISPATCH_BUFFER_SIZE, value: "512"}
 
   - it: an upgrade reads only this release's Deployment
     template: deployment.yaml

@@ -9,7 +9,7 @@ serves no HTTP API).
 */}}
 {{- define "leoflow.controlPlaneDeployment" -}}
 {{- /* One definition of where the OIDC config file lands, because three places
-     have to agree on it: the volumeMount, the volume, and the LEOFLOW_CONFIG
+     have to agree on it: the volumeMount, the volume, and the DEXAFLOW_CONFIG
      env var the server resolves. A disagreement between them is not a render
      error: it is a boot that reads no file and then fails closed on a tenant
      pin the operator can see configured in the ConfigMap right next to it. */ -}}
@@ -156,7 +156,7 @@ spec:
             {{- if ne .role "all" }}
             # ADR 0049 — select this process's role. Omitted for the "all"
             # Deployment so its rendered env is identical to the pre-split chart.
-            - name: LEOFLOW_SERVER_ROLE
+            - name: DEXAFLOW_SERVER_ROLE
               value: {{ .role | quote }}
             {{- end }}
             # "pro" is the earlier name of the cluster edition; the server reads
@@ -164,16 +164,16 @@ spec:
             # until every supported server accepts "cluster" (#2173).
             # Mark this deployment as the Pro edition. The control plane uses
             # this signal for two things: (a) refuse the
-            # LEOFLOW_AGENT_ALLOW_INSECURE_SECRETS=true dev escape hatch at boot
+            # DEXAFLOW_AGENT_ALLOW_INSECURE_SECRETS=true dev escape hatch at boot
             # (#58 / ADR 0014) so a Pro install cannot accidentally ship secrets
             # over a plaintext gRPC channel; (b) inject the gold PRO badge into
             # the served SPA shell, mirroring Lite's silver LITE pill.
-            - name: LEOFLOW_UI_EDITION
+            - name: DEXAFLOW_UI_EDITION
               value: "pro"
             # /readyz bounds its dependency checks at one second under the
             # kubelet's readiness timeout, so raising that timeout for a slow
             # database gives the server the same room (#1050).
-            - name: LEOFLOW_SERVER_PROBE_BUDGET
+            - name: DEXAFLOW_SERVER_PROBE_BUDGET
               value: {{ include "leoflow.readinessProbeBudget" .ctx | quote }}
             {{- $gml := (.ctx.Values.goMemLimit | default dict).enabled }}
             {{- $gmlOn := eq (include "leoflow.profiled" (dict "ctx" .ctx "value" $gml "cluster" true)) "true" }}
@@ -189,22 +189,22 @@ spec:
             # Rendering an empty string here would bind the variable to "" and
             # send the operator looking at the chart for a value the chart did
             # not actually choose.
-            - name: LEOFLOW_UI_AUTO_REFRESH_INTERVAL_SECONDS
+            - name: DEXAFLOW_UI_AUTO_REFRESH_INTERVAL_SECONDS
               value: {{ . | quote }}
             {{- end }}
             {{- with .ctx.Values.ui.theme }}
             # The UI's Chakra theme (#1289), as the compact JSON the server
             # validates at boot. Omitted when unset: the stock look.
-            - name: LEOFLOW_UI_THEME
+            - name: DEXAFLOW_UI_THEME
               value: {{ toJson . | quote }}
             {{- end }}
             {{- with .ctx.Values.ui.faviconUrl }}
-            - name: LEOFLOW_UI_FAVICON_URL
+            - name: DEXAFLOW_UI_FAVICON_URL
               value: {{ . | quote }}
             {{- end }}
             {{- with .ctx.Values.ui.stylesheetUrls }}
             # Comma-joined; the server splits it back into a list.
-            - name: LEOFLOW_UI_STYLESHEET_URLS
+            - name: DEXAFLOW_UI_STYLESHEET_URLS
               value: {{ join "," . | quote }}
             {{- end }}
             {{- with .ctx.Values.ui.homeLink }}
@@ -212,24 +212,24 @@ spec:
             # The operator's link back to their platform (#1290). Omitted when
             # unset, like the interval above; the server validates both values
             # at boot.
-            - name: LEOFLOW_UI_HOME_LINK_LABEL
+            - name: DEXAFLOW_UI_HOME_LINK_LABEL
               value: {{ .label | quote }}
-            - name: LEOFLOW_UI_HOME_LINK_URL
+            - name: DEXAFLOW_UI_HOME_LINK_URL
               value: {{ .url | quote }}
             {{- end }}
             {{- end }}
-            - name: LEOFLOW_SERVER_HTTP_ADDR
+            - name: DEXAFLOW_SERVER_HTTP_ADDR
               value: ":{{ .ctx.Values.ports.http }}"
-            - name: LEOFLOW_SERVER_METRICS_ADDR
+            - name: DEXAFLOW_SERVER_METRICS_ADDR
               value: ":{{ .ctx.Values.ports.metrics }}"
-            - name: LEOFLOW_SERVER_GRPC_ADDR
+            - name: DEXAFLOW_SERVER_GRPC_ADDR
               value: ":{{ .ctx.Values.ports.grpc }}"
-            - name: LEOFLOW_EXECUTOR_AGENT_CONTROL_PLANE_ADDR
+            - name: DEXAFLOW_EXECUTOR_AGENT_CONTROL_PLANE_ADDR
               value: {{ include "leoflow.agentControlPlaneAddr" .ctx | quote }}
             # The namespace the control plane creates task pods + staging PVCs in.
             # MUST equal the namespace the executor Role/RoleBinding are granted in
             # (rbac.yaml, also leoflow.taskNamespace) or every dispatch 403s (#480).
-            - name: LEOFLOW_EXECUTOR_TASK_NAMESPACE
+            - name: DEXAFLOW_EXECUTOR_TASK_NAMESPACE
               value: {{ include "leoflow.taskNamespace" .ctx | quote }}
             {{- if .ctx.Values.config.cors.allowedOrigins }}
             # CORS origins the API accepts (server.cors.allowed_origins, #1144).
@@ -238,7 +238,7 @@ spec:
             # env var back into a list. Omitted when empty, which leaves the server
             # default in place. This key existed in values.yaml with no consumer at
             # all until #1144, so anything set here before that was silently ignored.
-            - name: LEOFLOW_SERVER_CORS_ALLOWED_ORIGINS
+            - name: DEXAFLOW_SERVER_CORS_ALLOWED_ORIGINS
               value: {{ join "," .ctx.Values.config.cors.allowedOrigins | quote }}
             {{- end }}
             {{- if .ctx.Values.config.trustedProxies }}
@@ -248,7 +248,7 @@ spec:
             # single env var back into server.trusted_proxies ([]string). Without
             # it the per-IP login limiter keys on the ingress IP and one client's
             # bad logins lock out every user. Omitted when empty (trust none).
-            - name: LEOFLOW_SERVER_TRUSTED_PROXIES
+            - name: DEXAFLOW_SERVER_TRUSTED_PROXIES
               value: {{ join "," .ctx.Values.config.trustedProxies | quote }}
             {{- end }}
             {{- with .ctx.Values.config.alerts }}
@@ -257,13 +257,13 @@ spec:
             # metadata addresses (scheduler.alerts.block_private_destinations). An
             # alert URL is a tenant's connection, so on a shared engine it is
             # untrusted. Omitted when off, which leaves the server default (off).
-            - name: LEOFLOW_SCHEDULER_ALERTS_BLOCK_PRIVATE_DESTINATIONS
+            - name: DEXAFLOW_SCHEDULER_ALERTS_BLOCK_PRIVATE_DESTINATIONS
               value: "true"
             {{- end }}
             {{- if .allowedCIDRs }}
             # Ranges exempted from that block, comma-joined like trustedProxies;
             # viper splits the env var back into scheduler.alerts.allowed_cidrs.
-            - name: LEOFLOW_SCHEDULER_ALERTS_ALLOWED_CIDRS
+            - name: DEXAFLOW_SCHEDULER_ALERTS_ALLOWED_CIDRS
               value: {{ join "," .allowedCIDRs | quote }}
             {{- end }}
             {{- end }}
@@ -271,43 +271,43 @@ spec:
             # No API tokens (auth.api_tokens.disabled): their routes and screen
             # are not served and every dxf_ bearer is refused. Omitted when
             # false, which keeps the server default (served).
-            - name: LEOFLOW_AUTH_API_TOKENS_DISABLED
+            - name: DEXAFLOW_AUTH_API_TOKENS_DISABLED
               value: "true"
             {{- end }}
             {{- if .ctx.Values.config.poolsReadOnly }}
             # Tenant-facing pool API serves reads only (server.pools_read_only):
             # no tenant role, admin included, can create, resize or delete a pool.
             # Omitted when false, which keeps the server default (writable).
-            - name: LEOFLOW_SERVER_POOLS_READ_ONLY
+            - name: DEXAFLOW_SERVER_POOLS_READ_ONLY
               value: "true"
             {{- end }}
             # New DAGs start paused unless the DAG says otherwise
             # (dags_are_paused_at_creation, #1705). Rendered either way, so the
             # chart value, not the server build, decides.
-            - name: LEOFLOW_DAGS_ARE_PAUSED_AT_CREATION
+            - name: DEXAFLOW_DAGS_ARE_PAUSED_AT_CREATION
               value: {{ .ctx.Values.config.dagsArePausedAtCreation | toString | quote }}
             {{- if .ctx.Values.executor.defaults.resources.cpu }}
             # L0 per-cluster CPU default (ADR 0023). The server applies it as both
             # request and limit (#725). Guaranteed QoS needs the MEMORY default set
             # too — cpu alone is Burstable, and the server WARNs at boot (#802).
-            - name: LEOFLOW_EXECUTOR_DEFAULTS_RESOURCES_CPU
+            - name: DEXAFLOW_EXECUTOR_DEFAULTS_RESOURCES_CPU
               value: {{ .ctx.Values.executor.defaults.resources.cpu | quote }}
             {{- end }}
             {{- if .ctx.Values.executor.defaults.resources.memory }}
             # L0 per-cluster memory default (ADR 0023), request == limit (#725).
             # Pairs with the cpu default above; either one alone is Burstable.
-            - name: LEOFLOW_EXECUTOR_DEFAULTS_RESOURCES_MEMORY
+            - name: DEXAFLOW_EXECUTOR_DEFAULTS_RESOURCES_MEMORY
               value: {{ .ctx.Values.executor.defaults.resources.memory | quote }}
             {{- end }}
             {{- with .ctx.Values.executor.defaults.limits }}
             {{- if .cpu }}
             # Default task CPU limit (#537), filled where a task's resources set
             # none. Omitted when empty, which keeps the server default (no limit).
-            - name: LEOFLOW_EXECUTOR_DEFAULTS_LIMITS_CPU
+            - name: DEXAFLOW_EXECUTOR_DEFAULTS_LIMITS_CPU
               value: {{ .cpu | quote }}
             {{- end }}
             {{- if .memory }}
-            - name: LEOFLOW_EXECUTOR_DEFAULTS_LIMITS_MEMORY
+            - name: DEXAFLOW_EXECUTOR_DEFAULTS_LIMITS_MEMORY
               value: {{ .memory | quote }}
             {{- end }}
             {{- end }}
@@ -316,25 +316,25 @@ spec:
             # Resource unit of one pool slot (ADR 0066): tasks are sized
             # pool_slots x unit. The server refuses to boot with only one of the
             # two set.
-            - name: LEOFLOW_EXECUTOR_UNIT_CPU
+            - name: DEXAFLOW_EXECUTOR_UNIT_CPU
               value: {{ .cpu | quote }}
-            - name: LEOFLOW_EXECUTOR_UNIT_MEMORY
+            - name: DEXAFLOW_EXECUTOR_UNIT_MEMORY
               value: {{ .memory | quote }}
-            - name: LEOFLOW_EXECUTOR_UNIT_ENFORCE
+            - name: DEXAFLOW_EXECUTOR_UNIT_ENFORCE
               value: {{ .enforce | default "refuse" | quote }}
-            - name: LEOFLOW_EXECUTOR_UNIT_MAX_SIZE
+            - name: DEXAFLOW_EXECUTOR_UNIT_MAX_SIZE
               value: {{ .maxSize | default 64 | quote }}
             {{- end }}
             {{- end }}
             {{- if .ctx.Values.executor.defaults.staging.size }}
             # L0 per-cluster staging-volume size default (ADR 0023). Env is the only
             # override path since the chart ships no server config file (#743).
-            - name: LEOFLOW_EXECUTOR_DEFAULTS_STAGING_SIZE
+            - name: DEXAFLOW_EXECUTOR_DEFAULTS_STAGING_SIZE
               value: {{ .ctx.Values.executor.defaults.staging.size | quote }}
             {{- end }}
             {{- if .ctx.Values.executor.defaults.staging.storageClass }}
             # L0 per-cluster staging-volume StorageClass default (ADR 0023, #743).
-            - name: LEOFLOW_EXECUTOR_DEFAULTS_STAGING_STORAGE_CLASS
+            - name: DEXAFLOW_EXECUTOR_DEFAULTS_STAGING_STORAGE_CLASS
               value: {{ .ctx.Values.executor.defaults.staging.storageClass | quote }}
             {{- end }}
             {{- /* Kubernetes client rate limits (executor.kube_client). Unset under
@@ -342,7 +342,7 @@ spec:
                  client; the cluster profile (#2323) raises them and gives
                  maintenance work its own client and token bucket. 0 renders nothing. */}}
             {{- $kc := .ctx.Values.executor.kubeClient | default dict }}
-            {{- range $k := list (list "LEOFLOW_EXECUTOR_KUBE_CLIENT_QPS" "qps" 50) (list "LEOFLOW_EXECUTOR_KUBE_CLIENT_BURST" "burst" 100) (list "LEOFLOW_EXECUTOR_KUBE_CLIENT_MAINTENANCE_QPS" "maintenanceQps" 20) (list "LEOFLOW_EXECUTOR_KUBE_CLIENT_MAINTENANCE_BURST" "maintenanceBurst" 40) }}
+            {{- range $k := list (list "DEXAFLOW_EXECUTOR_KUBE_CLIENT_QPS" "qps" 50) (list "DEXAFLOW_EXECUTOR_KUBE_CLIENT_BURST" "burst" 100) (list "DEXAFLOW_EXECUTOR_KUBE_CLIENT_MAINTENANCE_QPS" "maintenanceQps" 20) (list "DEXAFLOW_EXECUTOR_KUBE_CLIENT_MAINTENANCE_BURST" "maintenanceBurst" 40) }}
             {{- $v := include "leoflow.profiled" (dict "ctx" $.ctx "value" (get $kc (index $k 1)) "cluster" (index $k 2)) }}
             {{- if and $v (ne $v "0") }}
             - name: {{ index $k 0 }}
@@ -352,17 +352,17 @@ spec:
             {{- if .ctx.Values.executor.collectSettledRunPods }}
             # Opt-in: collect a settled run's finished task pods in one
             # DeleteCollection instead of one delete per pod after the grace period.
-            - name: LEOFLOW_EXECUTOR_COLLECT_SETTLED_RUN_PODS
+            - name: DEXAFLOW_EXECUTOR_COLLECT_SETTLED_RUN_PODS
               value: "true"
             {{- end }}
-            - name: LEOFLOW_LOGS_DIR
+            - name: DEXAFLOW_LOGS_DIR
               value: {{ .ctx.Values.config.logsDir | quote }}
             {{- /* Live-tail publish mode (#2356): the cluster profile publishes only
                  while someone follows the attempt; legacy keeps always. */}}
-            - name: LEOFLOW_LOGS_TAIL_PUBLISH
+            - name: DEXAFLOW_LOGS_TAIL_PUBLISH
               value: {{ include "leoflow.profiled" (dict "ctx" .ctx "value" (.ctx.Values.logs.tail).publish "cluster" "on_demand") | default "always" | quote }}
             {{- if and (not .ctx.Values.logs.persistence.enabled) (eq .ctx.Values.logs.sink.provider "disk") }}
-            - name: LEOFLOW_LOGS_PERSISTENCE_ENABLED
+            - name: DEXAFLOW_LOGS_PERSISTENCE_ENABLED
               value: "false"
             {{- end }}
             {{- if ne .ctx.Values.logs.sink.provider "disk" }}
@@ -372,28 +372,28 @@ spec:
             # Keyless: bind this control-plane ServiceAccount to a cloud identity
             # (IRSA for s3, Workload Identity for gcs) via serviceAccount.annotations
             # and leave the credential fields empty.
-            - name: LEOFLOW_LOGS_BACKEND
+            - name: DEXAFLOW_LOGS_BACKEND
               value: {{ .ctx.Values.logs.sink.provider | quote }}
-            - name: LEOFLOW_LOGS_SINK_BUCKET
+            - name: DEXAFLOW_LOGS_SINK_BUCKET
               value: {{ .ctx.Values.logs.sink.bucket | quote }}
-            - name: LEOFLOW_LOGS_SINK_PREFIX
+            - name: DEXAFLOW_LOGS_SINK_PREFIX
               value: {{ .ctx.Values.logs.sink.prefix | quote }}
-            - name: LEOFLOW_LOGS_SINK_LAYOUT
+            - name: DEXAFLOW_LOGS_SINK_LAYOUT
               value: {{ .ctx.Values.logs.sink.layout | default "single" | quote }}
             {{- if eq .ctx.Values.logs.sink.provider "s3" }}
-            - name: LEOFLOW_LOGS_SINK_REGION
+            - name: DEXAFLOW_LOGS_SINK_REGION
               value: {{ .ctx.Values.logs.sink.region | quote }}
-            - name: LEOFLOW_LOGS_SINK_ENDPOINT
+            - name: DEXAFLOW_LOGS_SINK_ENDPOINT
               value: {{ .ctx.Values.logs.sink.endpoint | quote }}
-            - name: LEOFLOW_LOGS_SINK_FORCE_PATH_STYLE
+            - name: DEXAFLOW_LOGS_SINK_FORCE_PATH_STYLE
               value: {{ .ctx.Values.logs.sink.forcePathStyle | quote }}
             {{- if .ctx.Values.logs.sink.existingSecret }}
-            - name: LEOFLOW_LOGS_SINK_ACCESS_KEY_ID
+            - name: DEXAFLOW_LOGS_SINK_ACCESS_KEY_ID
               valueFrom:
                 secretKeyRef:
                   name: {{ .ctx.Values.logs.sink.existingSecret }}
                   key: accessKeyId
-            - name: LEOFLOW_LOGS_SINK_SECRET_ACCESS_KEY
+            - name: DEXAFLOW_LOGS_SINK_SECRET_ACCESS_KEY
               valueFrom:
                 secretKeyRef:
                   name: {{ .ctx.Values.logs.sink.existingSecret }}
@@ -401,13 +401,13 @@ spec:
             {{- end }}
             {{- end }}
             {{- end }}
-            - name: LEOFLOW_SCHEDULER_ENABLED
+            - name: DEXAFLOW_SCHEDULER_ENABLED
               value: {{ .ctx.Values.config.scheduler.enabled | quote }}
-            - name: LEOFLOW_SCHEDULER_LOOP_INTERVAL_MS
+            - name: DEXAFLOW_SCHEDULER_LOOP_INTERVAL_MS
               value: {{ .ctx.Values.config.scheduler.loopIntervalMs | quote }}
             {{- with .ctx.Values.config.scheduler.poolStarvationThreshold }}
             # Pool reservation for a starved large task (ADR 0066).
-            - name: LEOFLOW_SCHEDULER_POOL_STARVATION_THRESHOLD
+            - name: DEXAFLOW_SCHEDULER_POOL_STARVATION_THRESHOLD
               value: {{ . | quote }}
             {{- end }}
             {{- /* Buffered dispatch (ADR 0031, #127): the tick enqueues, workers create
@@ -415,54 +415,54 @@ spec:
                  synchronous dispatch; the cluster profile (#2323) buffers 512 with
                  16 workers. 0 renders nothing. */}}
             {{- $disp := .ctx.Values.config.scheduler.dispatch | default dict }}
-            {{- range $k := list (list "LEOFLOW_SCHEDULER_DISPATCH_BUFFER_SIZE" "bufferSize" 512) (list "LEOFLOW_SCHEDULER_DISPATCH_WORKERS" "workers" 16) }}
+            {{- range $k := list (list "DEXAFLOW_SCHEDULER_DISPATCH_BUFFER_SIZE" "bufferSize" 512) (list "DEXAFLOW_SCHEDULER_DISPATCH_WORKERS" "workers" 16) }}
             {{- $v := include "leoflow.profiled" (dict "ctx" $.ctx "value" (get $disp (index $k 1)) "cluster" (index $k 2)) }}
             {{- if and $v (ne $v "0") }}
             - name: {{ index $k 0 }}
               value: {{ $v | quote }}
             {{- end }}
             {{- end }}
-            - name: LEOFLOW_DATABASE_MAX_OPEN_CONNS
+            - name: DEXAFLOW_DATABASE_MAX_OPEN_CONNS
               value: {{ .ctx.Values.database.maxOpenConns | quote }}
-            - name: LEOFLOW_DATABASE_MAX_IDLE_CONNS
+            - name: DEXAFLOW_DATABASE_MAX_IDLE_CONNS
               value: {{ .ctx.Values.database.maxIdleConns | quote }}
             {{- /* Pool tuning, each omitted at its default 0 so the pools stay as they were. */}}
             {{- with .ctx.Values.database.schedulerMaxConns }}
-            - name: LEOFLOW_DATABASE_SCHEDULER_MAX_CONNS
+            - name: DEXAFLOW_DATABASE_SCHEDULER_MAX_CONNS
               value: {{ . | quote }}
             {{- end }}
             {{- with .ctx.Values.database.agentMaxConns }}
-            - name: LEOFLOW_DATABASE_AGENT_MAX_CONNS
+            - name: DEXAFLOW_DATABASE_AGENT_MAX_CONNS
               value: {{ . | quote }}
             {{- end }}
             {{- with .ctx.Values.database.statementTimeoutMs }}
-            - name: LEOFLOW_DATABASE_STATEMENT_TIMEOUT_MS
+            - name: DEXAFLOW_DATABASE_STATEMENT_TIMEOUT_MS
               value: {{ . | quote }}
             {{- end }}
             {{- with .ctx.Values.database.connMaxLifetimeJitterMs }}
-            - name: LEOFLOW_DATABASE_CONN_MAX_LIFETIME_JITTER_MS
+            - name: DEXAFLOW_DATABASE_CONN_MAX_LIFETIME_JITTER_MS
               value: {{ . | quote }}
             {{- end }}
-            - name: LEOFLOW_AUTH_JWT_TOKEN_TTL_SECONDS
+            - name: DEXAFLOW_AUTH_JWT_TOKEN_TTL_SECONDS
               value: {{ .ctx.Values.auth.tokenTtlSeconds | quote }}
             # Renewed-session ceiling (#801). Always rendered: 0 is a real value
             # (no ceiling), so it is never dropped the way `with` would drop it.
-            - name: LEOFLOW_AUTH_JWT_MAX_LIFETIME_SECONDS
+            - name: DEXAFLOW_AUTH_JWT_MAX_LIFETIME_SECONDS
               value: {{ .ctx.Values.auth.sessionMaxLifetimeSeconds | quote }}
             {{- with .ctx.Values.auth.externalSigninUrl }}
             # The operator's own sign-in and sign-out in place of Dexaflow's
             # pages (#1288). Omitted when unset; validated at boot.
-            - name: LEOFLOW_AUTH_EXTERNAL_SIGNIN_URL
+            - name: DEXAFLOW_AUTH_EXTERNAL_SIGNIN_URL
               value: {{ . | quote }}
             {{- end }}
             {{- with .ctx.Values.auth.externalSignoutUrl }}
-            - name: LEOFLOW_AUTH_EXTERNAL_SIGNOUT_URL
+            - name: DEXAFLOW_AUTH_EXTERNAL_SIGNOUT_URL
               value: {{ . | quote }}
             {{- end }}
             {{- with .ctx.Values.auth.sessionCookieName }}
             # Session cookie name (#1405). Omitted when unset, so the server
             # keeps _token; validated at boot.
-            - name: LEOFLOW_AUTH_SESSION_COOKIE_NAME
+            - name: DEXAFLOW_AUTH_SESSION_COOKIE_NAME
               value: {{ . | quote }}
             {{- end }}
             {{- with .ctx.Values.auth.trustedIssuer }}
@@ -472,37 +472,37 @@ spec:
             {{- if .issuer }}
             # Trusted-issuer handoff (#1284). Rendered as a block only when an
             # issuer is set; the server validates the whole section at boot.
-            - name: LEOFLOW_AUTH_TRUSTED_ISSUER_ISSUER
+            - name: DEXAFLOW_AUTH_TRUSTED_ISSUER_ISSUER
               value: {{ .issuer | quote }}
-            - name: LEOFLOW_AUTH_TRUSTED_ISSUER_NAME
+            - name: DEXAFLOW_AUTH_TRUSTED_ISSUER_NAME
               value: {{ .name | quote }}
-            - name: LEOFLOW_AUTH_TRUSTED_ISSUER_JWKS_URL
+            - name: DEXAFLOW_AUTH_TRUSTED_ISSUER_JWKS_URL
               value: {{ .jwksUrl | quote }}
-            - name: LEOFLOW_AUTH_TRUSTED_ISSUER_AUDIENCE
+            - name: DEXAFLOW_AUTH_TRUSTED_ISSUER_AUDIENCE
               value: {{ .audience | quote }}
-            - name: LEOFLOW_AUTH_TRUSTED_ISSUER_TENANT_CLAIM
+            - name: DEXAFLOW_AUTH_TRUSTED_ISSUER_TENANT_CLAIM
               value: {{ .tenantClaim | quote }}
-            - name: LEOFLOW_AUTH_TRUSTED_ISSUER_ALLOWED_TENANTS
+            - name: DEXAFLOW_AUTH_TRUSTED_ISSUER_ALLOWED_TENANTS
               value: {{ join "," .allowedTenants | quote }}
-            - name: LEOFLOW_AUTH_TRUSTED_ISSUER_MAX_LIFETIME_SECONDS
+            - name: DEXAFLOW_AUTH_TRUSTED_ISSUER_MAX_LIFETIME_SECONDS
               value: {{ .maxLifetimeSeconds | quote }}
-            - name: LEOFLOW_AUTH_TRUSTED_ISSUER_ALLOWED_ORIGINS
+            - name: DEXAFLOW_AUTH_TRUSTED_ISSUER_ALLOWED_ORIGINS
               value: {{ join "," .allowedOrigins | quote }}
             {{- with .bearerAudiences }}
             # Trusted-issuer bearer tokens (#1468), off unless audiences are set.
-            - name: LEOFLOW_AUTH_TRUSTED_ISSUER_BEARER_AUDIENCES
+            - name: DEXAFLOW_AUTH_TRUSTED_ISSUER_BEARER_AUDIENCES
               value: {{ join "," . | quote }}
             {{- end }}
-            - name: LEOFLOW_AUTH_TRUSTED_ISSUER_BEARER_MAX_LIFETIME_SECONDS
+            - name: DEXAFLOW_AUTH_TRUSTED_ISSUER_BEARER_MAX_LIFETIME_SECONDS
               value: {{ .bearerMaxLifetimeSeconds | quote }}
             {{- with .hostPattern }}
             # Host binding (#1463), off unless a pattern is set.
-            - name: LEOFLOW_AUTH_TRUSTED_ISSUER_HOST_PATTERN
+            - name: DEXAFLOW_AUTH_TRUSTED_ISSUER_HOST_PATTERN
               value: {{ . | quote }}
             {{- end }}
             {{- with .deployAudience }}
             # Deploys through the issuer only (#1773), off unless an audience is set.
-            - name: LEOFLOW_AUTH_TRUSTED_ISSUER_DEPLOY_AUDIENCE
+            - name: DEXAFLOW_AUTH_TRUSTED_ISSUER_DEPLOY_AUDIENCE
               value: {{ . | quote }}
             {{- end }}
             {{- end }}
@@ -511,38 +511,38 @@ spec:
             {{- if .issuers }}
             # CI OIDC issuers (ADR 0092, #1882). Rendered only when an entry is
             # set; the server validates every entry at boot.
-            - name: LEOFLOW_AUTH_CI_OIDC_ISSUERS
+            - name: DEXAFLOW_AUTH_CI_OIDC_ISSUERS
               value: {{ toJson .issuers | quote }}
-            - name: LEOFLOW_AUTH_CI_OIDC_SESSION_TTL_SECONDS
+            - name: DEXAFLOW_AUTH_CI_OIDC_SESSION_TTL_SECONDS
               value: {{ .sessionTtlSeconds | quote }}
             {{- end }}
             {{- end }}
-            - name: LEOFLOW_OBSERVABILITY_LOG_FORMAT
+            - name: DEXAFLOW_OBSERVABILITY_LOG_FORMAT
               value: {{ .ctx.Values.observability.logFormat | quote }}
-            - name: LEOFLOW_OBSERVABILITY_LOG_LEVEL
+            - name: DEXAFLOW_OBSERVABILITY_LOG_LEVEL
               value: {{ .ctx.Values.observability.logLevel | quote }}
             {{- if .ctx.Values.observability.otel.enabled }}
-            - name: LEOFLOW_OBSERVABILITY_OTEL_ENABLED
+            - name: DEXAFLOW_OBSERVABILITY_OTEL_ENABLED
               value: "true"
-            - name: LEOFLOW_OBSERVABILITY_OTEL_ENDPOINT
+            - name: DEXAFLOW_OBSERVABILITY_OTEL_ENDPOINT
               value: {{ .ctx.Values.observability.otel.endpoint | quote }}
             {{- end }}
             {{- if .ctx.Values.agentTLS.enabled }}
             # TLS on the agent gRPC channel (issue #58). The server cert is
             # mounted from agentTLS.serverCertSecret; the agent CA is delivered to
             # task pods via agentTLS.caConfigMap (the dispatcher mounts + selects it).
-            - name: LEOFLOW_SERVER_GRPC_TLS_CERT
+            - name: DEXAFLOW_SERVER_GRPC_TLS_CERT
               value: /etc/leoflow/grpc-tls/tls.crt
-            - name: LEOFLOW_SERVER_GRPC_TLS_KEY
+            - name: DEXAFLOW_SERVER_GRPC_TLS_KEY
               value: /etc/leoflow/grpc-tls/tls.key
-            - name: LEOFLOW_EXECUTOR_AGENT_TLS_CA_CONFIGMAP
+            - name: DEXAFLOW_EXECUTOR_AGENT_TLS_CA_CONFIGMAP
               value: {{ include "leoflow.agentTLS.caConfigMapName" .ctx | quote }}
             {{- end }}
             {{- if $httpTLS }}
             # HTTPS on the API listener (#638), from httpTLS.secretName.
-            - name: LEOFLOW_SERVER_HTTP_TLS_CERT
+            - name: DEXAFLOW_SERVER_HTTP_TLS_CERT
               value: /etc/leoflow/http-tls/tls.crt
-            - name: LEOFLOW_SERVER_HTTP_TLS_KEY
+            - name: DEXAFLOW_SERVER_HTTP_TLS_KEY
               value: /etc/leoflow/http-tls/tls.key
             {{- end }}
             {{- if .ctx.Values.taskSecret.name }}
@@ -550,9 +550,9 @@ spec:
             # read a credential (e.g. a GCP service-account key referenced by a
             # connection's key_path) from the cluster's secret store — Dexaflow
             # never stores the key itself (ADR 0035).
-            - name: LEOFLOW_EXECUTOR_TASK_SECRET_NAME
+            - name: DEXAFLOW_EXECUTOR_TASK_SECRET_NAME
               value: {{ .ctx.Values.taskSecret.name | quote }}
-            - name: LEOFLOW_EXECUTOR_TASK_SECRET_MOUNT_PATH
+            - name: DEXAFLOW_EXECUTOR_TASK_SECRET_MOUNT_PATH
               value: {{ .ctx.Values.taskSecret.mountPath | quote }}
             {{- end }}
             {{- if .ctx.Values.taskServiceAccount.create }}
@@ -560,7 +560,7 @@ spec:
             # does not set execution.service_account, so keyless (IRSA / Workload
             # Identity, ADR 0035/0060) works without every DAG opting in. An explicit
             # per-task execution.service_account still wins.
-            - name: LEOFLOW_EXECUTOR_TASK_SERVICE_ACCOUNT
+            - name: DEXAFLOW_EXECUTOR_TASK_SERVICE_ACCOUNT
               value: {{ .ctx.Values.taskServiceAccount.name | quote }}
             {{- end }}
             {{- if .ctx.Values.secrets.backend }}
@@ -568,34 +568,34 @@ spec:
             # resolved pod-side from the provider store under the pod's own keyless
             # identity, instead of Dexaflow's vault. Operator-only — delivered to task
             # pods as LEOFLOW_SECRETS_*, which an author's task env can never set.
-            - name: LEOFLOW_SECRETS_BACKEND
+            - name: DEXAFLOW_SECRETS_BACKEND
               value: {{ .ctx.Values.secrets.backend | quote }}
-            - name: LEOFLOW_SECRETS_BACKEND_KWARGS
+            - name: DEXAFLOW_SECRETS_BACKEND_KWARGS
               value: {{ .ctx.Values.secrets.backendKwargs | quote }}
             {{- end }}
             # Task-pod hardening. Always stamped, both directions: leaving the
             # secure value implicit would mean a chart upgrade could not turn an
             # opt-out back off without an operator noticing.
-            - name: LEOFLOW_EXECUTOR_DEFAULTS_RUN_TASKS_AS_NON_ROOT
+            - name: DEXAFLOW_EXECUTOR_DEFAULTS_RUN_TASKS_AS_NON_ROOT
               value: {{ .ctx.Values.taskPodSecurity.runAsNonRoot | quote }}
-            - name: LEOFLOW_EXECUTOR_DEFAULTS_READ_ONLY_TASK_ROOT_FILESYSTEM
+            - name: DEXAFLOW_EXECUTOR_DEFAULTS_READ_ONLY_TASK_ROOT_FILESYSTEM
               value: {{ .ctx.Values.taskPodSecurity.readOnlyRootFilesystem | quote }}
             {{- with .ctx.Values.executor.defaults.executionAllowlist }}
             # Execution (placement) allowlist (issue #629). Fields is always
             # stamped for the same reason as the hardening above; an empty list
             # renders "none" because an empty env var would fall back to "*".
-            - name: LEOFLOW_EXECUTOR_DEFAULTS_EXECUTION_ALLOWLIST_FIELDS
+            - name: DEXAFLOW_EXECUTOR_DEFAULTS_EXECUTION_ALLOWLIST_FIELDS
               value: {{ if .fields }}{{ join "," .fields | quote }}{{ else }}"none"{{ end }}
             {{- if .priorityClasses }}
-            - name: LEOFLOW_EXECUTOR_DEFAULTS_EXECUTION_ALLOWLIST_PRIORITY_CLASSES
+            - name: DEXAFLOW_EXECUTOR_DEFAULTS_EXECUTION_ALLOWLIST_PRIORITY_CLASSES
               value: {{ join "," .priorityClasses | quote }}
             {{- end }}
             {{- if .serviceAccounts }}
-            - name: LEOFLOW_EXECUTOR_DEFAULTS_EXECUTION_ALLOWLIST_SERVICE_ACCOUNTS
+            - name: DEXAFLOW_EXECUTOR_DEFAULTS_EXECUTION_ALLOWLIST_SERVICE_ACCOUNTS
               value: {{ join "," .serviceAccounts | quote }}
             {{- end }}
             {{- if .images }}
-            - name: LEOFLOW_EXECUTOR_DEFAULTS_EXECUTION_ALLOWLIST_IMAGES
+            - name: DEXAFLOW_EXECUTOR_DEFAULTS_EXECUTION_ALLOWLIST_IMAGES
               value: {{ join "," .images | quote }}
             {{- end }}
             {{- end }}
@@ -606,9 +606,9 @@ spec:
             # let a hand-applied `kubectl set env` survive a `helm upgrade`
             # unnoticed. Stamping them makes the chart the single source of truth
             # and lets an upgrade reassert the safe value.
-            - name: LEOFLOW_AUTH_AGENT_TOKEN_TRANSPORT
+            - name: DEXAFLOW_AUTH_AGENT_TOKEN_TRANSPORT
               value: {{ .ctx.Values.auth.agentTokenTransport | quote }}
-            - name: LEOFLOW_AUTH_SECRET_LIVENESS_MODE
+            - name: DEXAFLOW_AUTH_SECRET_LIVENESS_MODE
               value: {{ .ctx.Values.auth.secretLivenessMode | quote }}
             # The scope-by-declaration policy (ADR 0055 D9) is stamped alongside
             # them for a different reason: it is coupled to nothing, but it is the
@@ -620,7 +620,7 @@ spec:
             # other, and guarding this one would fail the render for every operator
             # who already set it through extraEnv. extraEnv renders after this
             # block, so last-wins keeps them working (tests/secret_scoping_test.yaml).
-            - name: LEOFLOW_AUTH_SECRET_SCOPING
+            - name: DEXAFLOW_AUTH_SECRET_SCOPING
               value: {{ .ctx.Values.auth.secretScoping | quote }}
             # The attempt credential ceiling (ADR 0055, #955) is stamped for the
             # same reason as the scoping policy: before #955 `extraEnv` was its
@@ -632,9 +632,9 @@ spec:
             {{- if not (regexMatch "^(0|-?([0-9]+(\\.[0-9]+)?(ns|us|µs|ms|s|m|h))+)$" $credLifetime) }}
             {{- fail (printf "auth.maxAttemptCredentialLifetime must be a Go duration such as 24h or 90m (0 disables the ceiling), got %q" $credLifetime) }}
             {{- end }}
-            - name: LEOFLOW_AUTH_MAX_ATTEMPT_CREDENTIAL_LIFETIME
+            - name: DEXAFLOW_AUTH_MAX_ATTEMPT_CREDENTIAL_LIFETIME
               value: {{ $credLifetime | quote }}
-            - name: LEOFLOW_EXECUTION_WARM_POOLS_ENABLED
+            - name: DEXAFLOW_EXECUTION_WARM_POOLS_ENABLED
               value: {{ .ctx.Values.execution.warmPoolsEnabled | quote }}
             {{- if .ctx.Values.execution.warmPoolsEnabled }}
             # The D6/D9/M4 pool bounds. Stamped only with the flag on: the server
@@ -642,34 +642,34 @@ spec:
             # returns before they are looked at), so an OFF install keeps exactly
             # the env it has today. Durations travel as strings — viper parses
             # them, the same way it does the auth credential ceiling.
-            - name: LEOFLOW_EXECUTION_MIN_IDLE_WORKERS
+            - name: DEXAFLOW_EXECUTION_MIN_IDLE_WORKERS
               value: {{ .ctx.Values.execution.minIdleWorkers | quote }}
-            - name: LEOFLOW_EXECUTION_MAX_POOL_SIZE
+            - name: DEXAFLOW_EXECUTION_MAX_POOL_SIZE
               value: {{ .ctx.Values.execution.maxPoolSize | quote }}
-            - name: LEOFLOW_EXECUTION_MAX_ATTEMPTS_PER_WORKER
+            - name: DEXAFLOW_EXECUTION_MAX_ATTEMPTS_PER_WORKER
               value: {{ .ctx.Values.execution.maxAttemptsPerWorker | quote }}
-            - name: LEOFLOW_EXECUTION_MAX_WORKER_LIFETIME
+            - name: DEXAFLOW_EXECUTION_MAX_WORKER_LIFETIME
               value: {{ .ctx.Values.execution.maxWorkerLifetime | quote }}
-            - name: LEOFLOW_EXECUTION_WORKER_IDLE_TTL
+            - name: DEXAFLOW_EXECUTION_WORKER_IDLE_TTL
               value: {{ .ctx.Values.execution.workerIdleTtl | quote }}
-            - name: LEOFLOW_EXECUTION_MAX_WARM_PODS_PER_TENANT
+            - name: DEXAFLOW_EXECUTION_MAX_WARM_PODS_PER_TENANT
               value: {{ .ctx.Values.execution.maxWarmPodsPerTenant | quote }}
             {{- if .ctx.Values.execution.warmReadOnlyRootFilesystem }}
             # Stamped only when on, so enabling warm pools alone renders the same
             # env it did before this knob existed (the server default is false).
-            - name: LEOFLOW_EXECUTION_WARM_READ_ONLY_ROOT_FILESYSTEM
+            - name: DEXAFLOW_EXECUTION_WARM_READ_ONLY_ROOT_FILESYSTEM
               value: {{ .ctx.Values.execution.warmReadOnlyRootFilesystem | quote }}
             {{- end }}
             {{- if .ctx.Values.execution.warmRequireAttemptHomeSweep }}
             # Stamped only when on, so enabling warm pools alone renders the same
             # env it did before this knob existed (the server default is false).
-            - name: LEOFLOW_EXECUTION_WARM_REQUIRE_ATTEMPT_HOME_SWEEP
+            - name: DEXAFLOW_EXECUTION_WARM_REQUIRE_ATTEMPT_HOME_SWEEP
               value: {{ .ctx.Values.execution.warmRequireAttemptHomeSweep | quote }}
             {{- end }}
             {{- if .ctx.Values.execution.warmPoolEventRefill }}
             # Stamped only when on, so enabling warm pools alone renders the same
             # env it did before this knob existed (the server default is false).
-            - name: LEOFLOW_EXECUTION_WARM_POOL_EVENT_REFILL
+            - name: DEXAFLOW_EXECUTION_WARM_POOL_EVENT_REFILL
               value: {{ .ctx.Values.execution.warmPoolEventRefill | quote }}
             {{- end }}
             {{- end }}
@@ -681,15 +681,15 @@ spec:
             # the env it had before. deployment.yaml has already refused a value
             # the server refuses at boot.
             {{- if .registry }}
-            - name: LEOFLOW_DEPLOY_DEFAULTS_REGISTRY
+            - name: DEXAFLOW_DEPLOY_DEFAULTS_REGISTRY
               value: {{ .registry | quote }}
             {{- end }}
             {{- if .platforms }}
-            - name: LEOFLOW_DEPLOY_DEFAULTS_PLATFORMS
+            - name: DEXAFLOW_DEPLOY_DEFAULTS_PLATFORMS
               value: {{ join "," .platforms | quote }}
             {{- end }}
             {{- if .baseImage }}
-            - name: LEOFLOW_DEPLOY_DEFAULTS_BASE_IMAGE
+            - name: DEXAFLOW_DEPLOY_DEFAULTS_BASE_IMAGE
               value: {{ .baseImage | quote }}
             {{- end }}
             {{- end }}
@@ -698,7 +698,7 @@ spec:
             # Advertise the source mode runtime image on /api/v2/deployDefaults
             # (#1772). The server serves execution.source_mode.image itself;
             # deployment.yaml has already refused this while source mode is off.
-            - name: LEOFLOW_DEPLOY_DEFAULTS_SOURCE_MODE
+            - name: DEXAFLOW_DEPLOY_DEFAULTS_SOURCE_MODE
               value: "true"
             {{- end }}
             {{- with ($deployDefaults.remoteBuilder | default dict).cloudBuild }}
@@ -707,19 +707,19 @@ spec:
             # value is stamped only when set; deployment.yaml has already
             # refused a value the server refuses at boot.
             {{- if .project }}
-            - name: LEOFLOW_DEPLOY_DEFAULTS_REMOTE_BUILDER_CLOUD_BUILD_PROJECT
+            - name: DEXAFLOW_DEPLOY_DEFAULTS_REMOTE_BUILDER_CLOUD_BUILD_PROJECT
               value: {{ .project | quote }}
             {{- end }}
             {{- if .region }}
-            - name: LEOFLOW_DEPLOY_DEFAULTS_REMOTE_BUILDER_CLOUD_BUILD_REGION
+            - name: DEXAFLOW_DEPLOY_DEFAULTS_REMOTE_BUILDER_CLOUD_BUILD_REGION
               value: {{ .region | quote }}
             {{- end }}
             {{- if .workerPool }}
-            - name: LEOFLOW_DEPLOY_DEFAULTS_REMOTE_BUILDER_CLOUD_BUILD_WORKER_POOL
+            - name: DEXAFLOW_DEPLOY_DEFAULTS_REMOTE_BUILDER_CLOUD_BUILD_WORKER_POOL
               value: {{ .workerPool | quote }}
             {{- end }}
             {{- if .serviceAccount }}
-            - name: LEOFLOW_DEPLOY_DEFAULTS_REMOTE_BUILDER_CLOUD_BUILD_SERVICE_ACCOUNT
+            - name: DEXAFLOW_DEPLOY_DEFAULTS_REMOTE_BUILDER_CLOUD_BUILD_SERVICE_ACCOUNT
               value: {{ .serviceAccount | quote }}
             {{- end }}
             {{- end }}
@@ -728,23 +728,23 @@ spec:
             # builder: a deploy that needs a real build runs it there with
             # buildctl over kubectl exec. deployment.yaml has already refused
             # it next to a Cloud Build default.
-            - name: LEOFLOW_DEPLOY_DEFAULTS_REMOTE_BUILDER_BUILDKIT_NAMESPACE
+            - name: DEXAFLOW_DEPLOY_DEFAULTS_REMOTE_BUILDER_BUILDKIT_NAMESPACE
               value: {{ include "leoflow.builderNamespace" .ctx | quote }}
-            - name: LEOFLOW_DEPLOY_DEFAULTS_REMOTE_BUILDER_BUILDKIT_POD_SELECTOR
+            - name: DEXAFLOW_DEPLOY_DEFAULTS_REMOTE_BUILDER_BUILDKIT_POD_SELECTOR
               value: {{ printf "app.kubernetes.io/instance=%s,app.kubernetes.io/component=builder" .ctx.Release.Name | quote }}
             {{- end }}
             {{- if $deployDefaults.taskServiceAccount }}
             # Advertise the task ServiceAccount (#1890): the server serves its
             # own executor.task_service_account; deployment.yaml has already
             # refused this when the chart sets none.
-            - name: LEOFLOW_DEPLOY_DEFAULTS_TASK_SERVICE_ACCOUNT
+            - name: DEXAFLOW_DEPLOY_DEFAULTS_TASK_SERVICE_ACCOUNT
               value: "true"
             {{- end }}
             {{- if $deployDefaults.warmPools }}
             # Advertise the warm pool settings (#1890): the server serves its
             # own execution.warm_pools_enabled, min_idle_workers and
             # max_pool_size.
-            - name: LEOFLOW_DEPLOY_DEFAULTS_WARM_POOLS
+            - name: DEXAFLOW_DEPLOY_DEFAULTS_WARM_POOLS
               value: "true"
             {{- end }}
             {{- $requireDigest := (.ctx.Values.deploy | default dict).requireDigest | default "off" | toString }}
@@ -752,7 +752,7 @@ spec:
             # Digest-pinned images at register (#1703). Stamped only when warn
             # or enforce, so an install that leaves it off renders the env it
             # had before. deployment.yaml has already refused any other value.
-            - name: LEOFLOW_DEPLOY_REQUIRE_DIGEST
+            - name: DEXAFLOW_DEPLOY_REQUIRE_DIGEST
               value: {{ $requireDigest | quote }}
             {{- end }}
             {{- if (.ctx.Values.execution.sourceMode | default dict).enabled }}
@@ -760,14 +760,14 @@ spec:
             # never turns it on renders the env it had before (the server default
             # is off). deployment.yaml has already refused an image that is not
             # pinned by a full digest.
-            - name: LEOFLOW_EXECUTION_SOURCE_MODE_ENABLED
+            - name: DEXAFLOW_EXECUTION_SOURCE_MODE_ENABLED
               value: "true"
-            - name: LEOFLOW_EXECUTION_SOURCE_MODE_IMAGE
+            - name: DEXAFLOW_EXECUTION_SOURCE_MODE_IMAGE
               value: {{ .ctx.Values.execution.sourceMode.image | quote }}
             {{- if .ctx.Values.execution.sourceMode.warmPools }}
             # Source-mode versions on warm workers, which receive the dag.py
             # with each assignment (ADR 0095). Stamped only when on.
-            - name: LEOFLOW_EXECUTION_SOURCE_MODE_WARM_POOLS
+            - name: DEXAFLOW_EXECUTION_SOURCE_MODE_WARM_POOLS
               value: "true"
             {{- end }}
             {{- end }}
@@ -778,26 +778,26 @@ spec:
             # Stamped only with a URL, so an install without one renders the
             # env it had before. deployment.yaml has already refused a plain
             # http URL.
-            - name: LEOFLOW_EXECUTION_ADMISSION_WEBHOOK_URL
+            - name: DEXAFLOW_EXECUTION_ADMISSION_WEBHOOK_URL
               value: {{ $admissionWebhook.url | quote }}
             {{- if $admissionWebhook.caConfigMap }}
-            - name: LEOFLOW_EXECUTION_ADMISSION_WEBHOOK_CA_FILE
+            - name: DEXAFLOW_EXECUTION_ADMISSION_WEBHOOK_CA_FILE
               value: /etc/leoflow/admission-ca/ca.crt
             {{- end }}
             {{- if $admissionWebhook.tokenSecret }}
-            - name: LEOFLOW_EXECUTION_ADMISSION_WEBHOOK_TOKEN_FILE
+            - name: DEXAFLOW_EXECUTION_ADMISSION_WEBHOOK_TOKEN_FILE
               value: /etc/leoflow/admission-token/token
             {{- end }}
             {{- if $admission.timeout }}
-            - name: LEOFLOW_EXECUTION_ADMISSION_TIMEOUT
+            - name: DEXAFLOW_EXECUTION_ADMISSION_TIMEOUT
               value: {{ $admission.timeout | quote }}
             {{- end }}
             {{- if $admission.failOpen }}
-            - name: LEOFLOW_EXECUTION_ADMISSION_FAIL_OPEN
+            - name: DEXAFLOW_EXECUTION_ADMISSION_FAIL_OPEN
               value: "true"
             {{- end }}
             {{- end }}
-            - name: LEOFLOW_DATABASE_URL
+            - name: DEXAFLOW_DATABASE_URL
               valueFrom:
                 secretKeyRef:
                   name: {{ .ctx.Values.database.existingSecret | default (include "leoflow.credentialsSecretName" .ctx) }}
@@ -808,7 +808,7 @@ spec:
             # (which runs no hook) still reads the id the database carries.
             # Optional: with migrations.enabled false there is no ConfigMap,
             # and nothing is compared.
-            - name: LEOFLOW_DATABASE_INSTALLATION_ID
+            - name: DEXAFLOW_DATABASE_INSTALLATION_ID
               valueFrom:
                 configMapKeyRef:
                   name: {{ include "leoflow.installationConfigMapName" .ctx }}
@@ -817,15 +817,15 @@ spec:
             # The release, so a pod waiting for its schema names the exact
             # command that migrates it (ADR 0090 decision 2). Read by nothing
             # else.
-            - name: LEOFLOW_HELM_RELEASE
+            - name: DEXAFLOW_HELM_RELEASE
               value: {{ .ctx.Release.Name | quote }}
-            - name: LEOFLOW_HELM_NAMESPACE
+            - name: DEXAFLOW_HELM_NAMESPACE
               value: {{ .ctx.Release.Namespace | quote }}
-            - name: LEOFLOW_HELM_CHART_VERSION
+            - name: DEXAFLOW_HELM_CHART_VERSION
               value: {{ .ctx.Chart.Version | quote }}
-            - name: LEOFLOW_HELM_MIGRATIONS_ENABLED
+            - name: DEXAFLOW_HELM_MIGRATIONS_ENABLED
               value: {{ .ctx.Values.migrations.enabled | toString | quote }}
-            - name: LEOFLOW_HELM_MIGRATE_IMAGE
+            - name: DEXAFLOW_HELM_MIGRATE_IMAGE
               value: {{ printf "%s:%s" .ctx.Values.migrations.image.repository (.ctx.Values.migrations.image.tag | default .ctx.Chart.AppVersion) | quote }}
             {{- if and .ctx.Values.migrations.onBoot (ne .role "api") }}
             # Self-migration on boot (ADR 0090 decision 4): the embedded
@@ -833,10 +833,10 @@ spec:
             # on a replaced database. Never on the api role, whatever its DSN can
             # do; in split mode only the scheduler carries it. Stamped only when
             # on, so an install that leaves it off renders the env it had.
-            - name: LEOFLOW_DATABASE_MIGRATE_ON_BOOT
+            - name: DEXAFLOW_DATABASE_MIGRATE_ON_BOOT
               value: "true"
             {{- end }}
-            - name: LEOFLOW_REDIS_URL
+            - name: DEXAFLOW_REDIS_URL
               valueFrom:
                 secretKeyRef:
                   name: {{ .ctx.Values.redis.existingSecret | default (include "leoflow.credentialsSecretName" .ctx) }}
@@ -846,16 +846,16 @@ spec:
             # SERVER_AUTHENTICATION, ElastiCache in-transit, Azure Cache).
             # The CA bundle from the named ConfigMap is mounted read-only at
             # /etc/leoflow/redis-ca/ca.crt and the server is told where to
-            # find it via LEOFLOW_REDIS_CA_FILE.
-            - name: LEOFLOW_REDIS_CA_FILE
+            # find it via DEXAFLOW_REDIS_CA_FILE.
+            - name: DEXAFLOW_REDIS_CA_FILE
               value: /etc/leoflow/redis-ca/ca.crt
             {{- end }}
             {{- if .ctx.Values.redis.requireNoEviction }}
             # #2354: refuse to boot on a Redis that may evict XCom values.
-            - name: LEOFLOW_REDIS_REQUIRE_NOEVICTION
+            - name: DEXAFLOW_REDIS_REQUIRE_NOEVICTION
               value: "true"
             {{- end }}
-            - name: LEOFLOW_AUTH_JWT_SECRET
+            - name: DEXAFLOW_AUTH_JWT_SECRET
               valueFrom:
                 secretKeyRef:
                   name: {{ .ctx.Values.auth.existingSecret | default (include "leoflow.credentialsSecretName" .ctx) }}
@@ -863,7 +863,7 @@ spec:
             {{- if or .ctx.Values.auth.serviceToken .ctx.Values.auth.serviceTokenExistingSecret }}
             # Operator service API (#1283): rendered only when a token is given,
             # always through a Secret, never as a plain value.
-            - name: LEOFLOW_AUTH_SERVICE_TOKEN
+            - name: DEXAFLOW_AUTH_SERVICE_TOKEN
               valueFrom:
                 secretKeyRef:
                   name: {{ .ctx.Values.auth.serviceTokenExistingSecret | default (include "leoflow.credentialsSecretName" .ctx) }}
@@ -875,40 +875,40 @@ spec:
             # viper binds env only for the scalar leaves in serverDefaults, and
             # those two are deliberately unregistered because a Google `hd` key
             # is a dotted domain its "." delimiter would split (#826). They are
-            # in the ConfigMap mounted below, and LEOFLOW_CONFIG names it.
+            # in the ConfigMap mounted below, and DEXAFLOW_CONFIG names it.
             #
             # Mixing the two routes is safe in exactly one direction, which is
             # this one: viper ranks env ABOVE the config file, so every scalar
             # here wins over anything the file might say, and a key the file
             # omits keeps its default. That is why the file holds only the maps.
             #
-            # LEOFLOW_UI_EDITION is the literal "pro" above and validateOIDC
+            # DEXAFLOW_UI_EDITION is the literal "pro" above and validateOIDC
             # requires the Pro edition, so this chart satisfies that half by
             # construction.
-            - name: LEOFLOW_AUTH_PROVIDER
+            - name: DEXAFLOW_AUTH_PROVIDER
               value: "oidc"
-            - name: LEOFLOW_CONFIG
+            - name: DEXAFLOW_CONFIG
               value: {{ printf "%s/config.yaml" $oidcMountPath | quote }}
-            - name: LEOFLOW_AUTH_OIDC_ISSUER
+            - name: DEXAFLOW_AUTH_OIDC_ISSUER
               value: {{ .ctx.Values.auth.oidc.issuer | quote }}
-            - name: LEOFLOW_AUTH_OIDC_CLIENT_ID
+            - name: DEXAFLOW_AUTH_OIDC_CLIENT_ID
               value: {{ .ctx.Values.auth.oidc.clientId | quote }}
-            - name: LEOFLOW_AUTH_OIDC_REDIRECT_URL
+            - name: DEXAFLOW_AUTH_OIDC_REDIRECT_URL
               value: {{ .ctx.Values.auth.oidc.redirectUrl | quote }}
-            - name: LEOFLOW_AUTH_OIDC_TENANT_CLAIM
+            - name: DEXAFLOW_AUTH_OIDC_TENANT_CLAIM
               value: {{ .ctx.Values.auth.oidc.tenantClaim | quote }}
             # Comma-joined for the same reason as config.trustedProxies: one env
             # var, and viper's StringToSliceHookFunc(",") splits it back into the
             # []string the server wants.
-            - name: LEOFLOW_AUTH_OIDC_SCOPES
+            - name: DEXAFLOW_AUTH_OIDC_SCOPES
               value: {{ join "," .ctx.Values.auth.oidc.scopes | quote }}
-            - name: LEOFLOW_AUTH_OIDC_GROUPS_CLAIM
+            - name: DEXAFLOW_AUTH_OIDC_GROUPS_CLAIM
               value: {{ .ctx.Values.auth.oidc.groupsClaim | quote }}
-            - name: LEOFLOW_AUTH_OIDC_JIT_PROVISIONING
+            - name: DEXAFLOW_AUTH_OIDC_JIT_PROVISIONING
               value: {{ .ctx.Values.auth.oidc.jitProvisioning | quote }}
-            - name: LEOFLOW_AUTH_OIDC_AUTO_REDIRECT
+            - name: DEXAFLOW_AUTH_OIDC_AUTO_REDIRECT
               value: {{ .ctx.Values.auth.oidc.autoRedirect | quote }}
-            - name: LEOFLOW_AUTH_OIDC_CLOCK_SKEW_SECONDS
+            - name: DEXAFLOW_AUTH_OIDC_CLOCK_SKEW_SECONDS
               value: {{ .ctx.Values.auth.oidc.clockSkewSeconds | quote }}
             {{- if .ctx.Values.auth.oidc.defaultRole }}
             # The three below are omitted when empty rather than stamped with a
@@ -916,15 +916,15 @@ spec:
             # implements (strict default-deny; no domain restriction; no password
             # login at all while SSO is on), and stamping "" would only add a
             # variable that says what the default already says.
-            - name: LEOFLOW_AUTH_OIDC_DEFAULT_ROLE
+            - name: DEXAFLOW_AUTH_OIDC_DEFAULT_ROLE
               value: {{ .ctx.Values.auth.oidc.defaultRole | quote }}
             {{- end }}
             {{- if .ctx.Values.auth.oidc.allowedEmailDomains }}
-            - name: LEOFLOW_AUTH_OIDC_ALLOWED_EMAIL_DOMAINS
+            - name: DEXAFLOW_AUTH_OIDC_ALLOWED_EMAIL_DOMAINS
               value: {{ join "," .ctx.Values.auth.oidc.allowedEmailDomains | quote }}
             {{- end }}
             {{- if .ctx.Values.auth.oidc.breakGlassEmails }}
-            - name: LEOFLOW_AUTH_OIDC_BREAK_GLASS_EMAILS
+            - name: DEXAFLOW_AUTH_OIDC_BREAK_GLASS_EMAILS
               value: {{ join "," .ctx.Values.auth.oidc.breakGlassEmails | quote }}
             {{- end }}
             {{- if or .ctx.Values.auth.oidc.existingSecret .ctx.Values.auth.oidc.clientSecret }}
@@ -932,7 +932,7 @@ spec:
             # against the issuer's JWKS. Delivered by secretKeyRef, never in the
             # ConfigMap. Optional: a public client using PKCE has none, and
             # validateOIDC does not require it.
-            - name: LEOFLOW_AUTH_OIDC_CLIENT_SECRET
+            - name: DEXAFLOW_AUTH_OIDC_CLIENT_SECRET
               valueFrom:
                 secretKeyRef:
                   # The DURABLE Secret, not the hook one. #1142 split them: the hook
@@ -945,25 +945,25 @@ spec:
             {{- end }}
             {{- end }}
             {{- if or .ctx.Values.secretKeyExistingSecret .ctx.Values.secretKey }}
-            # LEOFLOW_SECRET_KEY (ADR 0019) — Connection password / Extra
+            # DEXAFLOW_SECRET_KEY (ADR 0019): Connection password / Extra
             # encryption-at-rest key. Without it, the API refuses Connection
             # writes (Variables still work). Optional so users who only use
             # Variables can omit it; recommended for any real Pro install.
-            - name: LEOFLOW_SECRET_KEY
+            - name: DEXAFLOW_SECRET_KEY
               valueFrom:
                 secretKeyRef:
                   name: {{ .ctx.Values.secretKeyExistingSecret | default (include "leoflow.credentialsSecretName" .ctx) }}
                   key: secretKey
             {{- end }}
             {{- if or .ctx.Values.bootstrap.existingSecret .ctx.Values.bootstrap.password }}
-            - name: LEOFLOW_BOOTSTRAP_PASSWORD
+            - name: DEXAFLOW_BOOTSTRAP_PASSWORD
               valueFrom:
                 secretKeyRef:
                   name: {{ .ctx.Values.bootstrap.existingSecret | default (include "leoflow.credentialsSecretName" .ctx) }}
                   key: bootstrapPassword
             {{- end }}
             {{- if .ctx.Values.extraEnv }}
-            # Operator escape hatch for LEOFLOW_* settings the chart does not
+            # Operator escape hatch for DEXAFLOW_* settings the chart does not
             # model as a value. Appended last, and never a way around a guard:
             # deployment.yaml refuses to render an entry that shadows one of the
             # variables whose values the chart validates against each other.
@@ -974,8 +974,20 @@ spec:
             # rejected by the apiserver on apply — long after the render looked
             # fine. name/value/valueFrom is the whole of an EnvVar, so nothing is
             # dropped by being explicit.
+            #
+            # An entry under the name before the rename (LEOFLOW_*) is rendered
+            # under its DEXAFLOW_* name (#2156). The chart renders DEXAFLOW_*,
+            # and the server reads DEXAFLOW_* first, so an override left under
+            # the old name would otherwise lose to the chart's own value. Either
+            # spelling in extraEnv wins over the chart; with both, DEXAFLOW_*
+            # wins, as it does in the server.
+            {{- $extraNames := list }}
+            {{- range .ctx.Values.extraEnv }}{{ $extraNames = append $extraNames .name }}{{ end }}
             {{- range .ctx.Values.extraEnv }}
-            - name: {{ .name | quote }}
+            {{- $name := .name }}
+            {{- if hasPrefix "LEOFLOW_" $name }}{{ $name = printf "DEXAFLOW_%s" (trimPrefix "LEOFLOW_" $name) }}{{ end }}
+            {{- if not (and (ne $name .name) (has $name $extraNames)) }}
+            - name: {{ $name | quote }}
               {{- if hasKey . "value" }}
               value: {{ .value | quote }}
               {{- end }}
@@ -983,6 +995,7 @@ spec:
               valueFrom:
                 {{- toYaml .valueFrom | nindent 16 }}
               {{- end }}
+            {{- end }}
             {{- end }}
             {{- end }}
           {{- $probePort := "http" }}
@@ -1172,7 +1185,7 @@ spec:
         {{- if .ctx.Values.auth.oidc.enabled }}
         # `items` pins the projection to the single key the server is pointed at,
         # so a future key added to this ConfigMap for some other purpose cannot
-        # appear inside the directory LEOFLOW_CONFIG resolves against.
+        # appear inside the directory DEXAFLOW_CONFIG resolves against.
         - name: oidc-config
           configMap:
             name: {{ include "leoflow.oidcConfigMapName" .ctx }}

@@ -29,7 +29,7 @@ tests:
       - notContains:
           path: spec.template.spec.containers[0].env
           content:
-            name: LEOFLOW_SERVER_ROLE
+            name: DEXAFLOW_SERVER_ROLE
             value: all
       # The selector must NOT gain a component label — it is immutable, and adding
       # one would break `helm upgrade` from a pre-split install.
@@ -69,7 +69,7 @@ tests:
       - contains:
           path: spec.template.spec.containers[0].env
           content:
-            name: LEOFLOW_SERVER_ROLE
+            name: DEXAFLOW_SERVER_ROLE
             value: api
       - contains:
           path: spec.template.spec.containers[0].ports
@@ -108,7 +108,7 @@ tests:
       - contains:
           path: spec.template.spec.containers[0].env
           content:
-            name: LEOFLOW_SERVER_ROLE
+            name: DEXAFLOW_SERVER_ROLE
             value: scheduler
       - contains:
           path: spec.template.spec.containers[0].ports
@@ -144,7 +144,7 @@ tests:
       - contains:
           path: spec.template.spec.containers[0].env
           content:
-            name: LEOFLOW_EXECUTOR_AGENT_CONTROL_PLANE_ADDR
+            name: DEXAFLOW_EXECUTOR_AGENT_CONTROL_PLANE_ADDR
             value: leoflow-scheduler.NAMESPACE.svc.cluster.local:9091
           # helm-unittest renders release namespace as "NAMESPACE" in tests.
 
@@ -171,12 +171,12 @@ tests:
       - contains:
           path: spec.template.spec.containers[0].env
           content:
-            name: LEOFLOW_SERVER_GRPC_TLS_CERT
+            name: DEXAFLOW_SERVER_GRPC_TLS_CERT
             value: /etc/leoflow/grpc-tls/tls.crt
       - contains:
           path: spec.template.spec.containers[0].env
           content:
-            name: LEOFLOW_SERVER_GRPC_TLS_KEY
+            name: DEXAFLOW_SERVER_GRPC_TLS_KEY
             value: /etc/leoflow/grpc-tls/tls.key
       # …but the private key never reaches this pod: no grpc-tls volume or mount.
       - notContains:

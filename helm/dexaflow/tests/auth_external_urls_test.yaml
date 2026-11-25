@@ -22,12 +22,12 @@ tests:
       - contains:
           path: spec.template.spec.containers[0].env
           content:
-            name: LEOFLOW_AUTH_EXTERNAL_SIGNIN_URL
+            name: DEXAFLOW_AUTH_EXTERNAL_SIGNIN_URL
             value: https://portal.example.com/engine
       - contains:
           path: spec.template.spec.containers[0].env
           content:
-            name: LEOFLOW_AUTH_EXTERNAL_SIGNOUT_URL
+            name: DEXAFLOW_AUTH_EXTERNAL_SIGNOUT_URL
             value: https://portal.example.com/signout
 
   - it: renders neither when unset, keeping Dexaflow's own pages
@@ -36,10 +36,10 @@ tests:
       - notContains:
           path: spec.template.spec.containers[0].env
           content:
-            name: LEOFLOW_AUTH_EXTERNAL_SIGNIN_URL
+            name: DEXAFLOW_AUTH_EXTERNAL_SIGNIN_URL
             value: ""
       - notContains:
           path: spec.template.spec.containers[0].env
           content:
-            name: LEOFLOW_AUTH_EXTERNAL_SIGNOUT_URL
+            name: DEXAFLOW_AUTH_EXTERNAL_SIGNOUT_URL
             value: ""
