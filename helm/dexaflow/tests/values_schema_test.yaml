@@ -1,0 +1,61 @@
+suite: values.schema.json refuses unknown and mistyped values (#2320)
+# secret.yaml is in scope because the Deployment's checksum annotation includes it.
+templates:
+  - deployment.yaml
+  - secret.yaml
+set:
+  agentTLS.serverCertSecret: dexaflow-tls
+  agentTLS.caConfigMap: dexaflow-ca
+  database.url: postgres://h/d
+  redis.url: redis://h/0
+  auth.jwtSecret: jwt
+tests:
+  - it: renders with the values the chart defines
+    asserts:
+      - isKind:
+          of: Deployment
+        template: deployment.yaml
+
+  - it: refuses a misspelled top-level key instead of ignoring it
+    set:
+      replicasCount: 3
+    asserts:
+      - template: deployment.yaml
+        failedTemplate:
+          errorPattern: "additional properties 'replicasCount' not allowed"
+
+  - it: refuses an unknown key inside a section the chart defines
+    set:
+      networkPolicy.enable: true
+    asserts:
+      - template: deployment.yaml
+        failedTemplate:
+          errorPattern: "at '/networkPolicy': additional properties 'enable' not allowed"
+
+  - it: refuses a map where the chart expects a number
+    set:
+      replicaCount:
+        value: 2
+    asserts:
+      - template: deployment.yaml
+        failedTemplate:
+          errorPattern: "at '/replicaCount'"
+
+  - it: accepts a quoted number and a quoted boolean
+    set:
+      replicaCount: "1"
+      metrics.serviceMonitor.enabled: "false"
+    asserts:
+      - isKind:
+          of: Deployment
+        template: deployment.yaml
+
+  - it: accepts any key in a map the operator fills and in a Kubernetes object
+    set:
+      podAnnotations.example\.com/owner: data
+      resources.limits.ephemeral-storage: 1Gi
+      securityContext.procMount: Default
+    asserts:
+      - isKind:
+          of: Deployment
+        template: deployment.yaml
