@@ -159,6 +159,11 @@ func watchLeadership(ctx context.Context, chk leadershipChecker, interval time.D
 		case <-ticker.C:
 			held, err := checkLeadership(ctx, chk, interval)
 			switch {
+			case errors.Is(err, ErrLeaseSuperseded):
+				logger.Warn("another replica holds a newer scheduler lease term; stepping down",
+					"reason", "term_superseded", "error", err)
+				stepDown("term_superseded")
+				return
 			case err != nil:
 				if ctx.Err() != nil {
 					return // canceled mid-check (shutdown/stepdown)
@@ -190,3 +195,8 @@ func releaseLeader(leader Lease, logger *slog.Logger) {
 		logger.Error("releasing leadership", "error", err)
 	}
 }
+
+// ErrLeaseSuperseded is what a Lease check returns when another replica took
+// a newer lease term (ADR 0106): this replica no longer leads, whatever its
+// own session says, and steps down at once.
+var ErrLeaseSuperseded = errors.New("scheduler lease superseded by a newer term")

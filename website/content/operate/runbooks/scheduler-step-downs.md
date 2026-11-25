@@ -20,3 +20,9 @@ histogram_quantile(0.99, rate(dexaflow_scheduler_reacquire_seconds_bucket[1h]))
 **Decide.** `check_timeout` and `lock_released` mean the leader lost its
 Postgres session or could not confirm it in time: look at network stability to
 the database, failovers of a managed Postgres, and connection limits.
+`term_superseded` means another replica took leadership while this one still
+believed it led: its session dropped, a follower won the lock and took a newer
+lease term ([ADR 0106](/project/adrs/0106-leader-writes-fenced-by-a-lease-term/)).
+The causes are the same; a `leader_write_fenced` count in
+`dexaflow_scheduler_decisions_total` next to it shows the writes the deposed
+leader tried before it stepped down, which the database refused.

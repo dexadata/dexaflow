@@ -3,8 +3,13 @@ package storage
 import (
 	"context"
 	"fmt"
+	"log/slog"
+	"sync/atomic"
 
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"github.com/dexadata/dexaflow/internal/config"
+	"github.com/dexadata/dexaflow/internal/scheduler"
 )
 
 // SchedulerLockID is the fixed Postgres advisory-lock id gating scheduler
@@ -17,7 +22,10 @@ const SchedulerLockID int64 = 0x4C656F466C6F77
 // step down, and never talks SQL itself (#2329, layering rule of #1948). It must run on a dedicated single-connection pool
 // so the session holding the lock is stable.
 type SchedulerLease struct {
-	pool *pgxpool.Pool
+	pool    *pgxpool.Pool
+	holder  string
+	fencing bool
+	term    atomic.Int64
 }
 
 // NewSchedulerLease builds a SchedulerLease over a dedicated (single-connection) pool.
@@ -25,16 +33,79 @@ func NewSchedulerLease(pool *pgxpool.Pool) *SchedulerLease {
 	return &SchedulerLease{pool: pool}
 }
 
+// SetHolder names this replica in the lease row (the pod name), for an
+// operator reading who leads.
+func (l *SchedulerLease) SetHolder(holder string) { l.holder = holder }
+
+// EnableFencing makes each acquisition end the sessions of older terms
+// (scheduler.lease_fencing, ADR 0106). Call it before the first TryAcquire,
+// together with FencedSchedulerPool for the scheduler's writes.
+func (l *SchedulerLease) EnableFencing() { l.fencing = true }
+
 // TryAcquire attempts to take the scheduler advisory lock without blocking.
+// Once the lock is taken it increments the lease term (ADR 0106), which is
+// this leadership's identity: the leader renews by it, and with fencing on its
+// scheduler pool tags every session with it. A term that cannot be taken
+// gives the lock back, so a replica never leads without one.
 func (l *SchedulerLease) TryAcquire(ctx context.Context) (bool, error) {
 	var acquired bool
 	if err := l.pool.QueryRow(ctx, "SELECT pg_try_advisory_lock($1)", SchedulerLockID).Scan(&acquired); err != nil {
 		return false, fmt.Errorf("acquiring scheduler lock: %w", err)
 	}
-	return acquired, nil
+	if !acquired {
+		return false, nil
+	}
+	var term int64
+	err := l.pool.QueryRow(ctx,
+		`UPDATE scheduler_lease
+		    SET term = term + 1, holder = $1, acquired_at = now(), renewed_at = now()
+		  WHERE id = 1
+		RETURNING term`, l.holder).Scan(&term)
+	if err != nil {
+		if _, uerr := l.pool.Exec(ctx, "SELECT pg_advisory_unlock($1)", SchedulerLockID); uerr != nil {
+			slog.WarnContext(ctx, "giving back the scheduler lock after a failed term increment", "error", uerr)
+		}
+		return false, fmt.Errorf("taking a scheduler lease term: %w", err)
+	}
+	l.term.Store(term)
+	if l.fencing {
+		l.endOlderTerms(ctx, term)
+	}
+	return true, nil
 }
 
-// Release frees the scheduler advisory lock.
+// endOlderTerms ends every session a leader of an older term tagged
+// (application_name dexaflow-leader/<term>), so a statement or a transaction
+// of that term still in flight aborts instead of committing after the term
+// moved (ADR 0106, point 4). The deposed leader's pool reconnects with its old
+// tag, and the fence trigger refuses its writes from then on. Best effort: a
+// session of another role cannot be signalled, and the trigger still fences
+// its next statement.
+func (l *SchedulerLease) endOlderTerms(ctx context.Context, term int64) {
+	var ended int
+	err := l.pool.QueryRow(ctx,
+		`SELECT count(*) FILTER (WHERE pg_terminate_backend(pid))
+		   FROM pg_stat_activity
+		  WHERE datname = current_database()
+		    AND usename = current_user
+		    AND pid <> pg_backend_pid()
+		    AND application_name ~ '^dexaflow-leader/[0-9]+$'
+		    AND split_part(application_name, '/', 2)::bigint < $1`, term).Scan(&ended)
+	if err != nil {
+		slog.WarnContext(ctx, "ending the sessions of older scheduler terms", "term", term, "error", err)
+		return
+	}
+	if ended > 0 {
+		slog.InfoContext(ctx, "ended the sessions of older scheduler terms", "term", term, "sessions", ended)
+	}
+}
+
+// Term is the lease term of this replica's latest leadership, 0 before the
+// first one. It stays at the last term after a step-down, so the sessions a
+// deposed leader tagged keep a tag the fence refuses.
+func (l *SchedulerLease) Term() int64 { return l.term.Load() }
+
+// Release frees the scheduler advisory lock. The term is kept: see Term.
 func (l *SchedulerLease) Release(ctx context.Context) error {
 	if _, err := l.pool.Exec(ctx, "SELECT pg_advisory_unlock($1)", SchedulerLockID); err != nil {
 		return fmt.Errorf("releasing scheduler lock: %w", err)
@@ -42,7 +113,12 @@ func (l *SchedulerLease) Release(ctx context.Context) error {
 	return nil
 }
 
-// HoldsLock reports whether this leader's session still holds the advisory lock.
+// HoldsLock renews the lease by term and reports whether this leader's session
+// still holds the advisory lock. A renewal that matches no row means another
+// replica took a newer term: it returns scheduler.ErrLeaseSuperseded, and the
+// leader steps down at once whatever its own session says (ADR 0106, point 2).
+//
+// The advisory lock check follows.
 // The lock is session-scoped, so if the dedicated connection dropped (network
 // blip, idle reap, lifetime recycle) and was replaced, the new session does not
 // hold it and another replica may have taken over — this returns false, letting
@@ -53,6 +129,9 @@ func (l *SchedulerLease) HoldsLock(ctx context.Context) (bool, error) {
 	// pg_locks splits the 64-bit advisory key into (classid, objid) with
 	// objsubid=1; matching pid against pg_backend_pid() confines the check to
 	// this leader's own session (verified against Postgres).
+	if err := l.renew(ctx); err != nil {
+		return false, err
+	}
 	classid := int32(SchedulerLockID >> 32)
 	objid := int32(SchedulerLockID & 0xFFFFFFFF)
 	var held bool
@@ -66,4 +145,33 @@ func (l *SchedulerLease) HoldsLock(ctx context.Context) (bool, error) {
 		return false, fmt.Errorf("checking scheduler lock: %w", err)
 	}
 	return held, nil
+}
+
+// renew moves the lease's renewed_at forward when this replica still holds
+// the current term. A replica that never led has no term to renew.
+func (l *SchedulerLease) renew(ctx context.Context) error {
+	term := l.term.Load()
+	if term == 0 {
+		return nil
+	}
+	tag, err := l.pool.Exec(ctx,
+		`UPDATE scheduler_lease SET renewed_at = now() WHERE id = 1 AND term = $1`, term)
+	if err != nil {
+		return fmt.Errorf("renewing the scheduler lease: %w", err)
+	}
+	if tag.RowsAffected() == 0 {
+		return fmt.Errorf("lease term %d: %w", term, scheduler.ErrLeaseSuperseded)
+	}
+	return nil
+}
+
+// OpenSchedulerLease opens the leader pool (NewLeaderPool) and the lease over
+// it. The func it returns closes the pool, which ends the session and gives
+// the advisory lock back.
+func OpenSchedulerLease(ctx context.Context, cfg config.DatabaseSection) (*SchedulerLease, func(), error) {
+	pool, err := NewLeaderPool(ctx, cfg)
+	if err != nil {
+		return nil, nil, err
+	}
+	return NewSchedulerLease(pool), pool.Close, nil
 }

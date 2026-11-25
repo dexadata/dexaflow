@@ -42,6 +42,9 @@ tests:
       - contains:
           path: spec.template.spec.containers[0].env
           content: {name: GOMEMLIMIT, value: 409MiB}
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content: {name: LEOFLOW_SCHEDULER_LEASE_FENCING, value: "true"}
       # The dedicated database pools add connections on every pod, so they stay
       # out of the profile and are set by hand.
       - notContains:
@@ -56,7 +59,11 @@ tests:
       executor.kubeClient.qps: 80
       executor.kubeClient.maintenanceQps: 0
       goMemLimit.enabled: false
+      config.scheduler.leaseFencing: false
     asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content: {name: LEOFLOW_SCHEDULER_LEASE_FENCING, value: "false"}
       - notContains:
           path: spec.template.spec.containers[0].env
           content: {name: LEOFLOW_SCHEDULER_DISPATCH_BUFFER_SIZE}
@@ -94,6 +101,10 @@ tests:
       - notContains:
           path: spec.template.spec.containers[0].env
           content: {name: LEOFLOW_SCHEDULER_DISPATCH_BUFFER_SIZE}
+          any: true
+      - notContains:
+          path: spec.template.spec.containers[0].env
+          content: {name: LEOFLOW_SCHEDULER_LEASE_FENCING}
           any: true
       - notContains:
           path: spec.template.spec.containers[0].env

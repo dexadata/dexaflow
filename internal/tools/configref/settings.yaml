@@ -766,6 +766,19 @@ settings:
     edition: both
     description: >-
       Whether this process runs the scheduler loop.
+  scheduler.lease_fencing:
+    edition: Cluster
+    description: >-
+      Fences the scheduler leader's writes by its lease term
+      ([ADR 0106](/project/adrs/0106-leader-writes-fenced-by-a-lease-term/),
+      [#2329](https://github.com/dexadata/dexaflow/issues/2329)). Every acquisition of
+      leadership takes a new term; with this on, the scheduler's writers run on a
+      dedicated pool (`database.scheduler_max_conns`, or 8 connections when unset)
+      whose sessions carry that term, a new leader ends the sessions of older terms,
+      and the database refuses a write to runs or task instances from a session of
+      an older term, so a deposed leader cannot change them after a failover. Off by
+      default; the chart's `cluster` profile turns it on. Helm:
+      `config.scheduler.leaseFencing`.
   scheduler.eager_promotion:
     edition: both
     description: >-
