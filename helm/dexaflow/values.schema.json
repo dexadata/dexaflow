@@ -2762,6 +2762,72 @@
                 }
               },
               "additionalProperties": false
+            },
+            "slo": {
+              "type": [
+                "object",
+                "null"
+              ],
+              "properties": {
+                "enabled": {
+                  "type": [
+                    "boolean",
+                    "string",
+                    "null"
+                  ],
+                  "pattern": "^(true|false)$"
+                },
+                "minEventsPerWindow": {
+                  "type": [
+                    "integer",
+                    "string",
+                    "null"
+                  ],
+                  "pattern": "^-?[0-9]+$"
+                },
+                "objectives": {
+                  "type": [
+                    "object",
+                    "null"
+                  ],
+                  "properties": {
+                    "schedulePunctuality": {
+                      "type": [
+                        "number",
+                        "string",
+                        "null"
+                      ],
+                      "pattern": "^-?[0-9]+(\\.[0-9]+)?$"
+                    },
+                    "taskStart": {
+                      "type": [
+                        "number",
+                        "string",
+                        "null"
+                      ],
+                      "pattern": "^-?[0-9]+(\\.[0-9]+)?$"
+                    },
+                    "platformFailures": {
+                      "type": [
+                        "number",
+                        "string",
+                        "null"
+                      ],
+                      "pattern": "^-?[0-9]+(\\.[0-9]+)?$"
+                    },
+                    "apiAvailability": {
+                      "type": [
+                        "number",
+                        "string",
+                        "null"
+                      ],
+                      "pattern": "^-?[0-9]+(\\.[0-9]+)?$"
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              },
+              "additionalProperties": false
             }
           },
           "additionalProperties": false
