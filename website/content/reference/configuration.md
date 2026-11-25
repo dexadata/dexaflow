@@ -1607,6 +1607,7 @@ works with the `LEOFLOW_` prefix.
 |---|---|---|
 | `DEXAFLOW_CONFIG` | _(empty)_ | Path of the YAML config file `dexaflow-server` reads before the environment. Unset, the server runs on built-in defaults and environment variables alone. The Helm chart points it at a mounted ConfigMap when it has map-valued keys to deliver (`auth.oidc.tenant_claims`, `auth.oidc.role_mappings`). |
 | `DEXAFLOW_LITE_VENVS_ROOT` | _(empty)_ | Lite only, set by `dexaflow lite`: the directory holding one virtual environment per DAG (`<root>/<dag_id>/bin/python`). The subprocess executor runs each task with its DAG's interpreter. |
+| `DEXAFLOW_RELEASE_VERSION` | _(empty)_ | Not set by you: the release images of a GA promoted from its last rc carry it in their image configuration, and a binary built as that rc (`v0.6.0-rc.2`) then reports the release it names (`v0.6.0`), with "built as" the rc in `--version`. A binary that is not an rc of exactly that release ignores it ([ADR 0109](/project/adrs/0109-ga-promotes-the-rc-images/)). |
 
 <!-- END GENERATED configref -->
 
