@@ -10,7 +10,7 @@ import (
 	"github.com/dexadata/dexaflow/internal/oidc"
 )
 
-// RP-Initiated Logout (#1165, ADR 0109).
+// RP-Initiated Logout (#1165, ADR 0110).
 //
 // Sign-out under SSO used to clear only this server's session. The IdP session
 // was untouched, so the sign-in button signed the user straight back in and the

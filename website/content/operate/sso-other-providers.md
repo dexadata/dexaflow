@@ -88,7 +88,7 @@ file (swap `issuer`, `tenantClaim` and `tenantClaims` for your provider).
 
 Sign-out ends the identity provider's session too, through the
 `end_session_endpoint` the issuer publishes in its discovery document
-([ADR 0109](/project/adrs/0109-sso-sign-out-ends-the-idp-session/)). Entra, Okta
+([ADR 0110](/project/adrs/0110-sso-sign-out-ends-the-idp-session/)). Entra, Okta
 and Keycloak publish one; Google and Cognito do not, and there sign-out ends
 only Dexaflow's session, with a warning at boot.
 

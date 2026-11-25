@@ -767,7 +767,7 @@ settings:
       applications share the IdP session. An issuer that publishes no
       `end_session_endpoint` (Google) gets the local sign-out either way, with a WARN
       at boot, and so does a session that did not come from SSO (a break-glass
-      password login). `auth.external_signout_url`, when set, wins. See ADR 0109.
+      password login). `auth.external_signout_url`, when set, wins. See ADR 0110.
       Helm: `auth.oidc.logout`.
   auth.oidc.post_logout_redirect_url:
     edition: Cluster

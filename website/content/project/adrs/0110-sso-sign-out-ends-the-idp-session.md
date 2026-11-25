@@ -1,8 +1,8 @@
 ---
-title: "ADR 0109: SSO sign-out ends the identity provider session, and the browser keeps the ID token for it"
-linkTitle: "0109 · SSO sign-out at the IdP"
-weight: 1090
-description: "ADR 0109: under provider oidc, sign-out sends the browser to the issuer's end_session_endpoint (OpenID Connect RP-Initiated Logout) by default, with the login's ID token as id_token_hint. The ID token is kept in an HttpOnly cookie scoped to the sign-out route, never on the server. auth.oidc.logout: local keeps the local-only sign-out, and an issuer with no end_session_endpoint gets it with a boot warning."
+title: "ADR 0110: SSO sign-out ends the identity provider session, and the browser keeps the ID token for it"
+linkTitle: "0110 · SSO sign-out at the IdP"
+weight: 1100
+description: "ADR 0110: under provider oidc, sign-out sends the browser to the issuer's end_session_endpoint (OpenID Connect RP-Initiated Logout) by default, with the login's ID token as id_token_hint. The ID token is kept in an HttpOnly cookie scoped to the sign-out route, never on the server. auth.oidc.logout: local keeps the local-only sign-out, and an issuer with no end_session_endpoint gets it with a boot warning."
 ---
 
 **Status:** Accepted

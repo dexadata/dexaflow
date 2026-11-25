@@ -312,7 +312,7 @@ type OIDCSection struct {
 	// behind an explicit ?local=1, so a denial still lands somewhere readable and
 	// a break-glass account can always reach the form.
 	AutoRedirect bool `mapstructure:"auto_redirect"`
-	// Logout decides what sign-out ends (#1165, ADR 0109). "idp" (the default)
+	// Logout decides what sign-out ends (#1165, ADR 0110). "idp" (the default)
 	// also ends the session at the identity provider, through its discovered
 	// end_session_endpoint (OpenID Connect RP-Initiated Logout), so the sign-in
 	// button does not sign the user straight back in. "local" ends only this

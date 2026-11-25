@@ -1254,7 +1254,7 @@ receive rate than before, under either mode.
 
 Under `auth.provider: oidc`, sign-out now also ends the session at the identity
 provider ([#1165](https://github.com/dexadata/dexaflow/issues/1165),
-[ADR 0109](/project/adrs/0109-sso-sign-out-ends-the-idp-session/)), so the
+[ADR 0110](/project/adrs/0110-sso-sign-out-ends-the-idp-session/)), so the
 sign-in button no longer signs the user straight back in.
 
 | Your install | What the upgrade does |
