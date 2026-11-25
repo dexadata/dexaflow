@@ -372,8 +372,8 @@ EOF
 	out=$(exclude_args internal/storage | tr '\n' ' ')
 	_has "a file the coverage floor excludes is excluded" "$out" '--exclude-files ^repository\.go$ '
 	case "$out" in *"^dag_versions\.go$"*) echo "  FAIL a file the floor counts is excluded"; fail=1 ;; *) echo "  ok   a file the floor counts is not excluded" ;; esac
-	out=$(exclude_args internal/scheduler | tr '\n' ' ')
-	_is "only the excluded files of a package" "$out" '--exclude-files ^leader\.go$ '
+	out=$(exclude_args internal/logs | tr '\n' ' ')
+	_is "only the excluded files of a package" "$out" '--exclude-files ^tail\.go$ '
 	printf '%s\n' 'mode: atomic' \
 		'github.com/x/y/internal/storage/repository.go:1.1,2.2 3 1' \
 		'github.com/x/y/internal/storage/repository.go:3.1,4.2 1 0' \

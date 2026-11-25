@@ -33,7 +33,7 @@ FLOOR=80
 # /internal/serverapp/ is the server wiring that lived in cmd/dexaflow-server
 # until ADR 0099 moved it, unchanged, behind pkg/server. It stays in the /cmd/
 # category: the e2e suites boot it, and its unit tests keep running.
-EXCLUDE='(/internal/storage/queries/|/internal/storage/repository\.go:|/internal/storage/postgres\.go:|/internal/storage/redis\.go:|/internal/storage/scheduler_store\.go:|/internal/storage/agent_store\.go:|/internal/storage/xcom_index\.go:|/internal/xcom/redis_backend\.go:|/internal/logs/tail\.go:|/internal/scheduler/leader\.go:|/internal/cli/managed_postgres\.go:|/internal/cli/backup_cmd\.go:|/internal/cli/restore_cmd\.go:|/internal/cli/forget\.go:|/internal/cli/dbt_manifest\.go:|\.pb\.go:|\.gen\.go:|/internal/version/|/internal/serverapp/|/cmd/|/test/)'
+EXCLUDE='(/internal/storage/queries/|/internal/storage/repository\.go:|/internal/storage/postgres\.go:|/internal/storage/redis\.go:|/internal/storage/scheduler_store\.go:|/internal/storage/agent_store\.go:|/internal/storage/xcom_index\.go:|/internal/xcom/redis_backend\.go:|/internal/logs/tail\.go:|/internal/storage/scheduler_lease\.go:|/internal/cli/managed_postgres\.go:|/internal/cli/backup_cmd\.go:|/internal/cli/restore_cmd\.go:|/internal/cli/forget\.go:|/internal/cli/dbt_manifest\.go:|\.pb\.go:|\.gen\.go:|/internal/version/|/internal/serverapp/|/cmd/|/test/)'
 
 # The storage layer the unit floor excludes holds most of the decision logic
 # the 2026-10 audits found bugs in (#1618). The integration suite runs it
