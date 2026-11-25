@@ -23,7 +23,7 @@ import (
 //
 // leoflow sent null, so the control never rendered. With the server now honoring
 // run_on_latest_version, a null here means the operator cannot ask for the
-// current version through any interface at all — there is no CLI clear either.
+// current version through any interface at all: there is no CLI clear either.
 func TestDagRunDTOCarriesBundleVersion(t *testing.T) {
 	t.Run("a pinned version is serialized", func(t *testing.T) {
 		dto := toDagRunDTO(domain.DagRun{DagID: "etl", RunID: "r1", Version: "v1.2.3"})
@@ -128,7 +128,7 @@ func TestTaskInstanceDagVersionCarriesTheRunsPinnedLabel(t *testing.T) {
 	// The clear endpoint builds its own affected/dry-run payload through a SECOND
 	// resolver (resolveRunContextFor, which takes the run from the body rather
 	// than the path). It is a separate copy of the same two lines, and mutating
-	// only that copy left the suite green — an untested duplicate of code this
+	// only that copy left the suite green: an untested duplicate of code this
 	// test exists to prove matters.
 	rec = authGet(srv, http.MethodPost, "/api/v2/dags/etl/clearTaskInstances",
 		`{"dag_run_id":"r1","task_ids":["extract"],"dry_run":true}`)
