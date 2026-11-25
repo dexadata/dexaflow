@@ -105,7 +105,7 @@ spec:
             {{- toYaml .Values.migrations.securityContext | nindent 12 }}
           args:
             - "-path={{ .Values.migrations.path }}"
-            - "-database=$(LEOFLOW_DATABASE_URL)"
+            - "-database=$(DEXAFLOW_DATABASE_URL)"
             # The installation id (ADR 0090 decision 3): the wrapper refuses a
             # database that is not this release's own before migrating it, and
             # records the id in the database and in this ConfigMap.
@@ -116,7 +116,7 @@ spec:
             {{- end }}
             - "up"
           env:
-            - name: LEOFLOW_DATABASE_URL
+            - name: DEXAFLOW_DATABASE_URL
               valueFrom:
                 secretKeyRef:
                   name: {{ .Values.database.existingSecret | default (include "leoflow.secretName" .) }}

@@ -20,17 +20,17 @@ tests:
       - notContains:
           path: spec.template.spec.containers[0].env
           content:
-            name: LEOFLOW_EXECUTOR_UNIT_CPU
+            name: DEXAFLOW_EXECUTOR_UNIT_CPU
           any: true
       - notContains:
           path: spec.template.spec.containers[0].env
           content:
-            name: LEOFLOW_EXECUTOR_UNIT_MEMORY
+            name: DEXAFLOW_EXECUTOR_UNIT_MEMORY
           any: true
       - notContains:
           path: spec.template.spec.containers[0].env
           content:
-            name: LEOFLOW_EXECUTOR_UNIT_ENFORCE
+            name: DEXAFLOW_EXECUTOR_UNIT_ENFORCE
           any: true
 
   - it: executor.unit renders both quantities
@@ -42,22 +42,22 @@ tests:
       - contains:
           path: spec.template.spec.containers[0].env
           content:
-            name: LEOFLOW_EXECUTOR_UNIT_CPU
+            name: DEXAFLOW_EXECUTOR_UNIT_CPU
             value: 250m
       - contains:
           path: spec.template.spec.containers[0].env
           content:
-            name: LEOFLOW_EXECUTOR_UNIT_MEMORY
+            name: DEXAFLOW_EXECUTOR_UNIT_MEMORY
             value: 512Mi
       - contains:
           path: spec.template.spec.containers[0].env
           content:
-            name: LEOFLOW_EXECUTOR_UNIT_ENFORCE
+            name: DEXAFLOW_EXECUTOR_UNIT_ENFORCE
             value: refuse
       - contains:
           path: spec.template.spec.containers[0].env
           content:
-            name: LEOFLOW_EXECUTOR_UNIT_MAX_SIZE
+            name: DEXAFLOW_EXECUTOR_UNIT_MAX_SIZE
             value: "64"
 
   - it: executor.unit renders enforce and maxSize overrides
@@ -71,10 +71,10 @@ tests:
       - contains:
           path: spec.template.spec.containers[0].env
           content:
-            name: LEOFLOW_EXECUTOR_UNIT_ENFORCE
+            name: DEXAFLOW_EXECUTOR_UNIT_ENFORCE
             value: warn
       - contains:
           path: spec.template.spec.containers[0].env
           content:
-            name: LEOFLOW_EXECUTOR_UNIT_MAX_SIZE
+            name: DEXAFLOW_EXECUTOR_UNIT_MAX_SIZE
             value: "16"

@@ -24,9 +24,9 @@ tests:
       execution.admission.failOpen: true
     asserts:
       - notExists:
-          path: spec.template.spec.containers[0].env[?(@.name == "LEOFLOW_EXECUTION_ADMISSION_WEBHOOK_URL")]
+          path: spec.template.spec.containers[0].env[?(@.name == "DEXAFLOW_EXECUTION_ADMISSION_WEBHOOK_URL")]
       - notExists:
-          path: spec.template.spec.containers[0].env[?(@.name == "LEOFLOW_EXECUTION_ADMISSION_FAIL_OPEN")]
+          path: spec.template.spec.containers[0].env[?(@.name == "DEXAFLOW_EXECUTION_ADMISSION_FAIL_OPEN")]
       - notExists:
           path: spec.template.spec.volumes[?(@.name == "admission-token")]
 
@@ -42,27 +42,27 @@ tests:
       - contains:
           path: spec.template.spec.containers[0].env
           content:
-            name: LEOFLOW_EXECUTION_ADMISSION_WEBHOOK_URL
+            name: DEXAFLOW_EXECUTION_ADMISSION_WEBHOOK_URL
             value: https://policy.policy.svc:8443/admit
       - contains:
           path: spec.template.spec.containers[0].env
           content:
-            name: LEOFLOW_EXECUTION_ADMISSION_WEBHOOK_CA_FILE
+            name: DEXAFLOW_EXECUTION_ADMISSION_WEBHOOK_CA_FILE
             value: /etc/leoflow/admission-ca/ca.crt
       - contains:
           path: spec.template.spec.containers[0].env
           content:
-            name: LEOFLOW_EXECUTION_ADMISSION_WEBHOOK_TOKEN_FILE
+            name: DEXAFLOW_EXECUTION_ADMISSION_WEBHOOK_TOKEN_FILE
             value: /etc/leoflow/admission-token/token
       - contains:
           path: spec.template.spec.containers[0].env
           content:
-            name: LEOFLOW_EXECUTION_ADMISSION_TIMEOUT
+            name: DEXAFLOW_EXECUTION_ADMISSION_TIMEOUT
             value: 1s
       - contains:
           path: spec.template.spec.containers[0].env
           content:
-            name: LEOFLOW_EXECUTION_ADMISSION_FAIL_OPEN
+            name: DEXAFLOW_EXECUTION_ADMISSION_FAIL_OPEN
             value: "true"
       - contains:
           path: spec.template.spec.volumes
@@ -95,7 +95,7 @@ tests:
       execution.admission.webhook.tokenSecret: policy-token
     asserts:
       - notExists:
-          path: spec.template.spec.containers[0].env[?(@.name == "LEOFLOW_EXECUTION_ADMISSION_WEBHOOK_URL")]
+          path: spec.template.spec.containers[0].env[?(@.name == "DEXAFLOW_EXECUTION_ADMISSION_WEBHOOK_URL")]
         documentIndex: 0
       - notExists:
           path: spec.template.spec.volumes[?(@.name == "admission-token")]
@@ -103,7 +103,7 @@ tests:
       - contains:
           path: spec.template.spec.containers[0].env
           content:
-            name: LEOFLOW_EXECUTION_ADMISSION_WEBHOOK_URL
+            name: DEXAFLOW_EXECUTION_ADMISSION_WEBHOOK_URL
             value: https://policy.policy.svc/admit
         documentIndex: 1
       - exists:
@@ -118,7 +118,7 @@ tests:
       - contains:
           path: spec.template.spec.containers[0].env
           content:
-            name: LEOFLOW_EXECUTION_ADMISSION_WEBHOOK_URL
+            name: DEXAFLOW_EXECUTION_ADMISSION_WEBHOOK_URL
             value: http://127.0.0.1:9000/admit
 
   - it: refuses plain http to another host, as the server does

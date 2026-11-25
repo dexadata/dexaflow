@@ -23,22 +23,22 @@ tests:
       - notContains:
           path: spec.template.spec.containers[0].env
           content:
-            name: LEOFLOW_EXECUTOR_KUBE_CLIENT_QPS
+            name: DEXAFLOW_EXECUTOR_KUBE_CLIENT_QPS
           any: true
       - notContains:
           path: spec.template.spec.containers[0].env
           content:
-            name: LEOFLOW_EXECUTOR_KUBE_CLIENT_BURST
+            name: DEXAFLOW_EXECUTOR_KUBE_CLIENT_BURST
           any: true
       - notContains:
           path: spec.template.spec.containers[0].env
           content:
-            name: LEOFLOW_EXECUTOR_KUBE_CLIENT_MAINTENANCE_QPS
+            name: DEXAFLOW_EXECUTOR_KUBE_CLIENT_MAINTENANCE_QPS
           any: true
       - notContains:
           path: spec.template.spec.containers[0].env
           content:
-            name: LEOFLOW_EXECUTOR_KUBE_CLIENT_MAINTENANCE_BURST
+            name: DEXAFLOW_EXECUTOR_KUBE_CLIENT_MAINTENANCE_BURST
           any: true
 
   - it: executor.kubeClient renders the dispatch and maintenance limits
@@ -52,20 +52,20 @@ tests:
       - contains:
           path: spec.template.spec.containers[0].env
           content:
-            name: LEOFLOW_EXECUTOR_KUBE_CLIENT_QPS
+            name: DEXAFLOW_EXECUTOR_KUBE_CLIENT_QPS
             value: "50"
       - contains:
           path: spec.template.spec.containers[0].env
           content:
-            name: LEOFLOW_EXECUTOR_KUBE_CLIENT_BURST
+            name: DEXAFLOW_EXECUTOR_KUBE_CLIENT_BURST
             value: "100"
       - contains:
           path: spec.template.spec.containers[0].env
           content:
-            name: LEOFLOW_EXECUTOR_KUBE_CLIENT_MAINTENANCE_QPS
+            name: DEXAFLOW_EXECUTOR_KUBE_CLIENT_MAINTENANCE_QPS
             value: "20"
       - contains:
           path: spec.template.spec.containers[0].env
           content:
-            name: LEOFLOW_EXECUTOR_KUBE_CLIENT_MAINTENANCE_BURST
+            name: DEXAFLOW_EXECUTOR_KUBE_CLIENT_MAINTENANCE_BURST
             value: "40"

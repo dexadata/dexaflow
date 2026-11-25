@@ -24,27 +24,27 @@ tests:
       - contains:
           path: spec.template.spec.containers[0].env
           content:
-            name: LEOFLOW_HELM_RELEASE
+            name: DEXAFLOW_HELM_RELEASE
             value: rel
       - contains:
           path: spec.template.spec.containers[0].env
           content:
-            name: LEOFLOW_HELM_NAMESPACE
+            name: DEXAFLOW_HELM_NAMESPACE
             value: data
       - contains:
           path: spec.template.spec.containers[0].env
           content:
-            name: LEOFLOW_HELM_CHART_VERSION
+            name: DEXAFLOW_HELM_CHART_VERSION
             value: 9.8.7
       - contains:
           path: spec.template.spec.containers[0].env
           content:
-            name: LEOFLOW_HELM_MIGRATIONS_ENABLED
+            name: DEXAFLOW_HELM_MIGRATIONS_ENABLED
             value: "true"
       - contains:
           path: spec.template.spec.containers[0].env
           content:
-            name: LEOFLOW_HELM_MIGRATE_IMAGE
+            name: DEXAFLOW_HELM_MIGRATE_IMAGE
             value: ghcr.io/dexadata/dexaflow-migrate:9.8.7
 
   # With no migration Job the hint names the operator's own step and the
@@ -58,12 +58,12 @@ tests:
       - contains:
           path: spec.template.spec.containers[0].env
           content:
-            name: LEOFLOW_HELM_MIGRATIONS_ENABLED
+            name: DEXAFLOW_HELM_MIGRATIONS_ENABLED
             value: "false"
       - contains:
           path: spec.template.spec.containers[0].env
           content:
-            name: LEOFLOW_HELM_MIGRATE_IMAGE
+            name: DEXAFLOW_HELM_MIGRATE_IMAGE
             value: ghcr.io/dexadata/dexaflow-migrate:v1.2.3
 
   - it: both split roles carry it
@@ -77,5 +77,5 @@ tests:
       - contains:
           path: spec.template.spec.containers[0].env
           content:
-            name: LEOFLOW_HELM_RELEASE
+            name: DEXAFLOW_HELM_RELEASE
             value: rel

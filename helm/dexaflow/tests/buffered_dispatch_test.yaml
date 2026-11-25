@@ -23,12 +23,12 @@ tests:
       - notContains:
           path: spec.template.spec.containers[0].env
           content:
-            name: LEOFLOW_SCHEDULER_DISPATCH_BUFFER_SIZE
+            name: DEXAFLOW_SCHEDULER_DISPATCH_BUFFER_SIZE
           any: true
       - notContains:
           path: spec.template.spec.containers[0].env
           content:
-            name: LEOFLOW_SCHEDULER_DISPATCH_WORKERS
+            name: DEXAFLOW_SCHEDULER_DISPATCH_WORKERS
           any: true
 
   - it: config.scheduler.dispatch renders the buffer size and worker count
@@ -40,10 +40,10 @@ tests:
       - contains:
           path: spec.template.spec.containers[0].env
           content:
-            name: LEOFLOW_SCHEDULER_DISPATCH_BUFFER_SIZE
+            name: DEXAFLOW_SCHEDULER_DISPATCH_BUFFER_SIZE
             value: "512"
       - contains:
           path: spec.template.spec.containers[0].env
           content:
-            name: LEOFLOW_SCHEDULER_DISPATCH_WORKERS
+            name: DEXAFLOW_SCHEDULER_DISPATCH_WORKERS
             value: "16"

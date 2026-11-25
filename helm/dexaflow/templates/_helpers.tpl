@@ -136,7 +136,7 @@ Service/PDB selector is a subset of this map, in every mode.
 Name of the installation ConfigMap (ADR 0090 decision 3). The migrate wrapper
 creates and updates it; the chart never renders it, so `helm uninstall` leaves
 it in place and a reinstall against an emptied database reads as a replaced
-one. The control plane reads its id through LEOFLOW_DATABASE_INSTALLATION_ID.
+one. The control plane reads its id through DEXAFLOW_DATABASE_INSTALLATION_ID.
 */}}
 {{- define "leoflow.installationConfigMapName" -}}
 {{- printf "%s-installation" (include "leoflow.fullname" .) | trunc 63 | trimSuffix "-" -}}
@@ -756,7 +756,7 @@ Only auth.oidc.tenantClaims and auth.oidc.roleMappings live there: both are maps
 and viper binds env only for the scalar leaves registered in serverDefaults,
 these two are deliberately absent from it because a Google `hd` key is a dotted
 domain that viper's "." delimiter would split into nested maps (#826). The server
-reads them out-of-band from the YAML file named by LEOFLOW_CONFIG
+reads them out-of-band from the YAML file named by DEXAFLOW_CONFIG
 (internal/config/server.go, decodeDottedOIDCMaps), which is the file this
 ConfigMap holds.
 
@@ -828,7 +828,7 @@ NetworkPolicy live in (#1682). Resolution order:
 
   1. taskNamespace, when set. An explicit value always wins, "leoflow" included.
   2. On `helm upgrade`, the namespace the release's running control plane already
-     creates task pods in, read from the LEOFLOW_EXECUTOR_TASK_NAMESPACE (or
+     creates task pods in, read from the DEXAFLOW_EXECUTOR_TASK_NAMESPACE (or
      DEXAFLOW_EXECUTOR_TASK_NAMESPACE) env of its Deployments. Charts before
      #1682 defaulted an unset value to the literal "leoflow", so an install that
      relied on that default keeps its task pods and RBAC where they are instead
@@ -859,7 +859,7 @@ release in the same namespace is never consulted.
 {{- if and (not $found) (eq (get $labels "app.kubernetes.io/instance") $.Release.Name) -}}
 {{- range $c := ($d.spec.template.spec.containers | default list) -}}
 {{- range $e := ($c.env | default list) -}}
-{{- if and (not $found) (has $e.name (list "LEOFLOW_EXECUTOR_TASK_NAMESPACE" "DEXAFLOW_EXECUTOR_TASK_NAMESPACE")) $e.value -}}
+{{- if and (not $found) (has $e.name (list "DEXAFLOW_EXECUTOR_TASK_NAMESPACE" "LEOFLOW_EXECUTOR_TASK_NAMESPACE")) $e.value -}}
 {{- $found = $e.value -}}
 {{- end -}}
 {{- end -}}

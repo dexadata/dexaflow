@@ -355,7 +355,7 @@ tests:
       - contains:
           path: spec.template.spec.containers[0].env
           content:
-            name: LEOFLOW_LOGS_BACKEND
+            name: DEXAFLOW_LOGS_BACKEND
             value: s3
 
   - it: renders a single replica on the default ReadWriteOnce logs PVC (unchanged default install)

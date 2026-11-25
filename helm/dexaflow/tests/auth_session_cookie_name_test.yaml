@@ -18,10 +18,10 @@ tests:
       auth.sessionCookieName: __Host-dexaflow
     template: deployment.yaml
     asserts:
-      - contains: {path: "spec.template.spec.containers[0].env", content: {name: LEOFLOW_AUTH_SESSION_COOKIE_NAME, value: __Host-dexaflow}}
+      - contains: {path: "spec.template.spec.containers[0].env", content: {name: DEXAFLOW_AUTH_SESSION_COOKIE_NAME, value: __Host-dexaflow}}
 
   - it: omits it by default, so the server keeps _token
     template: deployment.yaml
     asserts:
-      - notContains: {path: "spec.template.spec.containers[0].env", content: {name: LEOFLOW_AUTH_SESSION_COOKIE_NAME, value: ""}}
-      - notContains: {path: "spec.template.spec.containers[0].env", content: {name: LEOFLOW_AUTH_SESSION_COOKIE_NAME, value: _token}}
+      - notContains: {path: "spec.template.spec.containers[0].env", content: {name: DEXAFLOW_AUTH_SESSION_COOKIE_NAME, value: ""}}
+      - notContains: {path: "spec.template.spec.containers[0].env", content: {name: DEXAFLOW_AUTH_SESSION_COOKIE_NAME, value: _token}}

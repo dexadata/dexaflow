@@ -30,7 +30,7 @@ tests:
       - contains:
           path: spec.template.spec.containers[0].env
           content:
-            name: LEOFLOW_EXECUTOR_TASK_NAMESPACE
+            name: DEXAFLOW_EXECUTOR_TASK_NAMESPACE
             value: dexaflow
 
   - it: grants the executor Role in the release namespace
@@ -98,7 +98,7 @@ tests:
       - contains:
           path: spec.template.spec.containers[0].env
           content:
-            name: LEOFLOW_EXECUTOR_TASK_NAMESPACE
+            name: DEXAFLOW_EXECUTOR_TASK_NAMESPACE
             value: leoflow
         template: deployment.yaml
       - equal:
@@ -137,13 +137,13 @@ tests:
                 containers:
                   - name: server
                     env:
-                      - name: LEOFLOW_EXECUTOR_TASK_NAMESPACE
+                      - name: DEXAFLOW_EXECUTOR_TASK_NAMESPACE
                         value: leoflow
     asserts:
       - contains:
           path: spec.template.spec.containers[0].env
           content:
-            name: LEOFLOW_EXECUTOR_TASK_NAMESPACE
+            name: DEXAFLOW_EXECUTOR_TASK_NAMESPACE
             value: data-platform
         template: deployment.yaml
       - equal:
@@ -167,7 +167,7 @@ tests:
       - contains:
           path: spec.template.spec.containers[0].env
           content:
-            name: LEOFLOW_EXECUTOR_TASK_NAMESPACE
+            name: DEXAFLOW_EXECUTOR_TASK_NAMESPACE
             value: leoflow
 
   - it: on upgrade keeps the executor RBAC where the running pods are
@@ -247,15 +247,15 @@ tests:
                 containers:
                   - name: server
                     env:
-                      - name: LEOFLOW_SERVER_HTTP_ADDR
+                      - name: DEXAFLOW_SERVER_HTTP_ADDR
                         value: ":8080"
-                      - name: LEOFLOW_EXECUTOR_TASK_NAMESPACE
+                      - name: DEXAFLOW_EXECUTOR_TASK_NAMESPACE
                         value: team-tasks
     asserts:
       - contains:
           path: spec.template.spec.containers[0].env
           content:
-            name: LEOFLOW_EXECUTOR_TASK_NAMESPACE
+            name: DEXAFLOW_EXECUTOR_TASK_NAMESPACE
             value: team-tasks
 
   - it: ignores a Deployment of another release in the same namespace
@@ -280,13 +280,13 @@ tests:
                 containers:
                   - name: server
                     env:
-                      - name: LEOFLOW_EXECUTOR_TASK_NAMESPACE
+                      - name: DEXAFLOW_EXECUTOR_TASK_NAMESPACE
                         value: leoflow
     asserts:
       - contains:
           path: spec.template.spec.containers[0].env
           content:
-            name: LEOFLOW_EXECUTOR_TASK_NAMESPACE
+            name: DEXAFLOW_EXECUTOR_TASK_NAMESPACE
             value: dexaflow
 
   - it: on upgrade with no live control plane uses the release namespace
@@ -299,5 +299,5 @@ tests:
       - contains:
           path: spec.template.spec.containers[0].env
           content:
-            name: LEOFLOW_EXECUTOR_TASK_NAMESPACE
+            name: DEXAFLOW_EXECUTOR_TASK_NAMESPACE
             value: dexaflow

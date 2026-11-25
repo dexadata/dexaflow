@@ -280,7 +280,7 @@ Error: probes.readiness.timeoutSeconds=1 is below the 3s floor. [...]
 this binary requires, and it bounds that whole check at one second under
 `probes.readiness.timeoutSeconds`, so it always answers before the kubelet stops
 listening. The chart passes that budget to the server as
-`LEOFLOW_SERVER_PROBE_BUDGET` (`server.probe_budget`): 2s with the default
+`DEXAFLOW_SERVER_PROBE_BUDGET` (`server.probe_budget`): 2s with the default
 timeout of 3. On a slow metadatabase, such as a cross-region managed Postgres,
 raise the timeout and the server gets the same extra room:
 

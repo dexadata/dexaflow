@@ -21,7 +21,7 @@ tests:
       - notContains:
           path: spec.template.spec.containers[0].env
           content:
-            name: LEOFLOW_SERVER_POOLS_READ_ONLY
+            name: DEXAFLOW_SERVER_POOLS_READ_ONLY
           any: true
 
   - it: sets the lock when config.poolsReadOnly is true
@@ -32,7 +32,7 @@ tests:
       - contains:
           path: spec.template.spec.containers[0].env
           content:
-            name: LEOFLOW_SERVER_POOLS_READ_ONLY
+            name: DEXAFLOW_SERVER_POOLS_READ_ONLY
             value: "true"
 
   # The api role enforces the lock and the scheduler role the default_pool
@@ -50,5 +50,5 @@ tests:
       - contains:
           path: spec.template.spec.containers[0].env
           content:
-            name: LEOFLOW_SERVER_POOLS_READ_ONLY
+            name: DEXAFLOW_SERVER_POOLS_READ_ONLY
             value: "true"

@@ -1384,3 +1384,21 @@ sign-in button no longer signs the user straight back in.
 | Several applications share the IdP session and sign-out must not end it | Set `auth.oidc.logout: local`. |
 | `auth.externalSignoutUrl` is set | Nothing changes: it still decides where sign-out goes. |
 | No SSO | Nothing changes. |
+
+## Upgrading to 0.6.0: the chart renders DEXAFLOW_* variables
+
+The chart renders every control-plane variable under its `DEXAFLOW_*` name
+instead of `LEOFLOW_*`
+([#2156](https://github.com/dexadata/dexaflow/issues/2156)), so
+`kubectl describe` and the pod spec show the new name. The server reads both
+names, so nothing changes in what it runs with.
+
+| Your install | What the upgrade does |
+|---|---|
+| No `extraEnv` | The Deployments roll once with the new names. Nothing else changes. |
+| `extraEnv` entries under `LEOFLOW_*` names | They are rendered under their `DEXAFLOW_*` names and still win over the chart's own entries. Move them to the new names when convenient. |
+| `extraEnv` sets the same setting under both names | Only the `DEXAFLOW_*` entry is rendered, the one the server would read. |
+| Tooling that reads the pod spec for a `LEOFLOW_*` name (a policy, a script, a dashboard) | It no longer finds it. Read the `DEXAFLOW_*` name. |
+
+Task pods are not affected: the variables the server sets on them keep their
+names.

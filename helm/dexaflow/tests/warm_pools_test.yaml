@@ -29,17 +29,17 @@ tests:
       - contains:
           path: spec.template.spec.containers[0].env
           content:
-            name: LEOFLOW_EXECUTION_WARM_POOLS_ENABLED
+            name: DEXAFLOW_EXECUTION_WARM_POOLS_ENABLED
             value: "false"
       - contains:
           path: spec.template.spec.containers[0].env
           content:
-            name: LEOFLOW_AUTH_AGENT_TOKEN_TRANSPORT
+            name: DEXAFLOW_AUTH_AGENT_TOKEN_TRANSPORT
             value: "envvar"
       - contains:
           path: spec.template.spec.containers[0].env
           content:
-            name: LEOFLOW_AUTH_SECRET_LIVENESS_MODE
+            name: DEXAFLOW_AUTH_SECRET_LIVENESS_MODE
             value: "observe"
 
   # The D6/D9 tuning caps are inert while the flag is off (the server's
@@ -51,12 +51,12 @@ tests:
       - notContains:
           path: spec.template.spec.containers[0].env
           content:
-            name: LEOFLOW_EXECUTION_MIN_IDLE_WORKERS
+            name: DEXAFLOW_EXECUTION_MIN_IDLE_WORKERS
             value: "0"
       - notContains:
           path: spec.template.spec.containers[0].env
           content:
-            name: LEOFLOW_EXECUTION_MAX_POOL_SIZE
+            name: DEXAFLOW_EXECUTION_MAX_POOL_SIZE
             value: "8"
 
   - it: wires every warm-pool knob when warm pools are enabled with the ADR 0058 D2 prerequisites
@@ -69,64 +69,64 @@ tests:
       - contains:
           path: spec.template.spec.containers[0].env
           content:
-            name: LEOFLOW_EXECUTION_WARM_POOLS_ENABLED
+            name: DEXAFLOW_EXECUTION_WARM_POOLS_ENABLED
             value: "true"
       - contains:
           path: spec.template.spec.containers[0].env
           content:
-            name: LEOFLOW_EXECUTION_MIN_IDLE_WORKERS
+            name: DEXAFLOW_EXECUTION_MIN_IDLE_WORKERS
             value: "0"
       - contains:
           path: spec.template.spec.containers[0].env
           content:
-            name: LEOFLOW_EXECUTION_MAX_POOL_SIZE
+            name: DEXAFLOW_EXECUTION_MAX_POOL_SIZE
             value: "8"
       - contains:
           path: spec.template.spec.containers[0].env
           content:
-            name: LEOFLOW_EXECUTION_MAX_ATTEMPTS_PER_WORKER
+            name: DEXAFLOW_EXECUTION_MAX_ATTEMPTS_PER_WORKER
             value: "50"
       - contains:
           path: spec.template.spec.containers[0].env
           content:
-            name: LEOFLOW_EXECUTION_MAX_WORKER_LIFETIME
+            name: DEXAFLOW_EXECUTION_MAX_WORKER_LIFETIME
             value: "1h"
       - contains:
           path: spec.template.spec.containers[0].env
           content:
-            name: LEOFLOW_EXECUTION_WORKER_IDLE_TTL
+            name: DEXAFLOW_EXECUTION_WORKER_IDLE_TTL
             value: "5m"
       - contains:
           path: spec.template.spec.containers[0].env
           content:
-            name: LEOFLOW_EXECUTION_MAX_WARM_PODS_PER_TENANT
+            name: DEXAFLOW_EXECUTION_MAX_WARM_PODS_PER_TENANT
             value: "100"
       # Stamped only when turned on, so enabling warm pools alone renders the
       # same env as before this knob existed.
       - notContains:
           path: spec.template.spec.containers[0].env
           content:
-            name: LEOFLOW_EXECUTION_WARM_READ_ONLY_ROOT_FILESYSTEM
+            name: DEXAFLOW_EXECUTION_WARM_READ_ONLY_ROOT_FILESYSTEM
             value: "false"
       - notContains:
           path: spec.template.spec.containers[0].env
           content:
-            name: LEOFLOW_EXECUTION_WARM_POOL_EVENT_REFILL
+            name: DEXAFLOW_EXECUTION_WARM_POOL_EVENT_REFILL
             value: "false"
       - notContains:
           path: spec.template.spec.containers[0].env
           content:
-            name: LEOFLOW_EXECUTION_WARM_REQUIRE_ATTEMPT_HOME_SWEEP
+            name: DEXAFLOW_EXECUTION_WARM_REQUIRE_ATTEMPT_HOME_SWEEP
             value: "false"
       - contains:
           path: spec.template.spec.containers[0].env
           content:
-            name: LEOFLOW_AUTH_AGENT_TOKEN_TRANSPORT
+            name: DEXAFLOW_AUTH_AGENT_TOKEN_TRANSPORT
             value: "exchange"
       - contains:
           path: spec.template.spec.containers[0].env
           content:
-            name: LEOFLOW_AUTH_SECRET_LIVENESS_MODE
+            name: DEXAFLOW_AUTH_SECRET_LIVENESS_MODE
             value: "enforce"
 
   # The chart's defaults must equal the server's Go defaults, so the values above
@@ -151,47 +151,47 @@ tests:
       - contains:
           path: spec.template.spec.containers[0].env
           content:
-            name: LEOFLOW_EXECUTION_MIN_IDLE_WORKERS
+            name: DEXAFLOW_EXECUTION_MIN_IDLE_WORKERS
             value: "2"
       - contains:
           path: spec.template.spec.containers[0].env
           content:
-            name: LEOFLOW_EXECUTION_MAX_POOL_SIZE
+            name: DEXAFLOW_EXECUTION_MAX_POOL_SIZE
             value: "16"
       - contains:
           path: spec.template.spec.containers[0].env
           content:
-            name: LEOFLOW_EXECUTION_MAX_ATTEMPTS_PER_WORKER
+            name: DEXAFLOW_EXECUTION_MAX_ATTEMPTS_PER_WORKER
             value: "25"
       - contains:
           path: spec.template.spec.containers[0].env
           content:
-            name: LEOFLOW_EXECUTION_MAX_WORKER_LIFETIME
+            name: DEXAFLOW_EXECUTION_MAX_WORKER_LIFETIME
             value: "30m"
       - contains:
           path: spec.template.spec.containers[0].env
           content:
-            name: LEOFLOW_EXECUTION_WORKER_IDLE_TTL
+            name: DEXAFLOW_EXECUTION_WORKER_IDLE_TTL
             value: "90s"
       - contains:
           path: spec.template.spec.containers[0].env
           content:
-            name: LEOFLOW_EXECUTION_MAX_WARM_PODS_PER_TENANT
+            name: DEXAFLOW_EXECUTION_MAX_WARM_PODS_PER_TENANT
             value: "40"
       - contains:
           path: spec.template.spec.containers[0].env
           content:
-            name: LEOFLOW_EXECUTION_WARM_READ_ONLY_ROOT_FILESYSTEM
+            name: DEXAFLOW_EXECUTION_WARM_READ_ONLY_ROOT_FILESYSTEM
             value: "true"
       - contains:
           path: spec.template.spec.containers[0].env
           content:
-            name: LEOFLOW_EXECUTION_WARM_POOL_EVENT_REFILL
+            name: DEXAFLOW_EXECUTION_WARM_POOL_EVENT_REFILL
             value: "true"
       - contains:
           path: spec.template.spec.containers[0].env
           content:
-            name: LEOFLOW_EXECUTION_WARM_REQUIRE_ATTEMPT_HOME_SWEEP
+            name: DEXAFLOW_EXECUTION_WARM_REQUIRE_ATTEMPT_HOME_SWEEP
             value: "true"
 
   # ADR 0058 D2 is a security coupling, not a preference: the server refuses to
@@ -227,7 +227,7 @@ tests:
       - contains:
           path: spec.template.spec.containers[0].env
           content:
-            name: LEOFLOW_SCHEDULER_DISPATCH_WORKERS
+            name: DEXAFLOW_SCHEDULER_DISPATCH_WORKERS
             value: "4"
 
   # A Kubernetes env value is a string; a YAML number or bool would be rejected by
@@ -243,7 +243,7 @@ tests:
       - contains:
           path: spec.template.spec.containers[0].env
           content:
-            name: LEOFLOW_SCHEDULER_DISPATCH_WORKERS
+            name: DEXAFLOW_SCHEDULER_DISPATCH_WORKERS
             value: "4"
 
   - it: keeps a valueFrom extraEnv entry intact
@@ -259,7 +259,7 @@ tests:
       - contains:
           path: spec.template.spec.containers[0].env
           content:
-            name: LEOFLOW_LOGS_SINK_ACCESS_KEY_ID
+            name: DEXAFLOW_LOGS_SINK_ACCESS_KEY_ID
             valueFrom:
               secretKeyRef:
                 name: my-bucket-creds

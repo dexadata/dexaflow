@@ -8,9 +8,9 @@ environment variables only for the scalar leaves registered in serverDefaults. T
 two maps are not registered there (a Google Workspace `hd` key is a dotted domain,
 and viper's "." key delimiter would split it into nested maps and fail to decode,
 #826), so the server decodes them straight from the raw YAML named by
-LEOFLOW_CONFIG. Without this file `auth.provider: oidc` cannot boot: validateOIDC
+DEXAFLOW_CONFIG. Without this file `auth.provider: oidc` cannot boot: validateOIDC
 requires the tenant pin and reports the miss with a hint that says, correctly, that
-no LEOFLOW_AUTH_OIDC_* variable can carry the map (#1143).
+no DEXAFLOW_AUTH_OIDC_* variable can carry the map (#1143).
 
 Everything else stays on the env-var path the rest of this chart uses, and keeping
 the file partial is what makes the two halves safe to combine: viper ranks env
@@ -37,7 +37,7 @@ metadata:
 data:
   config.yaml: |
     # Rendered by the leoflow chart. Partial on purpose: every other server
-    # setting arrives as a LEOFLOW_* environment variable, which outranks this
+    # setting arrives as a DEXAFLOW_* environment variable, which outranks this
     # file. Edit helm values, not this ConfigMap, a `helm upgrade` replaces it.
     auth:
       oidc:

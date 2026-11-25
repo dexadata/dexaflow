@@ -16,13 +16,13 @@ tests:
   # rollback (which runs no hook) the pods still read the id the database
   # carries. Optional, so a pod starts before a first Job has run, and with
   # migrations.enabled false (no Job, no ConfigMap) nothing is compared.
-  - it: reads LEOFLOW_DATABASE_INSTALLATION_ID from the installation ConfigMap, optionally
+  - it: reads DEXAFLOW_DATABASE_INSTALLATION_ID from the installation ConfigMap, optionally
     template: deployment.yaml
     asserts:
       - contains:
           path: spec.template.spec.containers[0].env
           content:
-            name: LEOFLOW_DATABASE_INSTALLATION_ID
+            name: DEXAFLOW_DATABASE_INSTALLATION_ID
             valueFrom:
               configMapKeyRef:
                 name: rel-dexaflow-installation
@@ -45,7 +45,7 @@ tests:
       - contains:
           path: spec.template.spec.containers[0].env
           content:
-            name: LEOFLOW_DATABASE_INSTALLATION_ID
+            name: DEXAFLOW_DATABASE_INSTALLATION_ID
             valueFrom:
               configMapKeyRef:
                 name: rel-dexaflow-installation
@@ -63,7 +63,7 @@ tests:
       - contains:
           path: spec.template.spec.containers[0].env
           content:
-            name: LEOFLOW_DATABASE_INSTALLATION_ID
+            name: DEXAFLOW_DATABASE_INSTALLATION_ID
             valueFrom:
               configMapKeyRef:
                 name: rel-dexaflow-installation

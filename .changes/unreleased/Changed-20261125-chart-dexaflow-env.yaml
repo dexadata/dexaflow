@@ -1,0 +1,3 @@
+kind: Changed
+body: '**The chart renders DEXAFLOW_* variables** (#2156): every control-plane variable the chart sets, on every Deployment and the migration Job, now uses its `DEXAFLOW_*` name instead of `LEOFLOW_*`, so a fresh install shows the new name in `kubectl describe`. An `extraEnv` entry under a `LEOFLOW_*` name is rendered under its `DEXAFLOW_*` name and still wins over the chart''s own entry; with both names listed, the `DEXAFLOW_*` one is rendered. Tooling that reads a `LEOFLOW_*` name from the pod spec must read the new one. See [Upgrading to 0.6.0: the chart renders DEXAFLOW_* variables](https://dexaflow.dexadata.ai/operate/upgrades/version-notes/#upgrading-to-060-the-chart-renders-dexaflow_-variables).'
+time: 2026-11-25T14:30:00.000000+00:00

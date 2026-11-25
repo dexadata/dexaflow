@@ -20,12 +20,12 @@ tests:
       - notContains:
           path: spec.template.spec.containers[0].env
           content:
-            name: LEOFLOW_SCHEDULER_ALERTS_BLOCK_PRIVATE_DESTINATIONS
+            name: DEXAFLOW_SCHEDULER_ALERTS_BLOCK_PRIVATE_DESTINATIONS
           any: true
       - notContains:
           path: spec.template.spec.containers[0].env
           content:
-            name: LEOFLOW_SCHEDULER_ALERTS_ALLOWED_CIDRS
+            name: DEXAFLOW_SCHEDULER_ALERTS_ALLOWED_CIDRS
           any: true
 
   - it: config.alerts.blockPrivateDestinations renders the guard env
@@ -36,7 +36,7 @@ tests:
       - contains:
           path: spec.template.spec.containers[0].env
           content:
-            name: LEOFLOW_SCHEDULER_ALERTS_BLOCK_PRIVATE_DESTINATIONS
+            name: DEXAFLOW_SCHEDULER_ALERTS_BLOCK_PRIVATE_DESTINATIONS
             value: "true"
 
   - it: config.alerts.allowedCIDRs renders a comma-joined env (viper splits it into a list)
@@ -50,5 +50,5 @@ tests:
       - contains:
           path: spec.template.spec.containers[0].env
           content:
-            name: LEOFLOW_SCHEDULER_ALERTS_ALLOWED_CIDRS
+            name: DEXAFLOW_SCHEDULER_ALERTS_ALLOWED_CIDRS
             value: 10.20.0.0/16,192.168.5.7
