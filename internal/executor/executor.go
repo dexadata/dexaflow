@@ -152,6 +152,11 @@ type Request struct {
 	// the key in the cluster's secret store rather than in Dexaflow (ADR 0035).
 	TaskSecretName      string
 	TaskSecretMountPath string
+	// TaskSecretAliasPath, when set and different from TaskSecretMountPath,
+	// mounts the same Secret there too. The server sets it to the path the
+	// leoflow default used while the mount path is the dexaflow default, so a DAG
+	// that reads the old path keeps working (#2155).
+	TaskSecretAliasPath string
 
 	// SecretsBackend / SecretsBackendKwargs, when set, are the operator's external
 	// secrets backend (ADR 0060): the provider class the in-pod resolver drives and

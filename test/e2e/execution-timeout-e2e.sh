@@ -112,6 +112,11 @@ NS=leoflow
 # targets. This is the default `database.url` the server boots with, migrated
 # here with the golang-migrate CLI exactly as the k3d CI jobs do.
 DATABASE_URL="${DATABASE_URL:-postgres://leoflow:leoflow@localhost:5432/leoflow?sslmode=disable}"
+# The fixtures this script runs against name the task namespace and the
+# database `leoflow`; the server's own defaults name them dexaflow since 0.6.0
+# (#2155), so the fixture names are pinned for the control plane here.
+export LEOFLOW_EXECUTOR_TASK_NAMESPACE="${LEOFLOW_EXECUTOR_TASK_NAMESPACE:-leoflow}"
+export LEOFLOW_DATABASE_URL="${LEOFLOW_DATABASE_URL:-$DATABASE_URL}"
 WORKDIR="$(mktemp -d)"
 # Every curl is bounded: an unreachable control plane must surface as a named
 # failure here, not as a hang that a later assertion misattributes.

@@ -19,6 +19,11 @@
 # Linux/CI k3d injects host.k3d.internal into CoreDNS instead — override with
 # LEOFLOW_E2E_HOST_ADDR. Ports are overridable for hosts whose defaults are busy.
 set -euo pipefail
+# The fixtures this script runs against name the task namespace and the
+# database `leoflow`; the server's own defaults name them dexaflow since 0.6.0
+# (#2155), so the fixture names are pinned for the control plane here.
+export LEOFLOW_EXECUTOR_TASK_NAMESPACE="${LEOFLOW_EXECUTOR_TASK_NAMESPACE:-leoflow}"
+export LEOFLOW_DATABASE_URL="${LEOFLOW_DATABASE_URL:-postgres://leoflow:leoflow@localhost:5432/leoflow?sslmode=disable}"
 
 # shellcheck source=test/e2e/lib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"

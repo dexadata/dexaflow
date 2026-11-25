@@ -518,3 +518,46 @@ func TestMergeMetadataReturnsDroppedKeysSorted(t *testing.T) {
 		t.Errorf("own = %v", own)
 	}
 }
+
+// TestTaskSecretAliasMountsTheSameSecretTwice covers the 0.6.0 rename (#2155):
+// while the mount path is the default, the secret is also mounted at the path
+// the leoflow default used, so a DAG that reads the old path keeps working.
+func TestTaskSecretAliasMountsTheSameSecretTwice(t *testing.T) {
+	req := sampleReq()
+	req.TaskSecretName = "gcp-sa-key"
+	req.TaskSecretMountPath = "/etc/dexaflow/secrets"
+	req.TaskSecretAliasPath = "/etc/leoflow/secrets"
+	pod := BuildPod(req)
+	var paths []string
+	for _, m := range pod.Spec.Containers[0].VolumeMounts {
+		if m.Name == taskSecretVolumeName {
+			if !m.ReadOnly {
+				t.Errorf("mount at %s must be read-only", m.MountPath)
+			}
+			paths = append(paths, m.MountPath)
+		}
+	}
+	if len(paths) != 2 || paths[0] != "/etc/dexaflow/secrets" || paths[1] != "/etc/leoflow/secrets" {
+		t.Fatalf("task secret mounts = %q, want the path and its alias", paths)
+	}
+	volumes := 0
+	for _, v := range pod.Spec.Volumes {
+		if v.Name == taskSecretVolumeName {
+			volumes++
+		}
+	}
+	if volumes != 1 {
+		t.Fatalf("task secret volumes = %d, want one volume mounted twice", volumes)
+	}
+	// An alias equal to the path adds nothing.
+	req.TaskSecretAliasPath = req.TaskSecretMountPath
+	n := 0
+	for _, m := range BuildPod(req).Spec.Containers[0].VolumeMounts {
+		if m.Name == taskSecretVolumeName {
+			n++
+		}
+	}
+	if n != 1 {
+		t.Fatalf("an alias equal to the path: %d mounts, want 1", n)
+	}
+}

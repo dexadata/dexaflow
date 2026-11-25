@@ -40,6 +40,11 @@
 #
 # Usage: test/e2e/chaos-runtime.sh [cluster-name]
 set -uo pipefail
+# The fixtures this script runs against name the task namespace and the
+# database `leoflow`; the server's own defaults name them dexaflow since 0.6.0
+# (#2155), so the fixture names are pinned for the control plane here.
+export LEOFLOW_EXECUTOR_TASK_NAMESPACE="${LEOFLOW_EXECUTOR_TASK_NAMESPACE:-leoflow}"
+export LEOFLOW_DATABASE_URL="${LEOFLOW_DATABASE_URL:-postgres://leoflow:leoflow@localhost:5432/leoflow?sslmode=disable}"
 
 # shellcheck source=test/e2e/lib.sh
 source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"

@@ -284,6 +284,9 @@ func clusterServerEnv(p liteEnvParams, kubeconfig string) []string {
 		"LEOFLOW_EXECUTOR_TYPE=kubernetes",
 		"KUBECONFIG="+kubeconfig,
 		"LEOFLOW_EXECUTOR_AGENT_CONTROL_PLANE_ADDR="+devHostGRPCAddr(p.port),
+		// The namespace ensureDevCluster creates; the server's own default has
+		// named dexaflow since 0.6.0 (#2155).
+		"LEOFLOW_EXECUTOR_TASK_NAMESPACE="+devNamespace,
 		// The dev k3d cluster's local-path provisioner rejects RWX; it is
 		// single-node, so RWO is sufficient for a run's sequential pods (ADR 0022).
 		"LEOFLOW_EXECUTOR_DEFAULTS_STAGING_ACCESS_MODE=ReadWriteOnce",
