@@ -175,3 +175,19 @@ func OpenSchedulerLease(ctx context.Context, cfg config.DatabaseSection) (*Sched
 	}
 	return NewSchedulerLease(pool), pool.Close, nil
 }
+
+// Current reads whether this replica's term is still the lease's current one
+// (scheduler.LeaseTerms). A replica that never led holds no current term.
+func (l *SchedulerLease) Current(ctx context.Context) (bool, error) {
+	term := l.term.Load()
+	if term == 0 {
+		return false, nil
+	}
+	var current bool
+	if err := l.pool.QueryRow(ctx, `SELECT term = $1 FROM scheduler_lease WHERE id = 1`, term).Scan(&current); err != nil {
+		return false, fmt.Errorf("reading the scheduler lease term: %w", err)
+	}
+	return current, nil
+}
+
+var _ scheduler.LeaseTerms = (*SchedulerLease)(nil)

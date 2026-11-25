@@ -82,18 +82,28 @@ PgBouncer in transaction mode, where a session is not a connection.
    by the trigger until its watchdog steps it down. The roles need nothing
    more: a role may signal backends of its own role.
 
-5. **Pods carry the term.** Task pods and warm pods get the annotation
-   `dexaflow.io/leader-term`. A dispatch worker drops an item whose term is
-   not the current one before it calls the apiserver. The pod reconciler
-   deletes a Pending pod created under an older term whose attempt has not
-   started, so a create that raced the step-down cannot start a task the
-   new leader re-placed. A pod whose attempt started is never touched: its
-   attempt is the row's live execution (ADR 0052).
+5. **Pods carry the term.** Task pods get the annotation
+   `leoflow.io/leader-term`, next to the pod's other `leoflow.io/`
+   annotations. With fencing on, a dispatch worker reads whether its term
+   is still the lease's current one right before it calls the apiserver,
+   and drops the item when it is not: the task stays queued and the new
+   leader's stale queued reaper re-places it under a new attempt epoch. A
+   create that raced the step-down past that read cannot start the task:
+   its token carries the old attempt epoch, which the new placement
+   superseded, so the agent's start is refused (ADR 0051). The reconciler
+   therefore needs no term rule of its own, and a pod whose attempt started
+   is never touched (ADR 0052).
 
-6. **External side effects check the term first.** Alert sends, warm pool
-   creates and deletes and collection deletes check the leader's term
-   against the last renewal right before the call. This narrows the window
-   to one call; it does not close it, and the docs say so.
+6. **External side effects check the term first.** With fencing on, the
+   gate of the leader-only loops that call the apiserver (the reapers, the
+   pod reconciler and its settled run collection, staging volume and warm
+   pool collection and creation) is "leading and on the current term",
+   read from the lease at most once a second. Alert sends need no check of
+   their own: an alert follows the run's finalize write, which the fence
+   refuses for an older term. This narrows the window to one cached read;
+   it does not close it, and the docs say so. A lease that cannot be read
+   leaves the gate open, so a database blip does not stop a leader; the
+   fence still refuses its writes.
 
 7. **The leader's writers use the leader's pools.** Fencing needs every
    leader-only writer on a tagged pool: the scheduler pool
@@ -115,13 +125,6 @@ PgBouncer in transaction mode, where a session is not a connection.
    2026-11-24). A renewal that finds a newer term returns
    `scheduler.ErrLeaseSuperseded`, which the watchdog treats as a step-down
    on the first check, not as one of the three failed checks it tolerates.
-
-### Delivery
-
-Points 1 to 4, 7 and 8 ship first, with the migration and the setting.
-Points 5 and 6 (the term on pods and before external calls) follow in the
-same minor; until they land, a pod create that raced a step-down is still
-caught only by the attempt epoch of ADR 0051.
 
 ### Rolling upgrade
 
@@ -152,7 +155,8 @@ One leader at a time is still the advisory lock's job, unchanged.
 ## Consequences
 
 - After the new leader's term commits, no database write from an older term
-  lands, and once points 5 and 6 ship, no pod create either. The integration
+  lands, and a pod create from an older term needs to pass the worker's
+  term read in the window before the new term commits. The integration
   tests of #2329 drop the leader's lock session, let a second replica take
   the next term, and check that the old term's in-flight transaction does
   not commit, its next write is refused and counted, the new leader writes,

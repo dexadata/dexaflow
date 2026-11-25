@@ -754,8 +754,14 @@ A new leader ends the sessions of older terms as soon as its term commits, so
 a transaction of the old leader still in flight aborts, and the database
 refuses any later write to runs or task instances from an older term
 (`stale_leader_term`, counted as `leader_write_fenced` in
-`dexaflow_scheduler_decisions_total`). The API, the agent handlers and the
-migration Job are not fenced. The dedicated pool counts against the
+`dexaflow_scheduler_decisions_total`). Before each task pod create, a
+dispatch worker checks that its term is still the current one and drops the
+dispatch when it is not (`dispatch_dropped_stale_term`); the task stays queued
+for the new leader, and every task pod names the term that created it in the
+`leoflow.io/leader-term` annotation. The reapers, the pod reconciler and the
+warm pool and staging collection act only while the term is current, read at
+most once a second. The API, the agent handlers and the migration Job are not
+fenced. The dedicated pool counts against the
 connection budget below: `database.schedulerMaxConns`, or 8 when it is unset.
 PgBouncer in transaction mode is not supported for the scheduler with fencing
 on, since the term is a session setting.

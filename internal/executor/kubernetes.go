@@ -179,10 +179,10 @@ func BuildPod(req Request) *corev1.Pod {
 				podLabelAttemptEpoch:   strconv.Itoa(req.AttemptEpoch),
 				"leoflow.io/tenant-id": labelValue(req.TenantID),
 			},
-			Annotations: map[string]string{
+			Annotations: leaderTermAnnotations(req.LeaderTerm, map[string]string{
 				"leoflow.io/task-instance-id": req.TaskInstanceID,
 				podAnnotationRawTaskID:        req.TaskID,
-			},
+			}),
 		},
 		Spec: corev1.PodSpec{
 			RestartPolicy: corev1.RestartPolicyNever,
@@ -663,6 +663,19 @@ func mountWritableTmp(pod *corev1.Pod, ps PodSecurity) {
 
 // SourceAnnotation carries a source-mode task's dag.py on its pod (ADR 0067 §3).
 const SourceAnnotation = "leoflow.io/dag-source"
+
+// LeaderTermAnnotation names the scheduler lease term of the leader that
+// created a task pod (ADR 0106, point 5).
+const LeaderTermAnnotation = "leoflow.io/leader-term"
+
+// leaderTermAnnotations adds LeaderTermAnnotation to annotations when the
+// term is known.
+func leaderTermAnnotations(term int64, annotations map[string]string) map[string]string {
+	if term > 0 {
+		annotations[LeaderTermAnnotation] = strconv.FormatInt(term, 10)
+	}
+	return annotations
+}
 
 // SourceMountPath is where a source-mode task's dag.py is projected, and the
 // task container's working directory, so `python -m leoflow_runtime` imports

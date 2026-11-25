@@ -224,7 +224,7 @@ func setupSubprocessDispatch(ctx context.Context, cfg *config.ServerConfig, sche
 	dispatcher := dispatch.NewDispatcher(subExec, execStore, authn, resolveAgentControlAddr(cfg), attemptTokenTTL)
 	configureSubprocessDispatcher(dispatcher, cfg, warmPools)
 	applyAdmission(dispatcher, hooks, cfg, metrics, logger)
-	disp, closer := wrapBuffered(dispatcher, store, logger, metrics, cfg.Scheduler.Dispatch) //nolint:contextcheck // buffered worker deliberately detaches from caller ctx
+	disp, closer := wrapBuffered(dispatcher, store, logger, metrics, cfg.Scheduler.Dispatch, nil) //nolint:contextcheck // buffered worker deliberately detaches from caller ctx
 	sched.SetDispatcher(disp)
 	var markers logs.MarkerSink
 	if ms, ok := logSink.(logs.MarkerSink); ok {
@@ -265,6 +265,8 @@ func setupK8sDispatch(ctx context.Context, cfg *config.ServerConfig, sched *sche
 		podExec.SetPodMetrics(metrics)
 	}
 	dispatcher := dispatch.NewDispatcher(podExec, execStore, authn, controlAddr, attemptTokenTTL)
+	dispatcher.SetLeaderTerm(sched.LeaderTerm)
+	leading, termCheck := leaderGates(cfg, sched)
 	configureK8sDispatcher(dispatcher, cfg, warmPools, metrics)
 	applyAdmission(dispatcher, hooks, cfg, metrics, logger)
 	// validateStartup already parsed the policy; fail closed if it somehow
@@ -274,7 +276,7 @@ func setupK8sDispatch(ctx context.Context, cfg *config.ServerConfig, sched *sche
 		return false, nil, err
 	}
 	applyForcePolicy(dispatcher, policy, logger)
-	disp, closer := wrapBuffered(dispatcher, store, logger, metrics, cfg.Scheduler.Dispatch) //nolint:contextcheck // buffered worker deliberately detaches from caller ctx
+	disp, closer := wrapBuffered(dispatcher, store, logger, metrics, cfg.Scheduler.Dispatch, termCheck) //nolint:contextcheck // buffered worker deliberately detaches from caller ctx
 	sched.SetDispatcher(disp)
 	// Shared informer read-path (PR-10): one long-lived watch replaces the
 	// reapers' per-running-TI LIST storm and the reconciler's 30s LIST. Consulted
@@ -316,7 +318,7 @@ func setupK8sDispatch(ctx context.Context, cfg *config.ServerConfig, sched *sche
 	// starts stepping down: together with the run-context cancel, this keeps a
 	// draining leader from marking TIs failed or deleting pods on its way out,
 	// and the successor redoes the reap under its own settling gate.
-	reaper := executor.NewReaper(store, reapPods, cache, warmLister, metrics, logger, executor.DefaultReaperConfig(), executor.ReaperGates{InStepDown: sched.SteppingDown, Leading: sched.IsLeading})
+	reaper := executor.NewReaper(store, reapPods, cache, warmLister, metrics, logger, executor.DefaultReaperConfig(), executor.ReaperGates{InStepDown: sched.SteppingDown, Leading: leading})
 	// The same ceiling that floors the task pod's deadline and sets the warm
 	// attempt watchdog: a silent attempt older than it fails for the credential
 	// ceiling, as a task failure, instead of being re-placed as agent_lost (#1461).
@@ -354,8 +356,8 @@ func setupK8sDispatch(ctx context.Context, cfg *config.ServerConfig, sched *sche
 	// (ADR 0052 amendment, part 2). Lite never reaches this and keeps
 	// confirming at mark time.
 	store.SetProvisionalInfraMarks(true)
-	startMaintenance(ctx, mcs, cfg.Executor.TaskNamespace, execStore, store, overrideObservers{metrics: metrics, sink: markers}, reaper, sched.IsLeading, logger, snapshotter, settledRunCollection(cfg.Executor, execStore))
-	startStagingGC(ctx, mcs, cfg.Executor.TaskNamespace, store, sched.IsLeading, logger, metrics)
+	startMaintenance(ctx, mcs, cfg.Executor.TaskNamespace, execStore, store, overrideObservers{metrics: metrics, sink: markers}, reaper, leading, logger, snapshotter, settledRunCollection(cfg.Executor, execStore))
+	startStagingGC(ctx, mcs, cfg.Executor.TaskNamespace, store, leading, logger, metrics)
 	// Warm-pool reconciler (ADR 0058 N1b2b, model A2): keeps min_idle warm workers
 	// ready per active dag_version. Started ONLY when warm pools are enabled, with
 	// them off it is never constructed, so no warm pod is ever created and dispatch
@@ -376,7 +378,7 @@ func setupK8sDispatch(ctx context.Context, cfg *config.ServerConfig, sched *sche
 				warmPools.SetOnClaim(warmCache.Kick)
 			}
 		}
-		startWarmPoolReconciler(ctx, store, warmPods, store, cfg.Execution.MaxWarmPodsPerTenant, warmCache, sched.IsLeading, metrics, logger)
+		startWarmPoolReconciler(ctx, store, warmPods, store, cfg.Execution.MaxWarmPodsPerTenant, warmCache, leading, metrics, logger)
 		logger.Warn("warm pool reconciler enabled (ADR 0058 N1b2b); maintaining min_idle warm workers per active dag_version", "namespace", cfg.Executor.TaskNamespace)
 	}
 	logger.Info("pod dispatch enabled", "namespace", cfg.Executor.TaskNamespace, "agent_control_plane_addr", controlAddr,
@@ -394,7 +396,7 @@ func setupK8sDispatch(ctx context.Context, cfg *config.ServerConfig, sched *sche
 // The io.Closer is non-nil only in buffered mode; the caller defers Close() on
 // shutdown so in-flight dispatches drain (workers finish or fail via the sink)
 // instead of leaking goroutines and leaving TIs stuck `queued` (#133).
-func wrapBuffered(inner dispatch.Inner, sink dispatch.FailureSink, logger *slog.Logger, metrics *observability.Metrics, cfg config.DispatchSection) (scheduler.Dispatcher, io.Closer) {
+func wrapBuffered(inner dispatch.Inner, sink dispatch.FailureSink, logger *slog.Logger, metrics *observability.Metrics, cfg config.DispatchSection, termCheck func(context.Context) bool) (scheduler.Dispatcher, io.Closer) {
 	if cfg.BufferSize <= 0 {
 		// Passthrough: keep the inner dispatcher exposed verbatim so the
 		// scheduler sees the same surface it always did in Lite. No pool to close.
@@ -410,6 +412,9 @@ func wrapBuffered(inner dispatch.Inner, sink dispatch.FailureSink, logger *slog.
 		BufferSize: cfg.BufferSize,
 		Workers:    cfg.Workers,
 	})
+	if termCheck != nil {
+		bd.SetTermCheck(termCheck)
+	}
 	logger.Info("buffered dispatch enabled (async pool)",
 		"buffer_size", cfg.BufferSize, "workers", cfg.Workers)
 	return bd, bd
@@ -419,3 +424,15 @@ func wrapBuffered(inner dispatch.Inner, sink dispatch.FailureSink, logger *slog.
 // AsyncDispatchStore: the type assertion there would otherwise fall back to
 // failing every worker-side dispatch error at once, silently.
 var _ scheduler.AsyncDispatchStore = (*storage.SchedulerStore)(nil)
+
+// leaderGates returns the gate of the leader-only side effects (the reaper,
+// the reconciler, staging and warm pool collection) and the check a dispatch
+// worker makes before a pod create. With scheduler.lease_fencing on, both
+// also ask whether this replica's lease term is still the current one (ADR
+// 0106, points 5 and 6); off, the gate is IsLeading and there is no check.
+func leaderGates(cfg *config.ServerConfig, sched *scheduler.Scheduler) (leading func() bool, termCheck func(context.Context) bool) {
+	if !cfg.Scheduler.LeaseFencing {
+		return sched.IsLeading, nil
+	}
+	return sched.FencedLeading, sched.TermCurrent
+}
