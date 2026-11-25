@@ -458,7 +458,7 @@ WHERE tenant_id = sqlc.arg(tenant_id) AND dag_run_id = sqlc.arg(dag_run_id)
 -- sort (which spilled to disk at 100k rows) buys nothing.
 SELECT dag_run_id, task_id, state, try_number, max_tries, ended_at,
        reschedule_at, dispatch_attempts, next_dispatch_at, last_failure_kind,
-       infra_confirmed_at, infra_attempts
+       infra_confirmed_at, infra_attempts, branch_decision
 FROM task_instances
 WHERE dag_run_id = ANY(sqlc.arg(dag_run_ids)::uuid[]);
 
@@ -726,12 +726,14 @@ WITH archived AS (
     INSERT INTO task_instance_history (
         task_instance_id, try_number, state,
         queued_at, scheduled_at, started_at, ended_at, duration_seconds,
-        exit_code, error_message, hostname, pod_name, node_name, note, attempt_epoch
+        exit_code, error_message, hostname, pod_name, node_name, note, attempt_epoch,
+        branch_decision
     )
     SELECT
         src.id, src.try_number, src.state,
         src.queued_at, src.scheduled_at, src.started_at, src.ended_at, src.duration_seconds,
-        src.exit_code, src.error_message, src.hostname, src.pod_name, src.node_name, src.note, src.attempt_epoch
+        src.exit_code, src.error_message, src.hostname, src.pod_name, src.node_name, src.note, src.attempt_epoch,
+        src.branch_decision
     FROM task_instances src
     WHERE src.tenant_id = sqlc.arg(tenant_id) AND src.dag_run_id = sqlc.arg(dag_run_id) AND src.task_id = sqlc.arg(task_id)
     ON CONFLICT (task_instance_id, try_number) DO UPDATE
@@ -747,12 +749,14 @@ WITH archived AS (
         pod_name = EXCLUDED.pod_name,
         node_name = EXCLUDED.node_name,
         note = EXCLUDED.note,
-        attempt_epoch = EXCLUDED.attempt_epoch
+        attempt_epoch = EXCLUDED.attempt_epoch,
+        branch_decision = EXCLUDED.branch_decision
     WHERE task_instance_history.attempt_epoch < EXCLUDED.attempt_epoch
     RETURNING task_instance_id
 )
 UPDATE task_instances ti
 SET state = 'none',
+    branch_decision = NULL,
     released_at = now(),
     started_at = NULL,
     ended_at = NULL,
@@ -811,12 +815,14 @@ WITH archived AS (
     INSERT INTO task_instance_history (
         task_instance_id, try_number, state,
         queued_at, scheduled_at, started_at, ended_at, duration_seconds,
-        exit_code, error_message, hostname, pod_name, node_name, note, attempt_epoch
+        exit_code, error_message, hostname, pod_name, node_name, note, attempt_epoch,
+        branch_decision
     )
     SELECT
         src.id, src.try_number, src.state,
         src.queued_at, src.scheduled_at, src.started_at, src.ended_at, src.duration_seconds,
-        src.exit_code, src.error_message, src.hostname, src.pod_name, src.node_name, src.note, src.attempt_epoch
+        src.exit_code, src.error_message, src.hostname, src.pod_name, src.node_name, src.note, src.attempt_epoch,
+        src.branch_decision
     FROM task_instances src
     WHERE src.dag_run_id = $1 AND src.task_id = $2 AND src.state = 'up_for_retry'
     ON CONFLICT (task_instance_id, try_number) DO UPDATE
@@ -832,12 +838,14 @@ WITH archived AS (
         pod_name = EXCLUDED.pod_name,
         node_name = EXCLUDED.node_name,
         note = EXCLUDED.note,
-        attempt_epoch = EXCLUDED.attempt_epoch
+        attempt_epoch = EXCLUDED.attempt_epoch,
+        branch_decision = EXCLUDED.branch_decision
     WHERE task_instance_history.attempt_epoch < EXCLUDED.attempt_epoch
     RETURNING task_instance_id
 )
 UPDATE task_instances ti
 SET state = 'none',
+    branch_decision = NULL,
     released_at = now(),
     started_at = NULL,
     ended_at = NULL,
@@ -878,12 +886,14 @@ WITH archived AS (
     INSERT INTO task_instance_history (
         task_instance_id, try_number, state,
         queued_at, scheduled_at, started_at, ended_at, duration_seconds,
-        exit_code, error_message, hostname, pod_name, node_name, note, attempt_epoch
+        exit_code, error_message, hostname, pod_name, node_name, note, attempt_epoch,
+        branch_decision
     )
     SELECT
         src.id, src.try_number, src.state,
         src.queued_at, src.scheduled_at, src.started_at, src.ended_at, src.duration_seconds,
-        src.exit_code, src.error_message, src.hostname, src.pod_name, src.node_name, src.note, src.attempt_epoch
+        src.exit_code, src.error_message, src.hostname, src.pod_name, src.node_name, src.note, src.attempt_epoch,
+        src.branch_decision
     FROM task_instances src
     WHERE src.dag_run_id = sqlc.arg(dag_run_id) AND src.task_id = sqlc.arg(task_id)
       AND src.state = 'failed' AND src.last_failure_kind = 'infra'
@@ -902,12 +912,14 @@ WITH archived AS (
         pod_name = EXCLUDED.pod_name,
         node_name = EXCLUDED.node_name,
         note = EXCLUDED.note,
-        attempt_epoch = EXCLUDED.attempt_epoch
+        attempt_epoch = EXCLUDED.attempt_epoch,
+        branch_decision = EXCLUDED.branch_decision
     WHERE task_instance_history.attempt_epoch < EXCLUDED.attempt_epoch
     RETURNING task_instance_id
 )
 UPDATE task_instances ti
 SET state = 'none',
+    branch_decision = NULL,
     released_at = now(),
     started_at = NULL,
     ended_at = NULL,
@@ -976,6 +988,7 @@ LIMIT 100;
 -- ResetTaskInstanceToNone.
 UPDATE task_instances
 SET state = 'none',
+    branch_decision = NULL,
     dispatch_unavailable_since = NULL,
     released_at = now(),
     started_at = NULL,
@@ -1046,6 +1059,17 @@ WHERE id = sqlc.arg(id) AND try_number = sqlc.arg(try_number)
 -- SucceedTaskInstanceOverInfraMark (ADR 0052 amendment).
 UPDATE task_instances
 SET state = 'success', ended_at = now(), error_message = NULL
+WHERE id = sqlc.arg(id) AND try_number = sqlc.arg(try_number)
+  AND attempt_epoch = sqlc.arg(attempt_epoch)
+  AND state IN ('scheduled', 'queued', 'running');
+
+-- name: SucceedBranchTaskInstanceIfActive :execrows
+-- SucceedTaskInstanceIfActive for a branch task (ADR 0064 D6): the success
+-- recovered from the durable record carries the branch decision, set in the
+-- same guarded write, so a branch task never settles success without one.
+UPDATE task_instances
+SET state = 'success', ended_at = now(), error_message = NULL,
+    branch_decision = sqlc.arg(branch_decision)::jsonb
 WHERE id = sqlc.arg(id) AND try_number = sqlc.arg(try_number)
   AND attempt_epoch = sqlc.arg(attempt_epoch)
   AND state IN ('scheduled', 'queued', 'running');
@@ -1141,6 +1165,10 @@ UPDATE task_instances AS ti
 SET state = $3::task_state,
     exit_code = $4,
     error_message = $5,
+    -- A branch task's decision rides its success report (ADR 0064 D1), so it
+    -- becomes true in the same guarded write. Every other report leaves the
+    -- column NULL, which it already is on an active row.
+    branch_decision = CASE WHEN $3::task_state = 'success' THEN sqlc.narg(branch_decision)::jsonb END,
     started_at = CASE WHEN $3::task_state = 'running' AND ti.started_at IS NULL THEN now() ELSE ti.started_at END,
     ended_at = CASE WHEN $3::task_state IN ('success', 'failed', 'skipped', 'upstream_failed') THEN now() ELSE ti.ended_at END,
     duration_seconds = CASE WHEN $3::task_state IN ('success', 'failed') AND ti.started_at IS NOT NULL
@@ -1246,12 +1274,14 @@ WITH archived AS (
     INSERT INTO task_instance_history (
         task_instance_id, try_number, state,
         queued_at, scheduled_at, started_at, ended_at, duration_seconds,
-        exit_code, error_message, hostname, pod_name, node_name, note, attempt_epoch
+        exit_code, error_message, hostname, pod_name, node_name, note, attempt_epoch,
+        branch_decision
     )
     SELECT
         src.id, src.try_number, src.state,
         src.queued_at, src.scheduled_at, src.started_at, src.ended_at, src.duration_seconds,
-        src.exit_code, src.error_message, src.hostname, src.pod_name, src.node_name, src.note, src.attempt_epoch
+        src.exit_code, src.error_message, src.hostname, src.pod_name, src.node_name, src.note, src.attempt_epoch,
+        src.branch_decision
     FROM task_instances src
     WHERE src.tenant_id = sqlc.arg(tenant_id) AND src.dag_run_id = sqlc.arg(dag_run_id) AND src.task_id = sqlc.arg(task_id)
       AND src.state IN ('failed', 'upstream_failed', 'up_for_retry')
@@ -1268,12 +1298,14 @@ WITH archived AS (
         pod_name = EXCLUDED.pod_name,
         node_name = EXCLUDED.node_name,
         note = EXCLUDED.note,
-        attempt_epoch = EXCLUDED.attempt_epoch
+        attempt_epoch = EXCLUDED.attempt_epoch,
+        branch_decision = EXCLUDED.branch_decision
     WHERE task_instance_history.attempt_epoch < EXCLUDED.attempt_epoch
     RETURNING task_instance_id
 )
 UPDATE task_instances ti
 SET state = 'none',
+    branch_decision = NULL,
     released_at = now(),
     started_at = NULL,
     ended_at = NULL,
@@ -1327,12 +1359,14 @@ WITH archived AS (
     INSERT INTO task_instance_history (
         task_instance_id, try_number, state,
         queued_at, scheduled_at, started_at, ended_at, duration_seconds,
-        exit_code, error_message, hostname, pod_name, node_name, note, attempt_epoch
+        exit_code, error_message, hostname, pod_name, node_name, note, attempt_epoch,
+        branch_decision
     )
     SELECT
         src.id, src.try_number, src.state,
         src.queued_at, src.scheduled_at, src.started_at, src.ended_at, src.duration_seconds,
-        src.exit_code, src.error_message, src.hostname, src.pod_name, src.node_name, src.note, src.attempt_epoch
+        src.exit_code, src.error_message, src.hostname, src.pod_name, src.node_name, src.note, src.attempt_epoch,
+        src.branch_decision
     FROM task_instances src
     WHERE src.tenant_id = sqlc.arg(tenant_id) AND src.dag_run_id = sqlc.arg(dag_run_id)
       AND src.state IN ('failed', 'upstream_failed', 'up_for_retry')
@@ -1349,12 +1383,14 @@ WITH archived AS (
         pod_name = EXCLUDED.pod_name,
         node_name = EXCLUDED.node_name,
         note = EXCLUDED.note,
-        attempt_epoch = EXCLUDED.attempt_epoch
+        attempt_epoch = EXCLUDED.attempt_epoch,
+        branch_decision = EXCLUDED.branch_decision
     WHERE task_instance_history.attempt_epoch < EXCLUDED.attempt_epoch
     RETURNING task_instance_id
 )
 UPDATE task_instances ti
 SET state = 'none',
+    branch_decision = NULL,
     released_at = now(),
     started_at = NULL,
     ended_at = NULL,

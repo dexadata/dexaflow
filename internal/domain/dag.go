@@ -238,6 +238,9 @@ type TaskSpec struct {
 	// runtime re-imports dag.py and runs it in the task process on failure. The
 	// flag lets the agent/UI know a callback will run without importing user code.
 	OnFailureCallback bool `json:"on_failure_callback,omitempty"`
+	// Branch marks a python task whose successful result decides which of its
+	// downstream tasks run (ADR 0064). Nil for every other task.
+	Branch *BranchSpec `json:"branch,omitempty"`
 }
 
 // Resources holds Kubernetes-style resource requests and limits for a task.

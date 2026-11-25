@@ -67,6 +67,10 @@ type Runner struct {
 	// ReschedulePath is the file a reschedule-mode sensor writes its next-poke time
 	// to before exiting with rescheduleExitCode; empty disables reschedule (#380).
 	ReschedulePath string
+	// BranchPath is the file the runtime of a branch or short-circuit task
+	// writes its decision to (ADR 0064 D1); empty disables branching, and a
+	// branch task then reports its success without a decision.
+	BranchPath string
 	// XComDir is the per-attempt directory an XCom input too large for the
 	// environment is written to, and the runtime reads it from there (#2455).
 	// Empty keeps every input in the environment, where a value over 128 KiB
@@ -138,6 +142,9 @@ type Runner struct {
 	// spec, stamped on the outcome record (ADR 0052 amendment). It is reset for
 	// every attempt a warm worker runs; 0 until the spec is read.
 	attemptEpoch int64
+	// branchTask marks an attempt of a branch or short-circuit task, from its
+	// spec; its success carries the decision the runtime wrote.
+	branchTask bool
 	// reportLanded is set once the control plane has answered a ReportState for
 	// this attempt (applied, or acknowledged as stale). A warm worker reads it to
 	// settle an acked attempt that ended before any report reached the control
@@ -187,6 +194,7 @@ func (r *Runner) Run(ctx context.Context) error {
 // It does NOT register, registration is a per-worker concern the caller owns.
 func (r *Runner) runOneAttempt(ctx context.Context) error {
 	r.attemptEpoch = 0
+	r.branchTask = false
 	r.startPhase, r.outputPhase = retryPhase{}, retryPhase{}
 	var spec *agentv1.TaskSpec
 	err := r.withTransientRetry(ctx, &r.startPhase, "GetTaskSpec", func(ctx context.Context) error {
@@ -198,6 +206,7 @@ func (r *Runner) runOneAttempt(ctx context.Context) error {
 		return r.startFailed(fmt.Errorf("fetching task spec: %w", err))
 	}
 	r.attemptEpoch = spec.GetAttemptEpoch()
+	r.branchTask = spec.GetBranch() != nil
 	argv, err := BuildCommand(spec.GetOperator(), spec.GetEntrypoint(), spec.GetOperatorClass())
 	if err != nil {
 		return err
@@ -327,7 +336,7 @@ func (r *Runner) execute(ctx context.Context, argv, env []string, timeout time.D
 	if err := r.pushCustomXComs(ctx); err != nil {
 		return r.fail(ctx, 0, err, reasonOutputUndelivered)
 	}
-	return r.report(ctx, agentv1.TaskState_TASK_STATE_SUCCESS, 0, "")
+	return r.reportSuccess(ctx)
 }
 
 // stopCause names why the agent itself stopped the task, when it did: its

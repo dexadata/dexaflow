@@ -215,6 +215,7 @@ func run() int {
 		PushesPath: filepath.Join(filepath.Dir(returnPath), "xcom_pushes.json"),
 		// A reschedule-mode sensor's next-poke time, same per-task temp dir (#380).
 		ReschedulePath: filepath.Join(filepath.Dir(returnPath), "reschedule.txt"),
+		BranchPath:     filepath.Join(filepath.Dir(returnPath), "branch.json"),
 		// XCom inputs too large for the environment, same per-task temp dir (#2455).
 		XComDir: filepath.Join(filepath.Dir(returnPath), "xcom"),
 		// The durable outcome record's destination (the container termination

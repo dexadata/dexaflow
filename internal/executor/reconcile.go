@@ -13,6 +13,7 @@ import (
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/client-go/kubernetes"
 
+	"github.com/dexadata/dexaflow/internal/domain"
 	"github.com/dexadata/dexaflow/internal/taskoutcome"
 )
 
@@ -45,6 +46,9 @@ type verdict struct {
 	reason     string     // failure reason (settleFailed, settleInfra)
 	at         time.Time  // next-poke time (settleReschedule)
 	fromRecord bool       // a durable outcome record drove this, not pod phase
+	// branch is a branch task's decision from its success record (settleSucceeded
+	// on a pod labeled as a branch task, ADR 0064 D6).
+	branch *domain.BranchDecision
 }
 
 // unrecoverableWaiting lists container "waiting" reasons that never self-resolve
@@ -71,7 +75,7 @@ func classifyPod(pod *corev1.Pod) verdict {
 	if rec, ok := outcomeRecord(pod); ok {
 		switch rec.Outcome {
 		case taskoutcome.Success:
-			return verdict{terminal: true, settle: settleSucceeded, fromRecord: true}
+			return successVerdict(pod, rec)
 		case taskoutcome.Failed:
 			// The agent writes a FAILED record when it catches the SIGTERM of a
 			// node shutdown or an eviction. The record says the task stopped, not
@@ -773,6 +777,9 @@ func (r *Reconciler) settlePod(ctx context.Context, pod *corev1.Pod, v verdict) 
 func (r *Reconciler) recordOutcome(ctx context.Context, tiID string, tryNumber, epoch int, v verdict) error {
 	switch v.settle {
 	case settleSucceeded:
+		if v.branch != nil {
+			return r.succeedBranch(ctx, tiID, tryNumber, epoch, *v.branch)
+		}
 		return r.succeedFromRecord(ctx, tiID, tryNumber, epoch, v.fromRecord)
 	case settleReschedule:
 		return r.reporter.RescheduleTask(ctx, tiID, tryNumber, epoch, v.at)

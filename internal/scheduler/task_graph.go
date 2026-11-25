@@ -1,6 +1,10 @@
 package scheduler
 
-import "github.com/dexadata/dexaflow/internal/domain"
+import (
+	"slices"
+
+	"github.com/dexadata/dexaflow/internal/domain"
+)
 
 // TaskGraph is the index-addressed form of a run's task list: each task_id
 // resolved to a position, and each task's upstreams resolved to positions, so
@@ -28,6 +32,11 @@ type TaskGraph struct {
 	// from RunState.States, as the map-keyed planner did).
 	upstreamIDs [][]string
 	upstream    [][]int
+	// branches holds the slots of the tasks that carry a BranchSpec (ADR
+	// 0064), and downstream each slot's direct children. Both stay nil for a
+	// DAG without a branch task, so the planner pays nothing for them.
+	branches   []int
+	downstream [][]int
 }
 
 // NewTaskGraph indexes a task list. It is O(T + E) and allocation-bounded by
@@ -68,6 +77,19 @@ func NewTaskGraph(tasks []domain.TaskSpec) *TaskGraph {
 		}
 		g.upstreamIDs[s] = t.DependsOn
 		g.upstream[s] = deps
+		if t.Branch != nil && i == s {
+			g.branches = append(g.branches, s)
+		}
+	}
+	if len(g.branches) > 0 {
+		g.downstream = make([][]int, n)
+		for s, deps := range g.upstream {
+			for _, p := range deps {
+				if p >= 0 && !slices.Contains(g.downstream[p], s) {
+					g.downstream[p] = append(g.downstream[p], s)
+				}
+			}
+		}
 	}
 	return g
 }

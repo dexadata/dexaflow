@@ -119,8 +119,9 @@ func TestGetTaskSpecAlwaysReadsTheStore(t *testing.T) {
 }
 
 // TestAttemptSpecCacheHoldsOnlyXComFields pins what may be cached: the XCom
-// authorization and validation fields. Environment, call and operator args,
-// params and the declared secret names are never kept.
+// authorization and validation fields, and the branch spec and DAG task ids a
+// success report is checked against (ADR 0064 D1). Environment, call and
+// operator args, params and the declared secret names are never kept.
 func TestAttemptSpecCacheHoldsOnlyXComFields(t *testing.T) {
 	typ := reflect.TypeOf(attemptSpec{})
 	var got []string
@@ -128,7 +129,7 @@ func TestAttemptSpecCacheHoldsOnlyXComFields(t *testing.T) {
 		got = append(got, typ.Field(i).Name)
 	}
 	sort.Strings(got)
-	want := []string{"DependsOn", "XComInputMapping", "XComSchema"}
+	want := []string{"Branch", "DagTaskIDs", "DependsOn", "XComInputMapping", "XComSchema"}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("attemptSpec fields = %v, want exactly %v", got, want)
 	}

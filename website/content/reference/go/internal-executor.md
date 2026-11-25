@@ -28,6 +28,7 @@ Package executor runs task instances via Kubernetes, Docker, or a subprocess.
 - [type AttemptLiveness](<#AttemptLiveness>)
 - [type AttemptState](<#AttemptState>)
 - [type AttemptStopper](<#AttemptStopper>)
+- [type BranchOutcomeReporter](<#BranchOutcomeReporter>)
 - [type BusyWarmWorkerSource](<#BusyWarmWorkerSource>)
 - [type DecisionRecorder](<#DecisionRecorder>)
 - [type DispatchLostReapStore](<#DispatchLostReapStore>)
@@ -421,6 +422,17 @@ type AttemptStopper interface {
 }
 ```
 
+<a name="BranchOutcomeReporter"></a>
+## type [BranchOutcomeReporter](<https://github.com/dexadata/dexaflow/blob/main/internal/executor/branch_settle.go#L24-L26>)
+
+BranchOutcomeReporter settles a branch task's recovered success with its decision, guarded like SucceedTaskIfActive \(ADR 0064 D6\). A reporter that is not one leaves such a success to the reapers rather than settle it without its decision.
+
+```go
+type BranchOutcomeReporter interface {
+    SucceedBranchTaskIfActive(ctx context.Context, taskInstanceID string, tryNumber, attemptEpoch int, decision domain.BranchDecision) (bool, error)
+}
+```
+
 <a name="BusyWarmWorkerSource"></a>
 ## type [BusyWarmWorkerSource](<https://github.com/dexadata/dexaflow/blob/main/internal/executor/warmpool.go#L84-L86>)
 
@@ -546,7 +558,7 @@ func (d Disposition) String() string
 String renders the disposition for logs and error notes.
 
 <a name="Executor"></a>
-## type [Executor](<https://github.com/dexadata/dexaflow/blob/main/internal/executor/executor.go#L178-L180>)
+## type [Executor](<https://github.com/dexadata/dexaflow/blob/main/internal/executor/executor.go#L182-L184>)
 
 Executor runs or dispatches a task. For asynchronous executors \(Kubernetes/Docker/subprocess\) the return reflects dispatch only, and the agent reports the final state over gRPC. The Disposition tells the scheduler WHY a dispatch failed \(transient cluster Backpressure, an Unavailable API, a permanent Rejected, among others\), so the orchestration layer never has to inspect runtime\-specific error types itself \(ADR 0051 Phase 4\). A successful dispatch returns \(Dispatched, nil\); a failure returns the classified disposition alongside the non\-nil cause \(its text feeds the scheduler's note/log\).
 
@@ -921,7 +933,7 @@ type OrphanStopper interface {
 ```
 
 <a name="OutcomeReporter"></a>
-## type [OutcomeReporter](<https://github.com/dexadata/dexaflow/blob/main/internal/executor/reconcile.go#L541-L550>)
+## type [OutcomeReporter](<https://github.com/dexadata/dexaflow/blob/main/internal/executor/reconcile.go#L545-L554>)
 
 OutcomeReporter records a terminal task\-instance outcome the reconciler recovered from a pod \(its durable outcome record, or its phase\). Every method is guarded by the attempt \(try\_number and attempt\_epoch, from the pod's labels\) so a stale reconciler acting on a previous attempt's pod never clobbers a live retry or re\-place \(\#1130\), and is idempotent: a settle on an already\-terminal or superseded instance is a no\-op, not an error.
 
@@ -952,7 +964,7 @@ type PodCreationRecorder interface {
 ```
 
 <a name="PodIdentity"></a>
-## type [PodIdentity](<https://github.com/dexadata/dexaflow/blob/main/internal/executor/kubernetes.go#L429-L440>)
+## type [PodIdentity](<https://github.com/dexadata/dexaflow/blob/main/internal/executor/kubernetes.go#L435-L446>)
 
 PodIdentity is the JSON payload of AgentIdentityAnnotation: the full task\-instance identity the control plane mints the exchanged JWT for.
 
@@ -972,7 +984,7 @@ type PodIdentity struct {
 ```
 
 <a name="ParseAgentIdentity"></a>
-### func [ParseAgentIdentity](<https://github.com/dexadata/dexaflow/blob/main/internal/executor/kubernetes.go#L445>)
+### func [ParseAgentIdentity](<https://github.com/dexadata/dexaflow/blob/main/internal/executor/kubernetes.go#L451>)
 
 ```go
 func ParseAgentIdentity(raw string) (PodIdentity, error)
@@ -1269,7 +1281,7 @@ type PodSecurity struct {
 ```
 
 <a name="PodSnapshotter"></a>
-## type [PodSnapshotter](<https://github.com/dexadata/dexaflow/blob/main/internal/executor/reconcile.go#L558-L563>)
+## type [PodSnapshotter](<https://github.com/dexadata/dexaflow/blob/main/internal/executor/reconcile.go#L562-L567>)
 
 PodSnapshotter supplies the reconciler's task\-pod set from a local cache instead of a live LIST every tick \(PR\-10\). It is safe here without a live confirm: the signal the reconciler acts on is presence of a terminal pod, which is monotonic \(a pod that reached Failed/Succeeded stays terminal\), and every settle is attempt\- and state\-guarded \(ADR 0052\), so at worst cache lag delays a settle by a tick. A nil snapshotter \(Lite/subprocess, or a cold start\) keeps the live LIST.
 
@@ -1555,7 +1567,7 @@ type ReaperStore interface {
 ```
 
 <a name="Reconciler"></a>
-## type [Reconciler](<https://github.com/dexadata/dexaflow/blob/main/internal/executor/reconcile.go#L586-L617>)
+## type [Reconciler](<https://github.com/dexadata/dexaflow/blob/main/internal/executor/reconcile.go#L590-L621>)
 
 Reconciler detects task pods whose task instance was never settled by the agent \(a pod killed before or during its report\) and records the true outcome — from the pod's durable outcome record where present, else its phase — so retries and run finalization proceed instead of stranding the task. It also garbage\-collects finished pods once they age out.
 
@@ -1568,7 +1580,7 @@ type Reconciler struct {
 ```
 
 <a name="NewReconciler"></a>
-### func [NewReconciler](<https://github.com/dexadata/dexaflow/blob/main/internal/executor/reconcile.go#L620>)
+### func [NewReconciler](<https://github.com/dexadata/dexaflow/blob/main/internal/executor/reconcile.go#L624>)
 
 ```go
 func NewReconciler(clientset kubernetes.Interface, namespace string, reporter OutcomeReporter) *Reconciler
@@ -1577,7 +1589,7 @@ func NewReconciler(clientset kubernetes.Interface, namespace string, reporter Ou
 NewReconciler builds a Reconciler over the given cluster and outcome reporter.
 
 <a name="Reconciler.LastSweepCompletedAt"></a>
-### func \(\*Reconciler\) [LastSweepCompletedAt](<https://github.com/dexadata/dexaflow/blob/main/internal/executor/reconcile.go#L642>)
+### func \(\*Reconciler\) [LastSweepCompletedAt](<https://github.com/dexadata/dexaflow/blob/main/internal/executor/reconcile.go#L646>)
 
 ```go
 func (r *Reconciler) LastSweepCompletedAt() time.Time
@@ -1588,7 +1600,7 @@ LastSweepCompletedAt reports when the last COMPLETED sweep started: the task\-po
 A sweep that could not list pods records nothing. A sweep whose individual settle failed on a DB error still counts: that pod is retried next sweep, and the gate's grace leaves room for the retry before any reaper may act.
 
 <a name="Reconciler.Reconcile"></a>
-### func \(\*Reconciler\) [Reconcile](<https://github.com/dexadata/dexaflow/blob/main/internal/executor/reconcile.go#L653>)
+### func \(\*Reconciler\) [Reconcile](<https://github.com/dexadata/dexaflow/blob/main/internal/executor/reconcile.go#L657>)
 
 ```go
 func (r *Reconciler) Reconcile(ctx context.Context) error
@@ -1624,7 +1636,7 @@ func (r *Reconciler) SetInfraOverrideObservers(rec InfraOverrideRecorder, sink l
 SetInfraOverrideObservers wires what makes an override visible: a counter by mark and the sink the system line is appended to. Either may be nil.
 
 <a name="Reconciler.SetPodSnapshotter"></a>
-### func \(\*Reconciler\) [SetPodSnapshotter](<https://github.com/dexadata/dexaflow/blob/main/internal/executor/reconcile.go#L627>)
+### func \(\*Reconciler\) [SetPodSnapshotter](<https://github.com/dexadata/dexaflow/blob/main/internal/executor/reconcile.go#L631>)
 
 ```go
 func (r *Reconciler) SetPodSnapshotter(s PodSnapshotter)
@@ -1642,7 +1654,7 @@ func (r *Reconciler) SetSettledRunCollection(c SettledRunChecker)
 SetSettledRunCollection turns on collecting a settled run's finished pods in one DeleteCollection. Nil \(the default\) keeps the age\-based GC only.
 
 <a name="Request"></a>
-## type [Request](<https://github.com/dexadata/dexaflow/blob/main/internal/executor/executor.go#L35-L168>)
+## type [Request](<https://github.com/dexadata/dexaflow/blob/main/internal/executor/executor.go#L35-L172>)
 
 Request bundles everything an executor needs to run a single task instance.
 
@@ -1658,6 +1670,10 @@ type Request struct {
     // request (ADR 0051 amendment). It is stamped into the pod's identity
     // annotation so the exchanged token names this execution.
     AttemptEpoch int
+    // Branch marks a branch or short-circuit task (ADR 0064): its pod is
+    // labeled so the reconciler settles a recovered success only with the
+    // decision the record carries.
+    Branch bool
 
     Image           string
     ImagePullPolicy string

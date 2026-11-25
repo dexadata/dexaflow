@@ -536,7 +536,7 @@ func (q *Queries) CreateScheduledRunByDagID(ctx context.Context, arg CreateSched
 const createTaskInstance = `-- name: CreateTaskInstance :one
 INSERT INTO task_instances (tenant_id, dag_run_id, task_id, operator, max_tries, state, pool, try_number, pool_slots)
 VALUES ($1, $2, $3, $4, $5, $6, $7, 1, $8)
-RETURNING id, tenant_id, dag_run_id, task_id, map_index, try_number, max_tries, state, pool, operator, queued_at, started_at, ended_at, duration_seconds, pod_name, node_name, exit_code, error_message, log_url, hostname, note, scheduled_at, last_heartbeat_at, reschedule_at, first_reschedule_at, dispatch_attempts, next_dispatch_at, last_failure_kind, infra_attempts, warm_worker_id, released_at, attempt_epoch, infra_confirmed_at, pool_slots, dispatch_unavailable_since
+RETURNING id, tenant_id, dag_run_id, task_id, map_index, try_number, max_tries, state, pool, operator, queued_at, started_at, ended_at, duration_seconds, pod_name, node_name, exit_code, error_message, log_url, hostname, note, scheduled_at, last_heartbeat_at, reschedule_at, first_reschedule_at, dispatch_attempts, next_dispatch_at, last_failure_kind, infra_attempts, warm_worker_id, released_at, attempt_epoch, infra_confirmed_at, pool_slots, dispatch_unavailable_since, branch_decision
 `
 
 type CreateTaskInstanceParams struct {
@@ -601,6 +601,7 @@ func (q *Queries) CreateTaskInstance(ctx context.Context, arg CreateTaskInstance
 		&i.InfraConfirmedAt,
 		&i.PoolSlots,
 		&i.DispatchUnavailableSince,
+		&i.BranchDecision,
 	)
 	return i, err
 }
@@ -2461,7 +2462,7 @@ func (q *Queries) ListTaskInstanceAttempts(ctx context.Context, arg ListTaskInst
 const listTaskInstancePlanStateByRuns = `-- name: ListTaskInstancePlanStateByRuns :many
 SELECT dag_run_id, task_id, state, try_number, max_tries, ended_at,
        reschedule_at, dispatch_attempts, next_dispatch_at, last_failure_kind,
-       infra_confirmed_at, infra_attempts
+       infra_confirmed_at, infra_attempts, branch_decision
 FROM task_instances
 WHERE dag_run_id = ANY($1::uuid[])
 `
@@ -2479,6 +2480,7 @@ type ListTaskInstancePlanStateByRunsRow struct {
 	LastFailureKind  *string            `json:"last_failure_kind"`
 	InfraConfirmedAt pgtype.Timestamptz `json:"infra_confirmed_at"`
 	InfraAttempts    int32              `json:"infra_attempts"`
+	BranchDecision   []byte             `json:"branch_decision"`
 }
 
 // The scheduler tick's read (#2325): for every active run, in one round trip,
@@ -2509,6 +2511,7 @@ func (q *Queries) ListTaskInstancePlanStateByRuns(ctx context.Context, dagRunIds
 			&i.LastFailureKind,
 			&i.InfraConfirmedAt,
 			&i.InfraAttempts,
+			&i.BranchDecision,
 		); err != nil {
 			return nil, err
 		}
@@ -2521,7 +2524,7 @@ func (q *Queries) ListTaskInstancePlanStateByRuns(ctx context.Context, dagRunIds
 }
 
 const listTaskInstancesByRun = `-- name: ListTaskInstancesByRun :many
-SELECT id, tenant_id, dag_run_id, task_id, map_index, try_number, max_tries, state, pool, operator, queued_at, started_at, ended_at, duration_seconds, pod_name, node_name, exit_code, error_message, log_url, hostname, note, scheduled_at, last_heartbeat_at, reschedule_at, first_reschedule_at, dispatch_attempts, next_dispatch_at, last_failure_kind, infra_attempts, warm_worker_id, released_at, attempt_epoch, infra_confirmed_at, pool_slots, dispatch_unavailable_since FROM task_instances
+SELECT id, tenant_id, dag_run_id, task_id, map_index, try_number, max_tries, state, pool, operator, queued_at, started_at, ended_at, duration_seconds, pod_name, node_name, exit_code, error_message, log_url, hostname, note, scheduled_at, last_heartbeat_at, reschedule_at, first_reschedule_at, dispatch_attempts, next_dispatch_at, last_failure_kind, infra_attempts, warm_worker_id, released_at, attempt_epoch, infra_confirmed_at, pool_slots, dispatch_unavailable_since, branch_decision FROM task_instances
 WHERE tenant_id = $1 AND dag_run_id = $2
 ORDER BY task_id
 `
@@ -2576,6 +2579,7 @@ func (q *Queries) ListTaskInstancesByRun(ctx context.Context, arg ListTaskInstan
 			&i.InfraConfirmedAt,
 			&i.PoolSlots,
 			&i.DispatchUnavailableSince,
+			&i.BranchDecision,
 		); err != nil {
 			return nil, err
 		}
@@ -2588,7 +2592,7 @@ func (q *Queries) ListTaskInstancesByRun(ctx context.Context, arg ListTaskInstan
 }
 
 const listTaskInstancesFiltered = `-- name: ListTaskInstancesFiltered :many
-SELECT id, tenant_id, dag_run_id, task_id, map_index, try_number, max_tries, state, pool, operator, queued_at, started_at, ended_at, duration_seconds, pod_name, node_name, exit_code, error_message, log_url, hostname, note, scheduled_at, last_heartbeat_at, reschedule_at, first_reschedule_at, dispatch_attempts, next_dispatch_at, last_failure_kind, infra_attempts, warm_worker_id, released_at, attempt_epoch, infra_confirmed_at, pool_slots, dispatch_unavailable_since FROM task_instances
+SELECT id, tenant_id, dag_run_id, task_id, map_index, try_number, max_tries, state, pool, operator, queued_at, started_at, ended_at, duration_seconds, pod_name, node_name, exit_code, error_message, log_url, hostname, note, scheduled_at, last_heartbeat_at, reschedule_at, first_reschedule_at, dispatch_attempts, next_dispatch_at, last_failure_kind, infra_attempts, warm_worker_id, released_at, attempt_epoch, infra_confirmed_at, pool_slots, dispatch_unavailable_since, branch_decision FROM task_instances
 WHERE tenant_id = $1 AND dag_run_id = $2
   AND (cardinality($3::text[]) = 0 OR state::text = ANY($3::text[]))
   AND ($4::text IS NULL OR task_id ILIKE '%' || $4 || '%')
@@ -2663,6 +2667,7 @@ func (q *Queries) ListTaskInstancesFiltered(ctx context.Context, arg ListTaskIns
 			&i.InfraConfirmedAt,
 			&i.PoolSlots,
 			&i.DispatchUnavailableSince,
+			&i.BranchDecision,
 		); err != nil {
 			return nil, err
 		}
@@ -3361,6 +3366,7 @@ func (q *Queries) RecordTaskHeartbeat(ctx context.Context, arg RecordTaskHeartbe
 const redispatchRescheduledTaskInstance = `-- name: RedispatchRescheduledTaskInstance :exec
 UPDATE task_instances
 SET state = 'none',
+    branch_decision = NULL,
     dispatch_unavailable_since = NULL,
     released_at = now(),
     started_at = NULL,
@@ -3430,6 +3436,10 @@ UPDATE task_instances AS ti
 SET state = $3::task_state,
     exit_code = $4,
     error_message = $5,
+    -- A branch task's decision rides its success report (ADR 0064 D1), so it
+    -- becomes true in the same guarded write. Every other report leaves the
+    -- column NULL, which it already is on an active row.
+    branch_decision = CASE WHEN $3::task_state = 'success' THEN $6::jsonb END,
     started_at = CASE WHEN $3::task_state = 'running' AND ti.started_at IS NULL THEN now() ELSE ti.started_at END,
     ended_at = CASE WHEN $3::task_state IN ('success', 'failed', 'skipped', 'upstream_failed') THEN now() ELSE ti.ended_at END,
     duration_seconds = CASE WHEN $3::task_state IN ('success', 'failed') AND ti.started_at IS NOT NULL
@@ -3437,9 +3447,9 @@ SET state = $3::task_state,
 FROM task_instances AS prev
 WHERE prev.id = ti.id
   AND ti.dag_run_id = $1 AND ti.task_id = $2
-  AND ti.tenant_id = $6
-  AND ti.try_number = $7
-  AND ti.attempt_epoch = COALESCE($8::int, 0)
+  AND ti.tenant_id = $7
+  AND ti.try_number = $8
+  AND ti.attempt_epoch = COALESCE($9::int, 0)
   AND ti.state IN ('none', 'scheduled', 'queued', 'running')
 RETURNING
     ($3::task_state = 'running' AND prev.started_at IS NULL AND prev.queued_at IS NOT NULL)::boolean AS first_start,
@@ -3449,14 +3459,15 @@ RETURNING
 `
 
 type ReportTaskResultParams struct {
-	DagRunID     pgtype.UUID `json:"dag_run_id"`
-	TaskID       string      `json:"task_id"`
-	Column3      TaskState   `json:"column_3"`
-	ExitCode     *int32      `json:"exit_code"`
-	ErrorMessage *string     `json:"error_message"`
-	TenantID     pgtype.UUID `json:"tenant_id"`
-	TryNumber    int32       `json:"try_number"`
-	AttemptEpoch *int32      `json:"attempt_epoch"`
+	DagRunID       pgtype.UUID `json:"dag_run_id"`
+	TaskID         string      `json:"task_id"`
+	Column3        TaskState   `json:"column_3"`
+	ExitCode       *int32      `json:"exit_code"`
+	ErrorMessage   *string     `json:"error_message"`
+	BranchDecision []byte      `json:"branch_decision"`
+	TenantID       pgtype.UUID `json:"tenant_id"`
+	TryNumber      int32       `json:"try_number"`
+	AttemptEpoch   *int32      `json:"attempt_epoch"`
 }
 
 type ReportTaskResultRow struct {
@@ -3519,6 +3530,7 @@ func (q *Queries) ReportTaskResult(ctx context.Context, arg ReportTaskResultPara
 		arg.Column3,
 		arg.ExitCode,
 		arg.ErrorMessage,
+		arg.BranchDecision,
 		arg.TenantID,
 		arg.TryNumber,
 		arg.AttemptEpoch,
@@ -3739,12 +3751,14 @@ WITH archived AS (
     INSERT INTO task_instance_history (
         task_instance_id, try_number, state,
         queued_at, scheduled_at, started_at, ended_at, duration_seconds,
-        exit_code, error_message, hostname, pod_name, node_name, note, attempt_epoch
+        exit_code, error_message, hostname, pod_name, node_name, note, attempt_epoch,
+        branch_decision
     )
     SELECT
         src.id, src.try_number, src.state,
         src.queued_at, src.scheduled_at, src.started_at, src.ended_at, src.duration_seconds,
-        src.exit_code, src.error_message, src.hostname, src.pod_name, src.node_name, src.note, src.attempt_epoch
+        src.exit_code, src.error_message, src.hostname, src.pod_name, src.node_name, src.note, src.attempt_epoch,
+        src.branch_decision
     FROM task_instances src
     WHERE src.tenant_id = $5 AND src.dag_run_id = $6
       AND src.state IN ('failed', 'upstream_failed', 'up_for_retry')
@@ -3761,12 +3775,14 @@ WITH archived AS (
         pod_name = EXCLUDED.pod_name,
         node_name = EXCLUDED.node_name,
         note = EXCLUDED.note,
-        attempt_epoch = EXCLUDED.attempt_epoch
+        attempt_epoch = EXCLUDED.attempt_epoch,
+        branch_decision = EXCLUDED.branch_decision
     WHERE task_instance_history.attempt_epoch < EXCLUDED.attempt_epoch
     RETURNING task_instance_id
 )
 UPDATE task_instances ti
 SET state = 'none',
+    branch_decision = NULL,
     released_at = now(),
     started_at = NULL,
     ended_at = NULL,
@@ -3888,12 +3904,14 @@ WITH archived AS (
     INSERT INTO task_instance_history (
         task_instance_id, try_number, state,
         queued_at, scheduled_at, started_at, ended_at, duration_seconds,
-        exit_code, error_message, hostname, pod_name, node_name, note, attempt_epoch
+        exit_code, error_message, hostname, pod_name, node_name, note, attempt_epoch,
+        branch_decision
     )
     SELECT
         src.id, src.try_number, src.state,
         src.queued_at, src.scheduled_at, src.started_at, src.ended_at, src.duration_seconds,
-        src.exit_code, src.error_message, src.hostname, src.pod_name, src.node_name, src.note, src.attempt_epoch
+        src.exit_code, src.error_message, src.hostname, src.pod_name, src.node_name, src.note, src.attempt_epoch,
+        src.branch_decision
     FROM task_instances src
     WHERE src.tenant_id = $5 AND src.dag_run_id = $6 AND src.task_id = $7
       AND src.state IN ('failed', 'upstream_failed', 'up_for_retry')
@@ -3910,12 +3928,14 @@ WITH archived AS (
         pod_name = EXCLUDED.pod_name,
         node_name = EXCLUDED.node_name,
         note = EXCLUDED.note,
-        attempt_epoch = EXCLUDED.attempt_epoch
+        attempt_epoch = EXCLUDED.attempt_epoch,
+        branch_decision = EXCLUDED.branch_decision
     WHERE task_instance_history.attempt_epoch < EXCLUDED.attempt_epoch
     RETURNING task_instance_id
 )
 UPDATE task_instances ti
 SET state = 'none',
+    branch_decision = NULL,
     released_at = now(),
     started_at = NULL,
     ended_at = NULL,
@@ -3995,12 +4015,14 @@ WITH archived AS (
     INSERT INTO task_instance_history (
         task_instance_id, try_number, state,
         queued_at, scheduled_at, started_at, ended_at, duration_seconds,
-        exit_code, error_message, hostname, pod_name, node_name, note, attempt_epoch
+        exit_code, error_message, hostname, pod_name, node_name, note, attempt_epoch,
+        branch_decision
     )
     SELECT
         src.id, src.try_number, src.state,
         src.queued_at, src.scheduled_at, src.started_at, src.ended_at, src.duration_seconds,
-        src.exit_code, src.error_message, src.hostname, src.pod_name, src.node_name, src.note, src.attempt_epoch
+        src.exit_code, src.error_message, src.hostname, src.pod_name, src.node_name, src.note, src.attempt_epoch,
+        src.branch_decision
     FROM task_instances src
     WHERE src.dag_run_id = $1 AND src.task_id = $2 AND src.state = 'up_for_retry'
     ON CONFLICT (task_instance_id, try_number) DO UPDATE
@@ -4016,12 +4038,14 @@ WITH archived AS (
         pod_name = EXCLUDED.pod_name,
         node_name = EXCLUDED.node_name,
         note = EXCLUDED.note,
-        attempt_epoch = EXCLUDED.attempt_epoch
+        attempt_epoch = EXCLUDED.attempt_epoch,
+        branch_decision = EXCLUDED.branch_decision
     WHERE task_instance_history.attempt_epoch < EXCLUDED.attempt_epoch
     RETURNING task_instance_id
 )
 UPDATE task_instances ti
 SET state = 'none',
+    branch_decision = NULL,
     released_at = now(),
     started_at = NULL,
     ended_at = NULL,
@@ -4066,12 +4090,14 @@ WITH archived AS (
     INSERT INTO task_instance_history (
         task_instance_id, try_number, state,
         queued_at, scheduled_at, started_at, ended_at, duration_seconds,
-        exit_code, error_message, hostname, pod_name, node_name, note, attempt_epoch
+        exit_code, error_message, hostname, pod_name, node_name, note, attempt_epoch,
+        branch_decision
     )
     SELECT
         src.id, src.try_number, src.state,
         src.queued_at, src.scheduled_at, src.started_at, src.ended_at, src.duration_seconds,
-        src.exit_code, src.error_message, src.hostname, src.pod_name, src.node_name, src.note, src.attempt_epoch
+        src.exit_code, src.error_message, src.hostname, src.pod_name, src.node_name, src.note, src.attempt_epoch,
+        src.branch_decision
     FROM task_instances src
     WHERE src.dag_run_id = $1 AND src.task_id = $2
       AND src.state = 'failed' AND src.last_failure_kind = 'infra'
@@ -4090,12 +4116,14 @@ WITH archived AS (
         pod_name = EXCLUDED.pod_name,
         node_name = EXCLUDED.node_name,
         note = EXCLUDED.note,
-        attempt_epoch = EXCLUDED.attempt_epoch
+        attempt_epoch = EXCLUDED.attempt_epoch,
+        branch_decision = EXCLUDED.branch_decision
     WHERE task_instance_history.attempt_epoch < EXCLUDED.attempt_epoch
     RETURNING task_instance_id
 )
 UPDATE task_instances ti
 SET state = 'none',
+    branch_decision = NULL,
     released_at = now(),
     started_at = NULL,
     ended_at = NULL,
@@ -4154,12 +4182,14 @@ WITH archived AS (
     INSERT INTO task_instance_history (
         task_instance_id, try_number, state,
         queued_at, scheduled_at, started_at, ended_at, duration_seconds,
-        exit_code, error_message, hostname, pod_name, node_name, note, attempt_epoch
+        exit_code, error_message, hostname, pod_name, node_name, note, attempt_epoch,
+        branch_decision
     )
     SELECT
         src.id, src.try_number, src.state,
         src.queued_at, src.scheduled_at, src.started_at, src.ended_at, src.duration_seconds,
-        src.exit_code, src.error_message, src.hostname, src.pod_name, src.node_name, src.note, src.attempt_epoch
+        src.exit_code, src.error_message, src.hostname, src.pod_name, src.node_name, src.note, src.attempt_epoch,
+        src.branch_decision
     FROM task_instances src
     WHERE src.tenant_id = $5 AND src.dag_run_id = $6 AND src.task_id = $7
     ON CONFLICT (task_instance_id, try_number) DO UPDATE
@@ -4175,12 +4205,14 @@ WITH archived AS (
         pod_name = EXCLUDED.pod_name,
         node_name = EXCLUDED.node_name,
         note = EXCLUDED.note,
-        attempt_epoch = EXCLUDED.attempt_epoch
+        attempt_epoch = EXCLUDED.attempt_epoch,
+        branch_decision = EXCLUDED.branch_decision
     WHERE task_instance_history.attempt_epoch < EXCLUDED.attempt_epoch
     RETURNING task_instance_id
 )
 UPDATE task_instances ti
 SET state = 'none',
+    branch_decision = NULL,
     released_at = now(),
     started_at = NULL,
     ended_at = NULL,
@@ -4483,6 +4515,38 @@ func (q *Queries) StartQueuedRun(ctx context.Context, arg StartQueuedRunParams) 
 	var id pgtype.UUID
 	err := row.Scan(&id)
 	return id, err
+}
+
+const succeedBranchTaskInstanceIfActive = `-- name: SucceedBranchTaskInstanceIfActive :execrows
+UPDATE task_instances
+SET state = 'success', ended_at = now(), error_message = NULL,
+    branch_decision = $1::jsonb
+WHERE id = $2 AND try_number = $3
+  AND attempt_epoch = $4
+  AND state IN ('scheduled', 'queued', 'running')
+`
+
+type SucceedBranchTaskInstanceIfActiveParams struct {
+	BranchDecision []byte      `json:"branch_decision"`
+	ID             pgtype.UUID `json:"id"`
+	TryNumber      int32       `json:"try_number"`
+	AttemptEpoch   int32       `json:"attempt_epoch"`
+}
+
+// SucceedTaskInstanceIfActive for a branch task (ADR 0064 D6): the success
+// recovered from the durable record carries the branch decision, set in the
+// same guarded write, so a branch task never settles success without one.
+func (q *Queries) SucceedBranchTaskInstanceIfActive(ctx context.Context, arg SucceedBranchTaskInstanceIfActiveParams) (int64, error) {
+	result, err := q.db.Exec(ctx, succeedBranchTaskInstanceIfActive,
+		arg.BranchDecision,
+		arg.ID,
+		arg.TryNumber,
+		arg.AttemptEpoch,
+	)
+	if err != nil {
+		return 0, err
+	}
+	return result.RowsAffected(), nil
 }
 
 const succeedTaskInstanceIfActive = `-- name: SucceedTaskInstanceIfActive :execrows
@@ -4807,7 +4871,7 @@ const updateTaskInstanceState = `-- name: UpdateTaskInstanceState :one
 UPDATE task_instances
 SET state = $2, started_at = $3, ended_at = $4
 WHERE id = $1
-RETURNING id, tenant_id, dag_run_id, task_id, map_index, try_number, max_tries, state, pool, operator, queued_at, started_at, ended_at, duration_seconds, pod_name, node_name, exit_code, error_message, log_url, hostname, note, scheduled_at, last_heartbeat_at, reschedule_at, first_reschedule_at, dispatch_attempts, next_dispatch_at, last_failure_kind, infra_attempts, warm_worker_id, released_at, attempt_epoch, infra_confirmed_at, pool_slots, dispatch_unavailable_since
+RETURNING id, tenant_id, dag_run_id, task_id, map_index, try_number, max_tries, state, pool, operator, queued_at, started_at, ended_at, duration_seconds, pod_name, node_name, exit_code, error_message, log_url, hostname, note, scheduled_at, last_heartbeat_at, reschedule_at, first_reschedule_at, dispatch_attempts, next_dispatch_at, last_failure_kind, infra_attempts, warm_worker_id, released_at, attempt_epoch, infra_confirmed_at, pool_slots, dispatch_unavailable_since, branch_decision
 `
 
 type UpdateTaskInstanceStateParams struct {
@@ -4861,6 +4925,7 @@ func (q *Queries) UpdateTaskInstanceState(ctx context.Context, arg UpdateTaskIns
 		&i.InfraConfirmedAt,
 		&i.PoolSlots,
 		&i.DispatchUnavailableSince,
+		&i.BranchDecision,
 	)
 	return i, err
 }

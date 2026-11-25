@@ -151,6 +151,23 @@ message TaskSpec {
     string run_start_date = 29;                       // When the DagRun started running, RFC3339 (#2474). Stamped as LEOFLOW_RUN_START_DATE -> context dag_run.start_date. Empty from a control plane that predates the field; the runtime then reports dag_run.start_date as not provided.
     string run_after = 30;                            // When the DagRun became due, RFC3339, in the Task SDK's run_after sense: the end of its data interval (#2474). Stamped as LEOFLOW_RUN_AFTER -> context dag_run.run_after. Empty leaves it unset.
     string run_state = 31;                            // The DagRun's state when the spec was read ("running" while its tasks run) (#2474). Stamped as LEOFLOW_RUN_STATE -> context dag_run.state. Empty leaves it unset.
+    BranchSpec branch = 32;                           // Set only for a branch or short-circuit task (ADR 0064). The agent stamps LEOFLOW_BRANCH_KIND and the paths below so the runtime writes the decision; unset for every other task.
+    repeated string dag_task_ids = 33;                // For a branch task: every task_id of the DAG. Stamped as LEOFLOW_BRANCH_TASK_IDS so the runtime refuses an id the DAG does not declare, as Airflow does. Empty for every other task.
+    repeated string downstream_task_ids = 34;         // For a branch task: its direct children. Stamped as LEOFLOW_BRANCH_DOWNSTREAM for the skipmixin_key XCom and the not-a-child warning. Empty for every other task.
+}
+
+// BranchSpec is a branch task's dag.json `branch` property (ADR 0064 D3).
+message BranchSpec {
+    string kind = 1;                                  // "branch" or "short_circuit".
+    bool ignore_downstream_trigger_rules = 2;         // short_circuit only: a falsy result skips every task below it (true, Airflow's default) or only its direct children.
+}
+
+// BranchDecision is what a branch task decided (ADR 0064 D1). A proto3 message
+// field has presence, so "no decision" and "follow nothing" (empty
+// follow_task_ids) are distinct on the wire.
+message BranchDecision {
+    repeated string follow_task_ids = 1;              // branch: the chosen task_ids; empty when the callable returned None.
+    bool short_circuit_falsy = 2;                     // short_circuit: the condition was falsy.
 }
 
 // XComUpstreams is the list of upstream task_ids whose return_values feed one
@@ -233,6 +250,9 @@ message ReportStateRequest {
     // For TASK_STATE_UP_FOR_RESCHEDULE: the earliest time the scheduler may
     // re-dispatch this task instance (a reschedule-mode sensor poked not-ready).
     google.protobuf.Timestamp reschedule_at = 5;
+    // Set only by a branch or short-circuit task on TASK_STATE_SUCCESS (ADR
+    // 0064 D1): the decision becomes true in the same write as the success.
+    BranchDecision branch = 6;
 }
 
 enum TaskState {

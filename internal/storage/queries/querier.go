@@ -1282,6 +1282,10 @@ type Querier interface {
 	// started_at is stamped on the first start only, as StampDagRunState does; a
 	// clear resets it, so a re-queued run gets a new one.
 	StartQueuedRun(ctx context.Context, arg StartQueuedRunParams) (pgtype.UUID, error)
+	// SucceedTaskInstanceIfActive for a branch task (ADR 0064 D6): the success
+	// recovered from the durable record carries the branch decision, set in the
+	// same guarded write, so a branch task never settles success without one.
+	SucceedBranchTaskInstanceIfActive(ctx context.Context, arg SucceedBranchTaskInstanceIfActiveParams) (int64, error)
 	// Settle a task instance succeeded from its durable outcome record (ADR 0052),
 	// recovering a success whose report was lost. Guarded by id, try_number and
 	// attempt_epoch so a stale reconciler never marks a LIVE retry or re-place

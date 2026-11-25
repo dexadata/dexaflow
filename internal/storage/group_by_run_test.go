@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"reflect"
 	"testing"
 
 	"github.com/jackc/pgx/v5/pgtype"
@@ -44,7 +45,7 @@ func TestGroupByRunAnyOrder(t *testing.T) {
 	}
 	first := got[run(2)][0]
 	_ = append(got[run(1)], planTaskInstance{TaskID: "overflow"})
-	if got[run(2)][0] != first {
+	if !reflect.DeepEqual(got[run(2)][0], first) {
 		t.Error("an append to one run's slice overwrote the next run's rows")
 	}
 }
