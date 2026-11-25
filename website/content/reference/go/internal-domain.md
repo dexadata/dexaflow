@@ -40,6 +40,11 @@ Package domain defines the core Dexaflow types \(DAG, Task, project config\) and
 - [type AlertRule](<#AlertRule>)
 - [type AlertsConfig](<#AlertsConfig>)
 - [type AuditLogEntry](<#AuditLogEntry>)
+- [type BranchDecision](<#BranchDecision>)
+  - [func \(d BranchDecision\) Follows\(taskID string\) bool](<#BranchDecision.Follows>)
+- [type BranchKind](<#BranchKind>)
+- [type BranchSpec](<#BranchSpec>)
+  - [func \(b BranchSpec\) IgnoresDownstreamTriggerRules\(\) bool](<#BranchSpec.IgnoresDownstreamTriggerRules>)
 - [type BuildConfig](<#BuildConfig>)
   - [func \(b \*BuildConfig\) LocalOnly\(\) string](<#BuildConfig.LocalOnly>)
 - [type BuildInfo](<#BuildInfo>)
@@ -511,7 +516,7 @@ func IsOnceSchedule(expr string) bool
 IsOnceSchedule reports whether expr is Airflow's "@once" — a DAG that runs exactly one time \(on first scheduler sight\) and never again.
 
 <a name="IsReservedMetadataKey"></a>
-## func [IsReservedMetadataKey](<https://github.com/dexadata/dexaflow/blob/main/internal/domain/dag.go#L319>)
+## func [IsReservedMetadataKey](<https://github.com/dexadata/dexaflow/blob/main/internal/domain/dag.go#L322>)
 
 ```go
 func IsReservedMetadataKey(key string) bool
@@ -649,6 +654,77 @@ type AuditLogEntry struct {
     Extra        string
 }
 ```
+
+<a name="BranchDecision"></a>
+## type [BranchDecision](<https://github.com/dexadata/dexaflow/blob/main/internal/domain/branch.go#L45-L48>)
+
+BranchDecision is what a branch task decided, reported with its success and stored on its task instance \(ADR 0064 D1\). The task's BranchSpec says which field applies: FollowTaskIDs for a branch task \(empty when the callable returned None, which follows nothing\), ShortCircuitFalsy for a short\-circuit one.
+
+```go
+type BranchDecision struct {
+    FollowTaskIDs     []string `json:"follow_task_ids,omitempty"`
+    ShortCircuitFalsy bool     `json:"short_circuit_falsy,omitempty"`
+}
+```
+
+<a name="BranchDecision.Follows"></a>
+### func \(BranchDecision\) [Follows](<https://github.com/dexadata/dexaflow/blob/main/internal/domain/branch.go#L51>)
+
+```go
+func (d BranchDecision) Follows(taskID string) bool
+```
+
+Follows reports whether the decision chose taskID.
+
+<a name="BranchKind"></a>
+## type [BranchKind](<https://github.com/dexadata/dexaflow/blob/main/internal/domain/branch.go#L6>)
+
+BranchKind names how a branch task's decision is read \(ADR 0064 D3\).
+
+```go
+type BranchKind string
+```
+
+<a name="BranchKindBranch"></a>
+
+```go
+const (
+    // BranchKindBranch is @task.branch and BranchPythonOperator: the task
+    // returns the task ids to follow, and its direct children outside them
+    // are skipped.
+    BranchKindBranch BranchKind = "branch"
+    // BranchKindShortCircuit is @task.short_circuit and ShortCircuitOperator:
+    // a falsy result skips its downstream.
+    BranchKindShortCircuit BranchKind = "short_circuit"
+)
+```
+
+<a name="BranchSpec"></a>
+## type [BranchSpec](<https://github.com/dexadata/dexaflow/blob/main/internal/domain/branch.go#L25-L32>)
+
+BranchSpec marks a python task whose successful result decides which of its downstream tasks run \(ADR 0064 D3\). It is a property of the task, not a task type: the task runs like any python task.
+
+The schema does not accept it yet \(ADR 0064 Phased path, step 3\), so a registered dag.json cannot carry it; the planner already applies it, so every binary a rollback can reach does once the schema does.
+
+```go
+type BranchSpec struct {
+    Kind BranchKind `json:"kind"`
+    // IgnoreDownstreamTriggerRules is ShortCircuitOperator's argument of the
+    // same name. Unset means true, Airflow's default: a falsy result skips
+    // every task downstream. False skips only the direct children and lets the
+    // trigger rules decide below them.
+    IgnoreDownstreamTriggerRules *bool `json:"ignore_downstream_trigger_rules,omitempty"`
+}
+```
+
+<a name="BranchSpec.IgnoresDownstreamTriggerRules"></a>
+### func \(BranchSpec\) [IgnoresDownstreamTriggerRules](<https://github.com/dexadata/dexaflow/blob/main/internal/domain/branch.go#L36>)
+
+```go
+func (b BranchSpec) IgnoresDownstreamTriggerRules() bool
+```
+
+IgnoresDownstreamTriggerRules reports whether a falsy short\-circuit skips every downstream task rather than only its direct children.
 
 <a name="BuildConfig"></a>
 ## type [BuildConfig](<https://github.com/dexadata/dexaflow/blob/main/internal/domain/config.go#L144-L163>)
@@ -1086,7 +1162,7 @@ RunParams returns the params a task of this DAG runs with, as the JSON object th
 When neither the DAG nor the task declares params, conf is returned unchanged. A conf that is not a JSON object \(or null\) is an error.
 
 <a name="DAGSpec.Validate"></a>
-### func \(\*DAGSpec\) [Validate](<https://github.com/dexadata/dexaflow/blob/main/internal/domain/dag.go#L334>)
+### func \(\*DAGSpec\) [Validate](<https://github.com/dexadata/dexaflow/blob/main/internal/domain/dag.go#L337>)
 
 ```go
 func (d *DAGSpec) Validate() error
@@ -1574,7 +1650,7 @@ func (r DigestRequirement) CheckImage(image string) (warning string, err error)
 CheckImage applies r to the image of a version being registered. A pinned image \(IsDigestPinned\), and any image while r is off, returns nothing. Under warn an unpinned image returns the warning to give; under enforce it returns the refusal, which is the client's to fix.
 
 <a name="Execution"></a>
-## type [Execution](<https://github.com/dexadata/dexaflow/blob/main/internal/domain/dag.go#L271-L308>)
+## type [Execution](<https://github.com/dexadata/dexaflow/blob/main/internal/domain/dag.go#L274-L311>)
 
 Execution carries executor\-specific placement and scheduling hints for a task. Every field beyond NodeSelector/Tolerations/ServiceAccount is applied only by the Kubernetes executor; Lite \(subprocess, no pods\) ignores them.
 
@@ -2043,7 +2119,7 @@ func (r *RemoteBuilderConfig) Validate(prefix string) error
 Validate refuses a remote builder a build could not use, naming the field under prefix \(build.remote\_builder in dexaflow.yaml\).
 
 <a name="ResourceQuantity"></a>
-## type [ResourceQuantity](<https://github.com/dexadata/dexaflow/blob/main/internal/domain/dag.go#L258-L266>)
+## type [ResourceQuantity](<https://github.com/dexadata/dexaflow/blob/main/internal/domain/dag.go#L261-L269>)
 
 ResourceQuantity expresses CPU, memory, and ephemeral\-storage in Kubernetes notation.
 
@@ -2146,7 +2222,7 @@ type ResourceUnitConfig struct {
 ```
 
 <a name="Resources"></a>
-## type [Resources](<https://github.com/dexadata/dexaflow/blob/main/internal/domain/dag.go#L244-L254>)
+## type [Resources](<https://github.com/dexadata/dexaflow/blob/main/internal/domain/dag.go#L247-L257>)
 
 Resources holds Kubernetes\-style resource requests and limits for a task.
 
@@ -2370,7 +2446,7 @@ type TaskInstanceFilter struct {
 ```
 
 <a name="TaskSpec"></a>
-## type [TaskSpec](<https://github.com/dexadata/dexaflow/blob/main/internal/domain/dag.go#L177-L241>)
+## type [TaskSpec](<https://github.com/dexadata/dexaflow/blob/main/internal/domain/dag.go#L177-L244>)
 
 TaskSpec describes a single unit of work within a DAG.
 
@@ -2439,11 +2515,14 @@ type TaskSpec struct {
     // runtime re-imports dag.py and runs it in the task process on failure. The
     // flag lets the agent/UI know a callback will run without importing user code.
     OnFailureCallback bool `json:"on_failure_callback,omitempty"`
+    // Branch marks a python task whose successful result decides which of its
+    // downstream tasks run (ADR 0064). Nil for every other task.
+    Branch *BranchSpec `json:"branch,omitempty"`
 }
 ```
 
 <a name="TaskSpec.EffectivePoolSlots"></a>
-### func \(TaskSpec\) [EffectivePoolSlots](<https://github.com/dexadata/dexaflow/blob/main/internal/domain/dag.go#L325>)
+### func \(TaskSpec\) [EffectivePoolSlots](<https://github.com/dexadata/dexaflow/blob/main/internal/domain/dag.go#L328>)
 
 ```go
 func (t TaskSpec) EffectivePoolSlots() int

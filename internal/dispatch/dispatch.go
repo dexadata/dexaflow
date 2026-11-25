@@ -395,6 +395,7 @@ func (d *Dispatcher) Dispatch(ctx context.Context, runID, dagID, dagVersionID st
 		TaskID:               task.TaskID,
 		TryNumber:            r.TryNumber,
 		AttemptEpoch:         r.AttemptEpoch,
+		Branch:               task.Branch != nil,
 		Image:                r.Image,
 		ImagePullPolicy:      r.ImagePullPolicy,
 		Source:               r.Source,

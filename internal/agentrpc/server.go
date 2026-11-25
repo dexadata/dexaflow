@@ -101,6 +101,14 @@ type TaskSpec struct {
 	// changes nothing about what the agent receives.
 	DeclaredVariables   []string
 	DeclaredConnections []string
+	// Branch is the task's BranchSpec when it is a branch or short-circuit
+	// task (ADR 0064), nil otherwise. DagTaskIDs and DownstreamTaskIDs are
+	// filled for such a task only: the runtime checks a decision against the
+	// first and builds the skipmixin_key XCom from the second, and the server
+	// checks the reported decision against the first.
+	Branch            *domain.BranchSpec
+	DagTaskIDs        []string
+	DownstreamTaskIDs []string
 }
 
 // Authenticator verifies an agent bearer token into a task instance identity.
@@ -124,6 +132,14 @@ type AgentTokenRenewer interface {
 // the handler acknowledges and logs. Declared here rather than in the storage
 // package because storage implements this interface, not the reverse.
 var ErrStaleReport = errors.New("task state report did not apply: the task instance already moved on")
+
+// BranchReporter records a branch task's success together with its decision
+// (ADR 0064 D1), in the same attempt-guarded write as any success report, so
+// the decision is true exactly when the success is. A stale report returns
+// ErrStaleReport, as Store.ReportState does.
+type BranchReporter interface {
+	ReportBranchSuccess(ctx context.Context, id auth.AgentIdentity, decision domain.BranchDecision) error
+}
 
 // Store is the server's view of persistent task state.
 type Store interface {
@@ -361,6 +377,9 @@ func (s *Server) GetTaskSpec(ctx context.Context, _ *agentv1.GetTaskSpecRequest)
 		OnFailureCallback:       spec.OnFailureCallback,
 		DeclaredVariables:       spec.DeclaredVariables,
 		DeclaredConnections:     spec.DeclaredConnections,
+		Branch:                  branchSpecProto(spec.Branch),
+		DagTaskIds:              spec.DagTaskIDs,
+		DownstreamTaskIds:       spec.DownstreamTaskIDs,
 	}, nil
 }
 
@@ -372,6 +391,16 @@ func (s *Server) ReportState(ctx context.Context, req *agentv1.ReportStateReques
 	}
 	if aerr := s.requireAttemptToken(id); aerr != nil {
 		return nil, aerr
+	}
+	// A success is checked against the task's branch spec first (ADR 0064 D1),
+	// read from the attempt's cached view before the drop below.
+	var verdict branchVerdict
+	if req.GetState() == agentv1.TaskState_TASK_STATE_SUCCESS {
+		spec, serr := s.xcomSpec(ctx, id)
+		if serr != nil {
+			return nil, internalStatus("loading task spec", serr, attemptAttrs(id)...)
+		}
+		verdict = judgeBranch(spec, req.GetBranch(), id)
 	}
 	// Any report but running ends this attempt, so its cached XCom spec goes. A
 	// later RPC of the same attempt (a retried report) just reloads it.
@@ -397,7 +426,7 @@ func (s *Server) ReportState(ctx context.Context, req *agentv1.ReportStateReques
 	if err != nil {
 		return nil, err
 	}
-	if rerr := s.store.ReportState(ctx, *id, state, int(req.GetExitCode()), req.GetErrorMessage()); rerr != nil {
+	if rerr := s.recordReport(ctx, id, state, req, verdict); rerr != nil {
 		// A stale report is the guard working, not a fault: the row was already
 		// settled or already on a later attempt. Acknowledge so the agent stops
 		// (retrying would never apply either), but log it — a late report is

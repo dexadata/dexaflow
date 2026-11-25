@@ -43,6 +43,10 @@ type Request struct {
 	// request (ADR 0051 amendment). It is stamped into the pod's identity
 	// annotation so the exchanged token names this execution.
 	AttemptEpoch int
+	// Branch marks a branch or short-circuit task (ADR 0064): its pod is
+	// labeled so the reconciler settles a recovered success only with the
+	// decision the record carries.
+	Branch bool
 
 	Image           string
 	ImagePullPolicy string

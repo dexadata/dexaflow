@@ -135,6 +135,11 @@ type RunState struct {
 	// It bounds the re-place at infraMaxAttempts so a poison placement cannot loop
 	// forever. Absent entries mean zero.
 	InfraAttempts map[string]int
+	// BranchDecision holds, per branch task, the decision it reported with its
+	// success (ADR 0064 D1). The planner skips a none task its direct branch
+	// parent did not follow (D2). Absent entries mean no decision: a branch
+	// task marked success by hand filters nothing, as in Airflow.
+	BranchDecision map[string]*domain.BranchDecision
 	// Now is the wall-clock value the planner compares against EndedAt. Zero
 	// means "skip the cooldown gate" so legacy callers + tests that don't set
 	// retry_delay get the previous (immediate-retry) behavior.

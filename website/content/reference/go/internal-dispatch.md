@@ -354,7 +354,7 @@ func (d *Dispatcher) SetWarmPlacer(p WarmPlacer)
 SetWarmPlacer wires the warm\-worker placement seam \(ADR 0058 N1b1\-place\). With a placer set, Dispatch tries to place an admitted attempt on a free warm worker of its dag\_version and only falls back to a dedicated pod on a warm miss. Leave it unset \(nil\) — the default — to keep dedicated pod\-per\-task, today's behavior.
 
 <a name="Dispatcher.WarmPolicy"></a>
-### func \(\*Dispatcher\) [WarmPolicy](<https://github.com/dexadata/dexaflow/blob/main/internal/dispatch/dispatch.go#L528>)
+### func \(\*Dispatcher\) [WarmPolicy](<https://github.com/dexadata/dexaflow/blob/main/internal/dispatch/dispatch.go#L529>)
 
 ```go
 func (d *Dispatcher) WarmPolicy() domain.WarmPolicy

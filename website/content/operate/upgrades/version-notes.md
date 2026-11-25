@@ -257,6 +257,7 @@ holds, then re-run.
 | 057 (UUIDv7 keys) | 57 | nothing: one transaction with a 5 s `lock_timeout`, rolled back, and every statement can be repeated | 56; retry when `dag_runs` and `task_instances` are quiet |
 | 058 (user session cutoff) | 58 | nothing: one transaction with a 5 s `lock_timeout`, rolled back, and every statement can be repeated | 57; retry when `users` is quiet |
 | 059 (tenant row security policies) | 59 | nothing: one transaction with a 5 s `lock_timeout`, rolled back, and every statement can be repeated | 58; retry when the tenant tables are quiet |
+| 060 (`branch_decision`) | 60 | nothing: one transaction with a 5 s `lock_timeout`, rolled back, and every statement can be repeated | 59; retry when `task_instances` is quiet |
 
 **How to run `migrate force`.** The hook image is the `dexaflow-migrate`
 wrapper plus the SQL files at `/migrations`; it takes the golang-migrate CLI's

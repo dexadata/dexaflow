@@ -577,6 +577,9 @@ type TaskSpec struct {
 	RunStartDate            string                    `protobuf:"bytes,29,opt,name=run_start_date,json=runStartDate,proto3" json:"run_start_date,omitempty"`                    // When the DagRun started running, RFC3339 (#2474). Stamped as LEOFLOW_RUN_START_DATE -> context dag_run.start_date. Empty from a control plane that predates the field; the runtime then reports dag_run.start_date as not provided.
 	RunAfter                string                    `protobuf:"bytes,30,opt,name=run_after,json=runAfter,proto3" json:"run_after,omitempty"`                                  // When the DagRun became due, RFC3339, in the Task SDK's run_after sense: the end of its data interval (#2474). Stamped as LEOFLOW_RUN_AFTER -> context dag_run.run_after. Empty leaves it unset.
 	RunState                string                    `protobuf:"bytes,31,opt,name=run_state,json=runState,proto3" json:"run_state,omitempty"`                                  // The DagRun's state when the spec was read ("running" while its tasks run) (#2474). Stamped as LEOFLOW_RUN_STATE -> context dag_run.state. Empty leaves it unset.
+	Branch                  *BranchSpec               `protobuf:"bytes,32,opt,name=branch,proto3" json:"branch,omitempty"`                                                      // Set only for a branch or short-circuit task (ADR 0064). The agent stamps LEOFLOW_BRANCH_KIND and the paths below so the runtime writes the decision; unset for every other task.
+	DagTaskIds              []string                  `protobuf:"bytes,33,rep,name=dag_task_ids,json=dagTaskIds,proto3" json:"dag_task_ids,omitempty"`                          // For a branch task: every task_id of the DAG. Stamped as LEOFLOW_BRANCH_TASK_IDS so the runtime refuses an id the DAG does not declare, as Airflow does. Empty for every other task.
+	DownstreamTaskIds       []string                  `protobuf:"bytes,34,rep,name=downstream_task_ids,json=downstreamTaskIds,proto3" json:"downstream_task_ids,omitempty"`     // For a branch task: its direct children. Stamped as LEOFLOW_BRANCH_DOWNSTREAM for the skipmixin_key XCom and the not-a-child warning. Empty for every other task.
 	unknownFields           protoimpl.UnknownFields
 	sizeCache               protoimpl.SizeCache
 }
@@ -828,6 +831,135 @@ func (x *TaskSpec) GetRunState() string {
 	return ""
 }
 
+func (x *TaskSpec) GetBranch() *BranchSpec {
+	if x != nil {
+		return x.Branch
+	}
+	return nil
+}
+
+func (x *TaskSpec) GetDagTaskIds() []string {
+	if x != nil {
+		return x.DagTaskIds
+	}
+	return nil
+}
+
+func (x *TaskSpec) GetDownstreamTaskIds() []string {
+	if x != nil {
+		return x.DownstreamTaskIds
+	}
+	return nil
+}
+
+// BranchSpec is a branch task's dag.json `branch` property (ADR 0064 D3).
+type BranchSpec struct {
+	state                        protoimpl.MessageState `protogen:"open.v1"`
+	Kind                         string                 `protobuf:"bytes,1,opt,name=kind,proto3" json:"kind,omitempty"`                                                                                          // "branch" or "short_circuit".
+	IgnoreDownstreamTriggerRules bool                   `protobuf:"varint,2,opt,name=ignore_downstream_trigger_rules,json=ignoreDownstreamTriggerRules,proto3" json:"ignore_downstream_trigger_rules,omitempty"` // short_circuit only: a falsy result skips every task below it (true, Airflow's default) or only its direct children.
+	unknownFields                protoimpl.UnknownFields
+	sizeCache                    protoimpl.SizeCache
+}
+
+func (x *BranchSpec) Reset() {
+	*x = BranchSpec{}
+	mi := &file_agent_proto_msgTypes[10]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *BranchSpec) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*BranchSpec) ProtoMessage() {}
+
+func (x *BranchSpec) ProtoReflect() protoreflect.Message {
+	mi := &file_agent_proto_msgTypes[10]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use BranchSpec.ProtoReflect.Descriptor instead.
+func (*BranchSpec) Descriptor() ([]byte, []int) {
+	return file_agent_proto_rawDescGZIP(), []int{10}
+}
+
+func (x *BranchSpec) GetKind() string {
+	if x != nil {
+		return x.Kind
+	}
+	return ""
+}
+
+func (x *BranchSpec) GetIgnoreDownstreamTriggerRules() bool {
+	if x != nil {
+		return x.IgnoreDownstreamTriggerRules
+	}
+	return false
+}
+
+// BranchDecision is what a branch task decided (ADR 0064 D1). A proto3 message
+// field has presence, so "no decision" and "follow nothing" (empty
+// follow_task_ids) are distinct on the wire.
+type BranchDecision struct {
+	state             protoimpl.MessageState `protogen:"open.v1"`
+	FollowTaskIds     []string               `protobuf:"bytes,1,rep,name=follow_task_ids,json=followTaskIds,proto3" json:"follow_task_ids,omitempty"`              // branch: the chosen task_ids; empty when the callable returned None.
+	ShortCircuitFalsy bool                   `protobuf:"varint,2,opt,name=short_circuit_falsy,json=shortCircuitFalsy,proto3" json:"short_circuit_falsy,omitempty"` // short_circuit: the condition was falsy.
+	unknownFields     protoimpl.UnknownFields
+	sizeCache         protoimpl.SizeCache
+}
+
+func (x *BranchDecision) Reset() {
+	*x = BranchDecision{}
+	mi := &file_agent_proto_msgTypes[11]
+	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+	ms.StoreMessageInfo(mi)
+}
+
+func (x *BranchDecision) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*BranchDecision) ProtoMessage() {}
+
+func (x *BranchDecision) ProtoReflect() protoreflect.Message {
+	mi := &file_agent_proto_msgTypes[11]
+	if x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use BranchDecision.ProtoReflect.Descriptor instead.
+func (*BranchDecision) Descriptor() ([]byte, []int) {
+	return file_agent_proto_rawDescGZIP(), []int{11}
+}
+
+func (x *BranchDecision) GetFollowTaskIds() []string {
+	if x != nil {
+		return x.FollowTaskIds
+	}
+	return nil
+}
+
+func (x *BranchDecision) GetShortCircuitFalsy() bool {
+	if x != nil {
+		return x.ShortCircuitFalsy
+	}
+	return false
+}
+
 // XComUpstreams is the list of upstream task_ids whose return_values feed one
 // parameter. A single upstream is `task_ids: ["extract"]`; fan-in (binding a
 // list of upstreams to a parameter) is `task_ids: ["a", "b", "c"]`. The runtime
@@ -842,7 +974,7 @@ type XComUpstreams struct {
 
 func (x *XComUpstreams) Reset() {
 	*x = XComUpstreams{}
-	mi := &file_agent_proto_msgTypes[10]
+	mi := &file_agent_proto_msgTypes[12]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -854,7 +986,7 @@ func (x *XComUpstreams) String() string {
 func (*XComUpstreams) ProtoMessage() {}
 
 func (x *XComUpstreams) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_proto_msgTypes[10]
+	mi := &file_agent_proto_msgTypes[12]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -867,7 +999,7 @@ func (x *XComUpstreams) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use XComUpstreams.ProtoReflect.Descriptor instead.
 func (*XComUpstreams) Descriptor() ([]byte, []int) {
-	return file_agent_proto_rawDescGZIP(), []int{10}
+	return file_agent_proto_rawDescGZIP(), []int{12}
 }
 
 func (x *XComUpstreams) GetTaskIds() []string {
@@ -887,7 +1019,7 @@ type FetchXComRequest struct {
 
 func (x *FetchXComRequest) Reset() {
 	*x = FetchXComRequest{}
-	mi := &file_agent_proto_msgTypes[11]
+	mi := &file_agent_proto_msgTypes[13]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -899,7 +1031,7 @@ func (x *FetchXComRequest) String() string {
 func (*FetchXComRequest) ProtoMessage() {}
 
 func (x *FetchXComRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_proto_msgTypes[11]
+	mi := &file_agent_proto_msgTypes[13]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -912,7 +1044,7 @@ func (x *FetchXComRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FetchXComRequest.ProtoReflect.Descriptor instead.
 func (*FetchXComRequest) Descriptor() ([]byte, []int) {
-	return file_agent_proto_rawDescGZIP(), []int{11}
+	return file_agent_proto_rawDescGZIP(), []int{13}
 }
 
 func (x *FetchXComRequest) GetUpstreamTaskId() string {
@@ -941,7 +1073,7 @@ type FetchXComResponse struct {
 
 func (x *FetchXComResponse) Reset() {
 	*x = FetchXComResponse{}
-	mi := &file_agent_proto_msgTypes[12]
+	mi := &file_agent_proto_msgTypes[14]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -953,7 +1085,7 @@ func (x *FetchXComResponse) String() string {
 func (*FetchXComResponse) ProtoMessage() {}
 
 func (x *FetchXComResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_proto_msgTypes[12]
+	mi := &file_agent_proto_msgTypes[14]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -966,7 +1098,7 @@ func (x *FetchXComResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FetchXComResponse.ProtoReflect.Descriptor instead.
 func (*FetchXComResponse) Descriptor() ([]byte, []int) {
-	return file_agent_proto_rawDescGZIP(), []int{12}
+	return file_agent_proto_rawDescGZIP(), []int{14}
 }
 
 func (x *FetchXComResponse) GetValue() []byte {
@@ -1006,7 +1138,7 @@ type FetchXComBatchRequest struct {
 
 func (x *FetchXComBatchRequest) Reset() {
 	*x = FetchXComBatchRequest{}
-	mi := &file_agent_proto_msgTypes[13]
+	mi := &file_agent_proto_msgTypes[15]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1018,7 +1150,7 @@ func (x *FetchXComBatchRequest) String() string {
 func (*FetchXComBatchRequest) ProtoMessage() {}
 
 func (x *FetchXComBatchRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_proto_msgTypes[13]
+	mi := &file_agent_proto_msgTypes[15]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1031,7 +1163,7 @@ func (x *FetchXComBatchRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FetchXComBatchRequest.ProtoReflect.Descriptor instead.
 func (*FetchXComBatchRequest) Descriptor() ([]byte, []int) {
-	return file_agent_proto_rawDescGZIP(), []int{13}
+	return file_agent_proto_rawDescGZIP(), []int{15}
 }
 
 func (x *FetchXComBatchRequest) GetItems() []*FetchXComRequest {
@@ -1057,7 +1189,7 @@ type FetchXComBatchItem struct {
 
 func (x *FetchXComBatchItem) Reset() {
 	*x = FetchXComBatchItem{}
-	mi := &file_agent_proto_msgTypes[14]
+	mi := &file_agent_proto_msgTypes[16]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1069,7 +1201,7 @@ func (x *FetchXComBatchItem) String() string {
 func (*FetchXComBatchItem) ProtoMessage() {}
 
 func (x *FetchXComBatchItem) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_proto_msgTypes[14]
+	mi := &file_agent_proto_msgTypes[16]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1082,7 +1214,7 @@ func (x *FetchXComBatchItem) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FetchXComBatchItem.ProtoReflect.Descriptor instead.
 func (*FetchXComBatchItem) Descriptor() ([]byte, []int) {
-	return file_agent_proto_rawDescGZIP(), []int{14}
+	return file_agent_proto_rawDescGZIP(), []int{16}
 }
 
 func (x *FetchXComBatchItem) GetUpstreamTaskId() string {
@@ -1150,7 +1282,7 @@ type FetchXComBatchResponse struct {
 
 func (x *FetchXComBatchResponse) Reset() {
 	*x = FetchXComBatchResponse{}
-	mi := &file_agent_proto_msgTypes[15]
+	mi := &file_agent_proto_msgTypes[17]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1162,7 +1294,7 @@ func (x *FetchXComBatchResponse) String() string {
 func (*FetchXComBatchResponse) ProtoMessage() {}
 
 func (x *FetchXComBatchResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_proto_msgTypes[15]
+	mi := &file_agent_proto_msgTypes[17]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1175,7 +1307,7 @@ func (x *FetchXComBatchResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use FetchXComBatchResponse.ProtoReflect.Descriptor instead.
 func (*FetchXComBatchResponse) Descriptor() ([]byte, []int) {
-	return file_agent_proto_rawDescGZIP(), []int{15}
+	return file_agent_proto_rawDescGZIP(), []int{17}
 }
 
 func (x *FetchXComBatchResponse) GetItems() []*FetchXComBatchItem {
@@ -1196,7 +1328,7 @@ type PushXComRequest struct {
 
 func (x *PushXComRequest) Reset() {
 	*x = PushXComRequest{}
-	mi := &file_agent_proto_msgTypes[16]
+	mi := &file_agent_proto_msgTypes[18]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1208,7 +1340,7 @@ func (x *PushXComRequest) String() string {
 func (*PushXComRequest) ProtoMessage() {}
 
 func (x *PushXComRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_proto_msgTypes[16]
+	mi := &file_agent_proto_msgTypes[18]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1221,7 +1353,7 @@ func (x *PushXComRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PushXComRequest.ProtoReflect.Descriptor instead.
 func (*PushXComRequest) Descriptor() ([]byte, []int) {
-	return file_agent_proto_rawDescGZIP(), []int{16}
+	return file_agent_proto_rawDescGZIP(), []int{18}
 }
 
 func (x *PushXComRequest) GetKey() string {
@@ -1256,7 +1388,7 @@ type PushXComResponse struct {
 
 func (x *PushXComResponse) Reset() {
 	*x = PushXComResponse{}
-	mi := &file_agent_proto_msgTypes[17]
+	mi := &file_agent_proto_msgTypes[19]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1268,7 +1400,7 @@ func (x *PushXComResponse) String() string {
 func (*PushXComResponse) ProtoMessage() {}
 
 func (x *PushXComResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_proto_msgTypes[17]
+	mi := &file_agent_proto_msgTypes[19]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1281,7 +1413,7 @@ func (x *PushXComResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use PushXComResponse.ProtoReflect.Descriptor instead.
 func (*PushXComResponse) Descriptor() ([]byte, []int) {
-	return file_agent_proto_rawDescGZIP(), []int{17}
+	return file_agent_proto_rawDescGZIP(), []int{19}
 }
 
 func (x *PushXComResponse) GetAccepted() bool {
@@ -1318,7 +1450,7 @@ type LogLine struct {
 
 func (x *LogLine) Reset() {
 	*x = LogLine{}
-	mi := &file_agent_proto_msgTypes[18]
+	mi := &file_agent_proto_msgTypes[20]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1330,7 +1462,7 @@ func (x *LogLine) String() string {
 func (*LogLine) ProtoMessage() {}
 
 func (x *LogLine) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_proto_msgTypes[18]
+	mi := &file_agent_proto_msgTypes[20]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1343,7 +1475,7 @@ func (x *LogLine) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use LogLine.ProtoReflect.Descriptor instead.
 func (*LogLine) Descriptor() ([]byte, []int) {
-	return file_agent_proto_rawDescGZIP(), []int{18}
+	return file_agent_proto_rawDescGZIP(), []int{20}
 }
 
 func (x *LogLine) GetTime() *timestamppb.Timestamp {
@@ -1390,7 +1522,7 @@ type LogAck struct {
 
 func (x *LogAck) Reset() {
 	*x = LogAck{}
-	mi := &file_agent_proto_msgTypes[19]
+	mi := &file_agent_proto_msgTypes[21]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1402,7 +1534,7 @@ func (x *LogAck) String() string {
 func (*LogAck) ProtoMessage() {}
 
 func (x *LogAck) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_proto_msgTypes[19]
+	mi := &file_agent_proto_msgTypes[21]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1415,7 +1547,7 @@ func (x *LogAck) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use LogAck.ProtoReflect.Descriptor instead.
 func (*LogAck) Descriptor() ([]byte, []int) {
-	return file_agent_proto_rawDescGZIP(), []int{19}
+	return file_agent_proto_rawDescGZIP(), []int{21}
 }
 
 func (x *LogAck) GetAcknowledgedThroughLine() int64 {
@@ -1433,14 +1565,17 @@ type ReportStateRequest struct {
 	OccurredAt   *timestamppb.Timestamp `protobuf:"bytes,4,opt,name=occurred_at,json=occurredAt,proto3" json:"occurred_at,omitempty"`
 	// For TASK_STATE_UP_FOR_RESCHEDULE: the earliest time the scheduler may
 	// re-dispatch this task instance (a reschedule-mode sensor poked not-ready).
-	RescheduleAt  *timestamppb.Timestamp `protobuf:"bytes,5,opt,name=reschedule_at,json=rescheduleAt,proto3" json:"reschedule_at,omitempty"`
+	RescheduleAt *timestamppb.Timestamp `protobuf:"bytes,5,opt,name=reschedule_at,json=rescheduleAt,proto3" json:"reschedule_at,omitempty"`
+	// Set only by a branch or short-circuit task on TASK_STATE_SUCCESS (ADR
+	// 0064 D1): the decision becomes true in the same write as the success.
+	Branch        *BranchDecision `protobuf:"bytes,6,opt,name=branch,proto3" json:"branch,omitempty"`
 	unknownFields protoimpl.UnknownFields
 	sizeCache     protoimpl.SizeCache
 }
 
 func (x *ReportStateRequest) Reset() {
 	*x = ReportStateRequest{}
-	mi := &file_agent_proto_msgTypes[20]
+	mi := &file_agent_proto_msgTypes[22]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1452,7 +1587,7 @@ func (x *ReportStateRequest) String() string {
 func (*ReportStateRequest) ProtoMessage() {}
 
 func (x *ReportStateRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_proto_msgTypes[20]
+	mi := &file_agent_proto_msgTypes[22]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1465,7 +1600,7 @@ func (x *ReportStateRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ReportStateRequest.ProtoReflect.Descriptor instead.
 func (*ReportStateRequest) Descriptor() ([]byte, []int) {
-	return file_agent_proto_rawDescGZIP(), []int{20}
+	return file_agent_proto_rawDescGZIP(), []int{22}
 }
 
 func (x *ReportStateRequest) GetState() TaskState {
@@ -1503,6 +1638,13 @@ func (x *ReportStateRequest) GetRescheduleAt() *timestamppb.Timestamp {
 	return nil
 }
 
+func (x *ReportStateRequest) GetBranch() *BranchDecision {
+	if x != nil {
+		return x.Branch
+	}
+	return nil
+}
+
 type ReportStateResponse struct {
 	state        protoimpl.MessageState `protogen:"open.v1"`
 	Acknowledged bool                   `protobuf:"varint,1,opt,name=acknowledged,proto3" json:"acknowledged,omitempty"`
@@ -1514,7 +1656,7 @@ type ReportStateResponse struct {
 
 func (x *ReportStateResponse) Reset() {
 	*x = ReportStateResponse{}
-	mi := &file_agent_proto_msgTypes[21]
+	mi := &file_agent_proto_msgTypes[23]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1526,7 +1668,7 @@ func (x *ReportStateResponse) String() string {
 func (*ReportStateResponse) ProtoMessage() {}
 
 func (x *ReportStateResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_proto_msgTypes[21]
+	mi := &file_agent_proto_msgTypes[23]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1539,7 +1681,7 @@ func (x *ReportStateResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use ReportStateResponse.ProtoReflect.Descriptor instead.
 func (*ReportStateResponse) Descriptor() ([]byte, []int) {
-	return file_agent_proto_rawDescGZIP(), []int{21}
+	return file_agent_proto_rawDescGZIP(), []int{23}
 }
 
 func (x *ReportStateResponse) GetAcknowledged() bool {
@@ -1566,7 +1708,7 @@ type HeartbeatRequest struct {
 
 func (x *HeartbeatRequest) Reset() {
 	*x = HeartbeatRequest{}
-	mi := &file_agent_proto_msgTypes[22]
+	mi := &file_agent_proto_msgTypes[24]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1578,7 +1720,7 @@ func (x *HeartbeatRequest) String() string {
 func (*HeartbeatRequest) ProtoMessage() {}
 
 func (x *HeartbeatRequest) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_proto_msgTypes[22]
+	mi := &file_agent_proto_msgTypes[24]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1591,7 +1733,7 @@ func (x *HeartbeatRequest) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use HeartbeatRequest.ProtoReflect.Descriptor instead.
 func (*HeartbeatRequest) Descriptor() ([]byte, []int) {
-	return file_agent_proto_rawDescGZIP(), []int{22}
+	return file_agent_proto_rawDescGZIP(), []int{24}
 }
 
 func (x *HeartbeatRequest) GetSentAt() *timestamppb.Timestamp {
@@ -1639,7 +1781,7 @@ type WorkAssignment struct {
 
 func (x *WorkAssignment) Reset() {
 	*x = WorkAssignment{}
-	mi := &file_agent_proto_msgTypes[23]
+	mi := &file_agent_proto_msgTypes[25]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1651,7 +1793,7 @@ func (x *WorkAssignment) String() string {
 func (*WorkAssignment) ProtoMessage() {}
 
 func (x *WorkAssignment) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_proto_msgTypes[23]
+	mi := &file_agent_proto_msgTypes[25]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1664,7 +1806,7 @@ func (x *WorkAssignment) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use WorkAssignment.ProtoReflect.Descriptor instead.
 func (*WorkAssignment) Descriptor() ([]byte, []int) {
-	return file_agent_proto_rawDescGZIP(), []int{23}
+	return file_agent_proto_rawDescGZIP(), []int{25}
 }
 
 func (x *WorkAssignment) GetAssignmentId() string {
@@ -1753,7 +1895,7 @@ type WorkerMessage struct {
 
 func (x *WorkerMessage) Reset() {
 	*x = WorkerMessage{}
-	mi := &file_agent_proto_msgTypes[24]
+	mi := &file_agent_proto_msgTypes[26]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1765,7 +1907,7 @@ func (x *WorkerMessage) String() string {
 func (*WorkerMessage) ProtoMessage() {}
 
 func (x *WorkerMessage) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_proto_msgTypes[24]
+	mi := &file_agent_proto_msgTypes[26]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1778,7 +1920,7 @@ func (x *WorkerMessage) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use WorkerMessage.ProtoReflect.Descriptor instead.
 func (*WorkerMessage) Descriptor() ([]byte, []int) {
-	return file_agent_proto_rawDescGZIP(), []int{24}
+	return file_agent_proto_rawDescGZIP(), []int{26}
 }
 
 func (x *WorkerMessage) GetMsg() isWorkerMessage_Msg {
@@ -1873,7 +2015,7 @@ type WorkerRegister struct {
 
 func (x *WorkerRegister) Reset() {
 	*x = WorkerRegister{}
-	mi := &file_agent_proto_msgTypes[25]
+	mi := &file_agent_proto_msgTypes[27]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1885,7 +2027,7 @@ func (x *WorkerRegister) String() string {
 func (*WorkerRegister) ProtoMessage() {}
 
 func (x *WorkerRegister) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_proto_msgTypes[25]
+	mi := &file_agent_proto_msgTypes[27]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1898,7 +2040,7 @@ func (x *WorkerRegister) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use WorkerRegister.ProtoReflect.Descriptor instead.
 func (*WorkerRegister) Descriptor() ([]byte, []int) {
-	return file_agent_proto_rawDescGZIP(), []int{25}
+	return file_agent_proto_rawDescGZIP(), []int{27}
 }
 
 func (x *WorkerRegister) GetDagVersionId() string {
@@ -1942,7 +2084,7 @@ type AssignmentAck struct {
 
 func (x *AssignmentAck) Reset() {
 	*x = AssignmentAck{}
-	mi := &file_agent_proto_msgTypes[26]
+	mi := &file_agent_proto_msgTypes[28]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -1954,7 +2096,7 @@ func (x *AssignmentAck) String() string {
 func (*AssignmentAck) ProtoMessage() {}
 
 func (x *AssignmentAck) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_proto_msgTypes[26]
+	mi := &file_agent_proto_msgTypes[28]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -1967,7 +2109,7 @@ func (x *AssignmentAck) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use AssignmentAck.ProtoReflect.Descriptor instead.
 func (*AssignmentAck) Descriptor() ([]byte, []int) {
-	return file_agent_proto_rawDescGZIP(), []int{26}
+	return file_agent_proto_rawDescGZIP(), []int{28}
 }
 
 func (x *AssignmentAck) GetAssignmentId() string {
@@ -1995,7 +2137,7 @@ type SlotFree struct {
 
 func (x *SlotFree) Reset() {
 	*x = SlotFree{}
-	mi := &file_agent_proto_msgTypes[27]
+	mi := &file_agent_proto_msgTypes[29]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2007,7 +2149,7 @@ func (x *SlotFree) String() string {
 func (*SlotFree) ProtoMessage() {}
 
 func (x *SlotFree) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_proto_msgTypes[27]
+	mi := &file_agent_proto_msgTypes[29]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2020,7 +2162,7 @@ func (x *SlotFree) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use SlotFree.ProtoReflect.Descriptor instead.
 func (*SlotFree) Descriptor() ([]byte, []int) {
-	return file_agent_proto_rawDescGZIP(), []int{27}
+	return file_agent_proto_rawDescGZIP(), []int{29}
 }
 
 type HeartbeatResponse struct {
@@ -2040,7 +2182,7 @@ type HeartbeatResponse struct {
 
 func (x *HeartbeatResponse) Reset() {
 	*x = HeartbeatResponse{}
-	mi := &file_agent_proto_msgTypes[28]
+	mi := &file_agent_proto_msgTypes[30]
 	ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 	ms.StoreMessageInfo(mi)
 }
@@ -2052,7 +2194,7 @@ func (x *HeartbeatResponse) String() string {
 func (*HeartbeatResponse) ProtoMessage() {}
 
 func (x *HeartbeatResponse) ProtoReflect() protoreflect.Message {
-	mi := &file_agent_proto_msgTypes[28]
+	mi := &file_agent_proto_msgTypes[30]
 	if x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -2065,7 +2207,7 @@ func (x *HeartbeatResponse) ProtoReflect() protoreflect.Message {
 
 // Deprecated: Use HeartbeatResponse.ProtoReflect.Descriptor instead.
 func (*HeartbeatResponse) Descriptor() ([]byte, []int) {
-	return file_agent_proto_rawDescGZIP(), []int{28}
+	return file_agent_proto_rawDescGZIP(), []int{30}
 }
 
 func (x *HeartbeatResponse) GetShouldTerminate() bool {
@@ -2122,7 +2264,7 @@ const file_agent_proto_rawDesc = "" +
 	"session_id\x18\x01 \x01(\tR\tsessionId\x12;\n" +
 	"\vserver_time\x18\x02 \x01(\v2\x1a.google.protobuf.TimestampR\n" +
 	"serverTime\"\x14\n" +
-	"\x12GetTaskSpecRequest\"\x87\v\n" +
+	"\x12GetTaskSpecRequest\"\x8f\f\n" +
 	"\bTaskSpec\x12\x1b\n" +
 	"\ttenant_id\x18\x01 \x01(\tR\btenantId\x12\x15\n" +
 	"\x06dag_id\x18\x02 \x01(\tR\x05dagId\x12\x1f\n" +
@@ -2161,13 +2303,24 @@ const file_agent_proto_rawDesc = "" +
 	"\brun_type\x18\x1c \x01(\tR\arunType\x12$\n" +
 	"\x0erun_start_date\x18\x1d \x01(\tR\frunStartDate\x12\x1b\n" +
 	"\trun_after\x18\x1e \x01(\tR\brunAfter\x12\x1b\n" +
-	"\trun_state\x18\x1f \x01(\tR\brunState\x1a>\n" +
+	"\trun_state\x18\x1f \x01(\tR\brunState\x124\n" +
+	"\x06branch\x18  \x01(\v2\x1c.leoflow.agent.v1.BranchSpecR\x06branch\x12 \n" +
+	"\fdag_task_ids\x18! \x03(\tR\n" +
+	"dagTaskIds\x12.\n" +
+	"\x13downstream_task_ids\x18\" \x03(\tR\x11downstreamTaskIds\x1a>\n" +
 	"\x10EnvironmentEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x12\x14\n" +
 	"\x05value\x18\x02 \x01(\tR\x05value:\x028\x01\x1ad\n" +
 	"\x15XcomInputMappingEntry\x12\x10\n" +
 	"\x03key\x18\x01 \x01(\tR\x03key\x125\n" +
-	"\x05value\x18\x02 \x01(\v2\x1f.leoflow.agent.v1.XComUpstreamsR\x05value:\x028\x01\"*\n" +
+	"\x05value\x18\x02 \x01(\v2\x1f.leoflow.agent.v1.XComUpstreamsR\x05value:\x028\x01\"g\n" +
+	"\n" +
+	"BranchSpec\x12\x12\n" +
+	"\x04kind\x18\x01 \x01(\tR\x04kind\x12E\n" +
+	"\x1fignore_downstream_trigger_rules\x18\x02 \x01(\bR\x1cignoreDownstreamTriggerRules\"h\n" +
+	"\x0eBranchDecision\x12&\n" +
+	"\x0ffollow_task_ids\x18\x01 \x03(\tR\rfollowTaskIds\x12.\n" +
+	"\x13short_circuit_falsy\x18\x02 \x01(\bR\x11shortCircuitFalsy\"*\n" +
 	"\rXComUpstreams\x12\x19\n" +
 	"\btask_ids\x18\x01 \x03(\tR\ataskIds\"N\n" +
 	"\x10FetchXComRequest\x12(\n" +
@@ -2212,14 +2365,15 @@ const file_agent_proto_rawDesc = "" +
 	"\vline_number\x18\x05 \x01(\x03R\n" +
 	"lineNumber\"D\n" +
 	"\x06LogAck\x12:\n" +
-	"\x19acknowledged_through_line\x18\x01 \x01(\x03R\x17acknowledgedThroughLine\"\x87\x02\n" +
+	"\x19acknowledged_through_line\x18\x01 \x01(\x03R\x17acknowledgedThroughLine\"\xc1\x02\n" +
 	"\x12ReportStateRequest\x121\n" +
 	"\x05state\x18\x01 \x01(\x0e2\x1b.leoflow.agent.v1.TaskStateR\x05state\x12\x1b\n" +
 	"\texit_code\x18\x02 \x01(\x05R\bexitCode\x12#\n" +
 	"\rerror_message\x18\x03 \x01(\tR\ferrorMessage\x12;\n" +
 	"\voccurred_at\x18\x04 \x01(\v2\x1a.google.protobuf.TimestampR\n" +
 	"occurredAt\x12?\n" +
-	"\rreschedule_at\x18\x05 \x01(\v2\x1a.google.protobuf.TimestampR\frescheduleAt\"d\n" +
+	"\rreschedule_at\x18\x05 \x01(\v2\x1a.google.protobuf.TimestampR\frescheduleAt\x128\n" +
+	"\x06branch\x18\x06 \x01(\v2 .leoflow.agent.v1.BranchDecisionR\x06branch\"d\n" +
 	"\x13ReportStateResponse\x12\"\n" +
 	"\facknowledged\x18\x01 \x01(\bR\facknowledged\x12)\n" +
 	"\x10should_terminate\x18\x02 \x01(\bR\x0fshouldTerminate\"\xe7\x01\n" +
@@ -2305,7 +2459,7 @@ func file_agent_proto_rawDescGZIP() []byte {
 }
 
 var file_agent_proto_enumTypes = make([]protoimpl.EnumInfo, 2)
-var file_agent_proto_msgTypes = make([]protoimpl.MessageInfo, 35)
+var file_agent_proto_msgTypes = make([]protoimpl.MessageInfo, 37)
 var file_agent_proto_goTypes = []any{
 	(LogLevel)(0),                  // 0: leoflow.agent.v1.LogLevel
 	(TaskState)(0),                 // 1: leoflow.agent.v1.TaskState
@@ -2319,87 +2473,91 @@ var file_agent_proto_goTypes = []any{
 	(*RegisterResponse)(nil),       // 9: leoflow.agent.v1.RegisterResponse
 	(*GetTaskSpecRequest)(nil),     // 10: leoflow.agent.v1.GetTaskSpecRequest
 	(*TaskSpec)(nil),               // 11: leoflow.agent.v1.TaskSpec
-	(*XComUpstreams)(nil),          // 12: leoflow.agent.v1.XComUpstreams
-	(*FetchXComRequest)(nil),       // 13: leoflow.agent.v1.FetchXComRequest
-	(*FetchXComResponse)(nil),      // 14: leoflow.agent.v1.FetchXComResponse
-	(*FetchXComBatchRequest)(nil),  // 15: leoflow.agent.v1.FetchXComBatchRequest
-	(*FetchXComBatchItem)(nil),     // 16: leoflow.agent.v1.FetchXComBatchItem
-	(*FetchXComBatchResponse)(nil), // 17: leoflow.agent.v1.FetchXComBatchResponse
-	(*PushXComRequest)(nil),        // 18: leoflow.agent.v1.PushXComRequest
-	(*PushXComResponse)(nil),       // 19: leoflow.agent.v1.PushXComResponse
-	(*LogLine)(nil),                // 20: leoflow.agent.v1.LogLine
-	(*LogAck)(nil),                 // 21: leoflow.agent.v1.LogAck
-	(*ReportStateRequest)(nil),     // 22: leoflow.agent.v1.ReportStateRequest
-	(*ReportStateResponse)(nil),    // 23: leoflow.agent.v1.ReportStateResponse
-	(*HeartbeatRequest)(nil),       // 24: leoflow.agent.v1.HeartbeatRequest
-	(*WorkAssignment)(nil),         // 25: leoflow.agent.v1.WorkAssignment
-	(*WorkerMessage)(nil),          // 26: leoflow.agent.v1.WorkerMessage
-	(*WorkerRegister)(nil),         // 27: leoflow.agent.v1.WorkerRegister
-	(*AssignmentAck)(nil),          // 28: leoflow.agent.v1.AssignmentAck
-	(*SlotFree)(nil),               // 29: leoflow.agent.v1.SlotFree
-	(*HeartbeatResponse)(nil),      // 30: leoflow.agent.v1.HeartbeatResponse
-	nil,                            // 31: leoflow.agent.v1.GetVariablesResponse.VariablesEntry
-	nil,                            // 32: leoflow.agent.v1.GetConnectionsResponse.ConnectionUrisEntry
-	nil,                            // 33: leoflow.agent.v1.RegisterRequest.EnvironmentEntry
-	nil,                            // 34: leoflow.agent.v1.TaskSpec.EnvironmentEntry
-	nil,                            // 35: leoflow.agent.v1.TaskSpec.XcomInputMappingEntry
-	nil,                            // 36: leoflow.agent.v1.HeartbeatRequest.CustomMetricsEntry
-	(*timestamppb.Timestamp)(nil),  // 37: google.protobuf.Timestamp
-	(*structpb.Struct)(nil),        // 38: google.protobuf.Struct
+	(*BranchSpec)(nil),             // 12: leoflow.agent.v1.BranchSpec
+	(*BranchDecision)(nil),         // 13: leoflow.agent.v1.BranchDecision
+	(*XComUpstreams)(nil),          // 14: leoflow.agent.v1.XComUpstreams
+	(*FetchXComRequest)(nil),       // 15: leoflow.agent.v1.FetchXComRequest
+	(*FetchXComResponse)(nil),      // 16: leoflow.agent.v1.FetchXComResponse
+	(*FetchXComBatchRequest)(nil),  // 17: leoflow.agent.v1.FetchXComBatchRequest
+	(*FetchXComBatchItem)(nil),     // 18: leoflow.agent.v1.FetchXComBatchItem
+	(*FetchXComBatchResponse)(nil), // 19: leoflow.agent.v1.FetchXComBatchResponse
+	(*PushXComRequest)(nil),        // 20: leoflow.agent.v1.PushXComRequest
+	(*PushXComResponse)(nil),       // 21: leoflow.agent.v1.PushXComResponse
+	(*LogLine)(nil),                // 22: leoflow.agent.v1.LogLine
+	(*LogAck)(nil),                 // 23: leoflow.agent.v1.LogAck
+	(*ReportStateRequest)(nil),     // 24: leoflow.agent.v1.ReportStateRequest
+	(*ReportStateResponse)(nil),    // 25: leoflow.agent.v1.ReportStateResponse
+	(*HeartbeatRequest)(nil),       // 26: leoflow.agent.v1.HeartbeatRequest
+	(*WorkAssignment)(nil),         // 27: leoflow.agent.v1.WorkAssignment
+	(*WorkerMessage)(nil),          // 28: leoflow.agent.v1.WorkerMessage
+	(*WorkerRegister)(nil),         // 29: leoflow.agent.v1.WorkerRegister
+	(*AssignmentAck)(nil),          // 30: leoflow.agent.v1.AssignmentAck
+	(*SlotFree)(nil),               // 31: leoflow.agent.v1.SlotFree
+	(*HeartbeatResponse)(nil),      // 32: leoflow.agent.v1.HeartbeatResponse
+	nil,                            // 33: leoflow.agent.v1.GetVariablesResponse.VariablesEntry
+	nil,                            // 34: leoflow.agent.v1.GetConnectionsResponse.ConnectionUrisEntry
+	nil,                            // 35: leoflow.agent.v1.RegisterRequest.EnvironmentEntry
+	nil,                            // 36: leoflow.agent.v1.TaskSpec.EnvironmentEntry
+	nil,                            // 37: leoflow.agent.v1.TaskSpec.XcomInputMappingEntry
+	nil,                            // 38: leoflow.agent.v1.HeartbeatRequest.CustomMetricsEntry
+	(*timestamppb.Timestamp)(nil),  // 39: google.protobuf.Timestamp
+	(*structpb.Struct)(nil),        // 40: google.protobuf.Struct
 }
 var file_agent_proto_depIdxs = []int32{
-	31, // 0: leoflow.agent.v1.GetVariablesResponse.variables:type_name -> leoflow.agent.v1.GetVariablesResponse.VariablesEntry
-	32, // 1: leoflow.agent.v1.GetConnectionsResponse.connection_uris:type_name -> leoflow.agent.v1.GetConnectionsResponse.ConnectionUrisEntry
-	33, // 2: leoflow.agent.v1.RegisterRequest.environment:type_name -> leoflow.agent.v1.RegisterRequest.EnvironmentEntry
-	37, // 3: leoflow.agent.v1.RegisterResponse.server_time:type_name -> google.protobuf.Timestamp
-	34, // 4: leoflow.agent.v1.TaskSpec.environment:type_name -> leoflow.agent.v1.TaskSpec.EnvironmentEntry
-	35, // 5: leoflow.agent.v1.TaskSpec.xcom_input_mapping:type_name -> leoflow.agent.v1.TaskSpec.XcomInputMappingEntry
-	38, // 6: leoflow.agent.v1.TaskSpec.extra:type_name -> google.protobuf.Struct
-	37, // 7: leoflow.agent.v1.FetchXComResponse.created_at:type_name -> google.protobuf.Timestamp
-	13, // 8: leoflow.agent.v1.FetchXComBatchRequest.items:type_name -> leoflow.agent.v1.FetchXComRequest
-	37, // 9: leoflow.agent.v1.FetchXComBatchItem.created_at:type_name -> google.protobuf.Timestamp
-	16, // 10: leoflow.agent.v1.FetchXComBatchResponse.items:type_name -> leoflow.agent.v1.FetchXComBatchItem
-	37, // 11: leoflow.agent.v1.LogLine.time:type_name -> google.protobuf.Timestamp
-	0,  // 12: leoflow.agent.v1.LogLine.level:type_name -> leoflow.agent.v1.LogLevel
-	1,  // 13: leoflow.agent.v1.ReportStateRequest.state:type_name -> leoflow.agent.v1.TaskState
-	37, // 14: leoflow.agent.v1.ReportStateRequest.occurred_at:type_name -> google.protobuf.Timestamp
-	37, // 15: leoflow.agent.v1.ReportStateRequest.reschedule_at:type_name -> google.protobuf.Timestamp
-	37, // 16: leoflow.agent.v1.HeartbeatRequest.sent_at:type_name -> google.protobuf.Timestamp
-	36, // 17: leoflow.agent.v1.HeartbeatRequest.custom_metrics:type_name -> leoflow.agent.v1.HeartbeatRequest.CustomMetricsEntry
-	27, // 18: leoflow.agent.v1.WorkerMessage.register:type_name -> leoflow.agent.v1.WorkerRegister
-	28, // 19: leoflow.agent.v1.WorkerMessage.ack:type_name -> leoflow.agent.v1.AssignmentAck
-	29, // 20: leoflow.agent.v1.WorkerMessage.slot_free:type_name -> leoflow.agent.v1.SlotFree
-	37, // 21: leoflow.agent.v1.HeartbeatResponse.server_time:type_name -> google.protobuf.Timestamp
-	12, // 22: leoflow.agent.v1.TaskSpec.XcomInputMappingEntry.value:type_name -> leoflow.agent.v1.XComUpstreams
-	6,  // 23: leoflow.agent.v1.AgentService.ExchangeToken:input_type -> leoflow.agent.v1.ExchangeTokenRequest
-	8,  // 24: leoflow.agent.v1.AgentService.Register:input_type -> leoflow.agent.v1.RegisterRequest
-	10, // 25: leoflow.agent.v1.AgentService.GetTaskSpec:input_type -> leoflow.agent.v1.GetTaskSpecRequest
-	13, // 26: leoflow.agent.v1.AgentService.FetchXCom:input_type -> leoflow.agent.v1.FetchXComRequest
-	15, // 27: leoflow.agent.v1.AgentService.FetchXComBatch:input_type -> leoflow.agent.v1.FetchXComBatchRequest
-	18, // 28: leoflow.agent.v1.AgentService.PushXCom:input_type -> leoflow.agent.v1.PushXComRequest
-	20, // 29: leoflow.agent.v1.AgentService.StreamLogs:input_type -> leoflow.agent.v1.LogLine
-	22, // 30: leoflow.agent.v1.AgentService.ReportState:input_type -> leoflow.agent.v1.ReportStateRequest
-	24, // 31: leoflow.agent.v1.AgentService.Heartbeat:input_type -> leoflow.agent.v1.HeartbeatRequest
-	2,  // 32: leoflow.agent.v1.AgentService.GetVariables:input_type -> leoflow.agent.v1.GetVariablesRequest
-	4,  // 33: leoflow.agent.v1.AgentService.GetConnections:input_type -> leoflow.agent.v1.GetConnectionsRequest
-	26, // 34: leoflow.agent.v1.AgentService.AwaitAssignment:input_type -> leoflow.agent.v1.WorkerMessage
-	7,  // 35: leoflow.agent.v1.AgentService.ExchangeToken:output_type -> leoflow.agent.v1.ExchangeTokenResponse
-	9,  // 36: leoflow.agent.v1.AgentService.Register:output_type -> leoflow.agent.v1.RegisterResponse
-	11, // 37: leoflow.agent.v1.AgentService.GetTaskSpec:output_type -> leoflow.agent.v1.TaskSpec
-	14, // 38: leoflow.agent.v1.AgentService.FetchXCom:output_type -> leoflow.agent.v1.FetchXComResponse
-	17, // 39: leoflow.agent.v1.AgentService.FetchXComBatch:output_type -> leoflow.agent.v1.FetchXComBatchResponse
-	19, // 40: leoflow.agent.v1.AgentService.PushXCom:output_type -> leoflow.agent.v1.PushXComResponse
-	21, // 41: leoflow.agent.v1.AgentService.StreamLogs:output_type -> leoflow.agent.v1.LogAck
-	23, // 42: leoflow.agent.v1.AgentService.ReportState:output_type -> leoflow.agent.v1.ReportStateResponse
-	30, // 43: leoflow.agent.v1.AgentService.Heartbeat:output_type -> leoflow.agent.v1.HeartbeatResponse
-	3,  // 44: leoflow.agent.v1.AgentService.GetVariables:output_type -> leoflow.agent.v1.GetVariablesResponse
-	5,  // 45: leoflow.agent.v1.AgentService.GetConnections:output_type -> leoflow.agent.v1.GetConnectionsResponse
-	25, // 46: leoflow.agent.v1.AgentService.AwaitAssignment:output_type -> leoflow.agent.v1.WorkAssignment
-	35, // [35:47] is the sub-list for method output_type
-	23, // [23:35] is the sub-list for method input_type
-	23, // [23:23] is the sub-list for extension type_name
-	23, // [23:23] is the sub-list for extension extendee
-	0,  // [0:23] is the sub-list for field type_name
+	33, // 0: leoflow.agent.v1.GetVariablesResponse.variables:type_name -> leoflow.agent.v1.GetVariablesResponse.VariablesEntry
+	34, // 1: leoflow.agent.v1.GetConnectionsResponse.connection_uris:type_name -> leoflow.agent.v1.GetConnectionsResponse.ConnectionUrisEntry
+	35, // 2: leoflow.agent.v1.RegisterRequest.environment:type_name -> leoflow.agent.v1.RegisterRequest.EnvironmentEntry
+	39, // 3: leoflow.agent.v1.RegisterResponse.server_time:type_name -> google.protobuf.Timestamp
+	36, // 4: leoflow.agent.v1.TaskSpec.environment:type_name -> leoflow.agent.v1.TaskSpec.EnvironmentEntry
+	37, // 5: leoflow.agent.v1.TaskSpec.xcom_input_mapping:type_name -> leoflow.agent.v1.TaskSpec.XcomInputMappingEntry
+	40, // 6: leoflow.agent.v1.TaskSpec.extra:type_name -> google.protobuf.Struct
+	12, // 7: leoflow.agent.v1.TaskSpec.branch:type_name -> leoflow.agent.v1.BranchSpec
+	39, // 8: leoflow.agent.v1.FetchXComResponse.created_at:type_name -> google.protobuf.Timestamp
+	15, // 9: leoflow.agent.v1.FetchXComBatchRequest.items:type_name -> leoflow.agent.v1.FetchXComRequest
+	39, // 10: leoflow.agent.v1.FetchXComBatchItem.created_at:type_name -> google.protobuf.Timestamp
+	18, // 11: leoflow.agent.v1.FetchXComBatchResponse.items:type_name -> leoflow.agent.v1.FetchXComBatchItem
+	39, // 12: leoflow.agent.v1.LogLine.time:type_name -> google.protobuf.Timestamp
+	0,  // 13: leoflow.agent.v1.LogLine.level:type_name -> leoflow.agent.v1.LogLevel
+	1,  // 14: leoflow.agent.v1.ReportStateRequest.state:type_name -> leoflow.agent.v1.TaskState
+	39, // 15: leoflow.agent.v1.ReportStateRequest.occurred_at:type_name -> google.protobuf.Timestamp
+	39, // 16: leoflow.agent.v1.ReportStateRequest.reschedule_at:type_name -> google.protobuf.Timestamp
+	13, // 17: leoflow.agent.v1.ReportStateRequest.branch:type_name -> leoflow.agent.v1.BranchDecision
+	39, // 18: leoflow.agent.v1.HeartbeatRequest.sent_at:type_name -> google.protobuf.Timestamp
+	38, // 19: leoflow.agent.v1.HeartbeatRequest.custom_metrics:type_name -> leoflow.agent.v1.HeartbeatRequest.CustomMetricsEntry
+	29, // 20: leoflow.agent.v1.WorkerMessage.register:type_name -> leoflow.agent.v1.WorkerRegister
+	30, // 21: leoflow.agent.v1.WorkerMessage.ack:type_name -> leoflow.agent.v1.AssignmentAck
+	31, // 22: leoflow.agent.v1.WorkerMessage.slot_free:type_name -> leoflow.agent.v1.SlotFree
+	39, // 23: leoflow.agent.v1.HeartbeatResponse.server_time:type_name -> google.protobuf.Timestamp
+	14, // 24: leoflow.agent.v1.TaskSpec.XcomInputMappingEntry.value:type_name -> leoflow.agent.v1.XComUpstreams
+	6,  // 25: leoflow.agent.v1.AgentService.ExchangeToken:input_type -> leoflow.agent.v1.ExchangeTokenRequest
+	8,  // 26: leoflow.agent.v1.AgentService.Register:input_type -> leoflow.agent.v1.RegisterRequest
+	10, // 27: leoflow.agent.v1.AgentService.GetTaskSpec:input_type -> leoflow.agent.v1.GetTaskSpecRequest
+	15, // 28: leoflow.agent.v1.AgentService.FetchXCom:input_type -> leoflow.agent.v1.FetchXComRequest
+	17, // 29: leoflow.agent.v1.AgentService.FetchXComBatch:input_type -> leoflow.agent.v1.FetchXComBatchRequest
+	20, // 30: leoflow.agent.v1.AgentService.PushXCom:input_type -> leoflow.agent.v1.PushXComRequest
+	22, // 31: leoflow.agent.v1.AgentService.StreamLogs:input_type -> leoflow.agent.v1.LogLine
+	24, // 32: leoflow.agent.v1.AgentService.ReportState:input_type -> leoflow.agent.v1.ReportStateRequest
+	26, // 33: leoflow.agent.v1.AgentService.Heartbeat:input_type -> leoflow.agent.v1.HeartbeatRequest
+	2,  // 34: leoflow.agent.v1.AgentService.GetVariables:input_type -> leoflow.agent.v1.GetVariablesRequest
+	4,  // 35: leoflow.agent.v1.AgentService.GetConnections:input_type -> leoflow.agent.v1.GetConnectionsRequest
+	28, // 36: leoflow.agent.v1.AgentService.AwaitAssignment:input_type -> leoflow.agent.v1.WorkerMessage
+	7,  // 37: leoflow.agent.v1.AgentService.ExchangeToken:output_type -> leoflow.agent.v1.ExchangeTokenResponse
+	9,  // 38: leoflow.agent.v1.AgentService.Register:output_type -> leoflow.agent.v1.RegisterResponse
+	11, // 39: leoflow.agent.v1.AgentService.GetTaskSpec:output_type -> leoflow.agent.v1.TaskSpec
+	16, // 40: leoflow.agent.v1.AgentService.FetchXCom:output_type -> leoflow.agent.v1.FetchXComResponse
+	19, // 41: leoflow.agent.v1.AgentService.FetchXComBatch:output_type -> leoflow.agent.v1.FetchXComBatchResponse
+	21, // 42: leoflow.agent.v1.AgentService.PushXCom:output_type -> leoflow.agent.v1.PushXComResponse
+	23, // 43: leoflow.agent.v1.AgentService.StreamLogs:output_type -> leoflow.agent.v1.LogAck
+	25, // 44: leoflow.agent.v1.AgentService.ReportState:output_type -> leoflow.agent.v1.ReportStateResponse
+	32, // 45: leoflow.agent.v1.AgentService.Heartbeat:output_type -> leoflow.agent.v1.HeartbeatResponse
+	3,  // 46: leoflow.agent.v1.AgentService.GetVariables:output_type -> leoflow.agent.v1.GetVariablesResponse
+	5,  // 47: leoflow.agent.v1.AgentService.GetConnections:output_type -> leoflow.agent.v1.GetConnectionsResponse
+	27, // 48: leoflow.agent.v1.AgentService.AwaitAssignment:output_type -> leoflow.agent.v1.WorkAssignment
+	37, // [37:49] is the sub-list for method output_type
+	25, // [25:37] is the sub-list for method input_type
+	25, // [25:25] is the sub-list for extension type_name
+	25, // [25:25] is the sub-list for extension extendee
+	0,  // [0:25] is the sub-list for field type_name
 }
 
 func init() { file_agent_proto_init() }
@@ -2407,7 +2565,7 @@ func file_agent_proto_init() {
 	if File_agent_proto != nil {
 		return
 	}
-	file_agent_proto_msgTypes[24].OneofWrappers = []any{
+	file_agent_proto_msgTypes[26].OneofWrappers = []any{
 		(*WorkerMessage_Register)(nil),
 		(*WorkerMessage_Ack)(nil),
 		(*WorkerMessage_SlotFree)(nil),
@@ -2418,7 +2576,7 @@ func file_agent_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: unsafe.Slice(unsafe.StringData(file_agent_proto_rawDesc), len(file_agent_proto_rawDesc)),
 			NumEnums:      2,
-			NumMessages:   35,
+			NumMessages:   37,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

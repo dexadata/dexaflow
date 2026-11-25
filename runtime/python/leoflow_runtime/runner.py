@@ -11,6 +11,7 @@ import shlex
 import sys
 from datetime import datetime
 
+from leoflow_runtime import branch
 from leoflow_runtime.xcom import input_names as xcom_input_names
 from leoflow_runtime.xcom import read_raw as read_xcom_raw
 
@@ -206,6 +207,9 @@ def run(entrypoint: str) -> None:
         _exec_task_bash(fn_name, result)
         return
     _write_return(result)
+    # A branch or short-circuit task writes its decision for the agent (ADR 0064
+    # D1); an invalid result raises here and fails the task, as on Airflow.
+    branch.record(result, context["ti"].pushed, _lifecycle)
     # A @task can push custom-keyed XComs via context["ti"].xcom_push — ship them the
     # same way operators do (multi-key XCom parity for native tasks, ADR 0040).
     _write_xcom_pushes(context["ti"].pushed)

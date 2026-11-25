@@ -77,6 +77,9 @@ func planRun(run RunState) ([]PlannedTransition, []PoolWait) {
 	var poolPromoted map[string]int
 	var waits []PoolWait
 	var upstreamStates []domain.TaskState
+	// The branch filter (ADR 0064 D2) runs before the trigger rules: a none
+	// task a branch parent did not follow is skipped whatever its rule.
+	skips := branchSkips(run, g, effective)
 	for i, t := range run.Tasks {
 		s := g.slot[i]
 		if decided[s] {
@@ -85,7 +88,7 @@ func planRun(run RunState) ([]PlannedTransition, []PoolWait) {
 		switch effective[s] {
 		case domain.TaskStateNone:
 			upstreamStates = g.upstreamStates(run, s, effective, upstreamStates[:0])
-			if to, ok := decideStart(t, upstreamStates); ok {
+			if to, ok := decideNone(t, skips.has(s), upstreamStates); ok {
 				out = append(out, PlannedTransition{TaskID: t.TaskID, To: to})
 			}
 		case domain.TaskStateScheduled:
@@ -439,6 +442,15 @@ func readyToReschedule(run RunState, taskID string) bool {
 		return true
 	}
 	return !run.Now.Before(*at)
+}
+
+// decideNone is decideStart behind the branch filter: a task a branch parent
+// did not follow is skipped whatever its trigger rule.
+func decideNone(t domain.TaskSpec, branchSkipped bool, upstreamStates []domain.TaskState) (domain.TaskState, bool) {
+	if branchSkipped {
+		return domain.TaskStateSkipped, true
+	}
+	return decideStart(t, upstreamStates)
 }
 
 func decideStart(t domain.TaskSpec, upstreamStates []domain.TaskState) (domain.TaskState, bool) {

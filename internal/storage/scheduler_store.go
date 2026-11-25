@@ -3,8 +3,10 @@ package storage
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"log/slog"
 	"slices"
 	"sync/atomic"
 	"time"
@@ -74,6 +76,7 @@ type taskMaps struct {
 	infraFailed      map[string]bool
 	infraProvisional map[string]bool
 	infraAttempts    map[string]int
+	branchDecision   map[string]*domain.BranchDecision
 }
 
 // planTaskInstance is the part of a task instance row the scheduler tick reads
@@ -138,8 +141,30 @@ func taskInstanceMaps(tis []planTaskInstance) taskMaps {
 		if ti.InfraAttempts > 0 {
 			m.infraAttempts[ti.TaskID] = int(ti.InfraAttempts)
 		}
+		// Only a branch task's success carries a decision (ADR 0064), so the
+		// map stays nil for nearly every run.
+		if len(ti.BranchDecision) > 0 {
+			if d, ok := decodeBranchDecision(ti.BranchDecision); ok {
+				if m.branchDecision == nil {
+					m.branchDecision = map[string]*domain.BranchDecision{}
+				}
+				m.branchDecision[ti.TaskID] = d
+			}
+		}
 	}
 	return m
+}
+
+// decodeBranchDecision reads a stored branch decision. A value that does not
+// decode is logged and read as no decision, which filters nothing: the same
+// reading as a branch task marked success by hand.
+func decodeBranchDecision(raw []byte) (*domain.BranchDecision, bool) {
+	var d domain.BranchDecision
+	if err := json.Unmarshal(raw, &d); err != nil {
+		slog.Error("ignoring a branch decision that does not decode", "error", err)
+		return nil, false
+	}
+	return &d, true
 }
 
 // ActiveRuns loads every active dag run and projects it into the scheduler's
@@ -245,6 +270,7 @@ func projectRunState(row queries.ListActiveDagRunsRow, cached domain.DAGSpec, gr
 		InfraFailed:          ts.infraFailed,
 		InfraProvisional:     ts.infraProvisional,
 		InfraAttempts:        ts.infraAttempts,
+		BranchDecision:       ts.branchDecision,
 		Now:                  now,
 		Alerts:               spec.Alerts,
 		MaxActiveTasks:       spec.MaxActiveTasks,

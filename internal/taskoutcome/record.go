@@ -26,6 +26,12 @@ const Version = 1
 // the cap catches a programming error (a giant field) without false positives.
 const maxRecordBytes = 1024
 
+// maxBranchRecordBytes bounds a record that carries a branch decision (ADR
+// 0064 D6), whose task ids make it far larger than any other record. It stays
+// under the 4 KiB the kubelet keeps of a termination message, with room for
+// the kubelet's own truncation marker.
+const maxBranchRecordBytes = 3584
+
 // Outcome is a task's true result, independent of report delivery.
 type Outcome string
 
@@ -107,6 +113,32 @@ type Record struct {
 	// reader honors it only with the bounds the reconciler checks (an
 	// agent-authored reason and no exit code).
 	Infra bool `json:"infra,omitempty"`
+	// Branch is a branch task's decision on a success record (ADR 0064 D6),
+	// so a success the reconciler recovers keeps the decision that came with
+	// it. Optional and additive like Infra: v stays 1, every other record
+	// keeps today's bytes, and a reader that does not know it settles a plain
+	// success. Like every field here the task can write it too; the reader
+	// only applies it to a pod labeled as a branch task, and the decision
+	// can only name tasks of the run's own DAG.
+	Branch *BranchDecision `json:"branch,omitempty"`
+}
+
+// BranchDecision mirrors domain.BranchDecision in the record: the task ids a
+// branch task follows, or whether a short-circuit's condition was falsy.
+// FollowTaskIDs is always written, so a decision that follows nothing is not
+// read back as no decision.
+type BranchDecision struct {
+	FollowTaskIDs     []string `json:"follow_task_ids"`
+	ShortCircuitFalsy bool     `json:"short_circuit_falsy,omitempty"`
+}
+
+// WithBranch returns the record carrying a branch decision.
+func (r Record) WithBranch(d BranchDecision) Record {
+	if d.FollowTaskIDs == nil {
+		d.FollowTaskIDs = []string{}
+	}
+	r.Branch = &d
+	return r
 }
 
 // AuthorAgent is the Author value the agent stamps on a reason it classified.
@@ -210,7 +242,11 @@ func (r Record) Encode() (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if len(b) > maxRecordBytes {
+	limit := maxRecordBytes
+	if r.Branch != nil {
+		limit = maxBranchRecordBytes
+	}
+	if len(b) > limit {
 		return "", errors.New("taskoutcome: encoded record exceeds size cap")
 	}
 	return string(b), nil

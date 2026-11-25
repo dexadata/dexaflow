@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/dexadata/dexaflow/internal/auth"
+	"github.com/dexadata/dexaflow/internal/domain"
 )
 
 const (
@@ -29,17 +30,24 @@ const (
 // (the one its pod's image was built for) until its entry is dropped: when it
 // reports a terminal state or a reschedule, or at most attemptSpecCacheTTL
 // (15 minutes) after it was cached.
-// It deliberately carries nothing else: no environment, call or operator args,
+// It deliberately carries nothing else (but the branch fields): no environment, call or operator args,
 // params, or declared secret names, so the secret RPCs and GetTaskSpec always
 // read the store.
 type attemptSpec struct {
 	XComInputMapping map[string][]string
 	DependsOn        []string
 	XComSchema       map[string]any
+	// Branch and DagTaskIDs check a success report's branch decision (ADR
+	// 0064 D1). Both are empty for every task but a branch one.
+	Branch     *domain.BranchSpec
+	DagTaskIDs []string
 }
 
 func attemptSpecOf(spec TaskSpec) attemptSpec {
-	return attemptSpec{XComInputMapping: spec.XComInputMapping, DependsOn: spec.DependsOn, XComSchema: spec.XComSchema}
+	return attemptSpec{
+		XComInputMapping: spec.XComInputMapping, DependsOn: spec.DependsOn, XComSchema: spec.XComSchema,
+		Branch: spec.Branch, DagTaskIDs: spec.DagTaskIDs,
+	}
 }
 
 // attemptKey identifies one attempt. Every field of the authenticated identity

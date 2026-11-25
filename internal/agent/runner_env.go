@@ -103,7 +103,12 @@ func (r *Runner) buildEnv(ctx context.Context, spec *agentv1.TaskSpec) ([]string
 	if err != nil {
 		return nil, err
 	}
-	return append(env, pathEnv...), nil
+	env = append(env, pathEnv...)
+	brEnv, err := branchEnv(spec, r.BranchPath)
+	if err != nil {
+		return nil, err
+	}
+	return append(env, brEnv...), nil
 }
 
 // outputPathEnv renders the env vars that point the runtime at the agent-owned

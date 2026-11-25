@@ -232,6 +232,12 @@ func BuildPod(req Request) *corev1.Pod {
 	if req.Execution.ServiceAccount != "" {
 		pod.Spec.ServiceAccountName = req.Execution.ServiceAccount
 	}
+	if req.Branch {
+		// The reconciler settles a success record of a branch task only with
+		// its decision (ADR 0064 D6). The key is under the reserved prefix, so
+		// the DAG's own labels can neither set nor clear it.
+		pod.Labels[podLabelBranch] = "true"
+	}
 	dropped := mergeMetadata(pod.Labels, req.Execution.Labels)
 	dropped = append(dropped, mergeMetadata(pod.Annotations, req.Execution.Annotations)...)
 	logDroppedMetadata(dropped, "tenant", req.TenantID, "dag", req.DagID, "run", req.RunID,

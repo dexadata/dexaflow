@@ -373,6 +373,7 @@ type TaskInstance struct {
 	InfraConfirmedAt         pgtype.Timestamptz `json:"infra_confirmed_at"`
 	PoolSlots                int32              `json:"pool_slots"`
 	DispatchUnavailableSince pgtype.Timestamptz `json:"dispatch_unavailable_since"`
+	BranchDecision           []byte             `json:"branch_decision"`
 }
 
 type TaskInstanceHistory struct {
@@ -393,6 +394,7 @@ type TaskInstanceHistory struct {
 	Note            *string            `json:"note"`
 	ArchivedAt      pgtype.Timestamptz `json:"archived_at"`
 	AttemptEpoch    int32              `json:"attempt_epoch"`
+	BranchDecision  []byte             `json:"branch_decision"`
 }
 
 type Tenant struct {

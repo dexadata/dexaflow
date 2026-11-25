@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"slices"
 	"time"
 
 	"github.com/dexadata/dexaflow/internal/agentrpc"
@@ -169,7 +170,38 @@ func (s *ExecutionStore) TaskSpec(ctx context.Context, id auth.AgentIdentity) (a
 		// can scope delivery. Data only here — no secret is filtered by it yet.
 		DeclaredVariables:   declaredVariables(task, spec),
 		DeclaredConnections: declaredConnections(task, spec),
+		Branch:              task.Branch,
+		DagTaskIDs:          branchTaskIDs(task, spec),
+		DownstreamTaskIDs:   branchChildren(task, spec),
 	}, nil
+}
+
+// branchTaskIDs is every task id of the DAG, for a branch task only (ADR 0064
+// D1): the runtime refuses a decision naming any other id, and so does the
+// server. Every other task gets none, so its spec stays as small as before.
+func branchTaskIDs(task domain.TaskSpec, spec domain.DAGSpec) []string {
+	if task.Branch == nil {
+		return nil
+	}
+	ids := make([]string, 0, len(spec.Tasks))
+	for _, t := range spec.Tasks {
+		ids = append(ids, t.TaskID)
+	}
+	return ids
+}
+
+// branchChildren is a branch task's direct children, in the DAG's task order.
+func branchChildren(task domain.TaskSpec, spec domain.DAGSpec) []string {
+	if task.Branch == nil {
+		return nil
+	}
+	var out []string
+	for _, t := range spec.Tasks {
+		if slices.Contains(t.DependsOn, task.TaskID) {
+			out = append(out, t.TaskID)
+		}
+	}
+	return out
 }
 
 // declaredVariables and declaredConnections resolve the effective declared
@@ -203,19 +235,26 @@ func maxTries(task domain.TaskSpec) int {
 // ReportState records a state transition reported by the agent, persisting the
 // exit code and error message and stamping started/ended/duration timestamps.
 func (s *ExecutionStore) ReportState(ctx context.Context, id auth.AgentIdentity, state domain.TaskState, exitCode int, errMsg string) error {
+	return s.reportState(ctx, id, state, exitCode, errMsg, nil)
+}
+
+// reportState is ReportState carrying a success's branch decision, nil for
+// every other report.
+func (s *ExecutionStore) reportState(ctx context.Context, id auth.AgentIdentity, state domain.TaskState, exitCode int, errMsg string, branch []byte) error {
 	tid, rid, err := agentAttemptRef(id)
 	if err != nil {
 		return err
 	}
 	code := toInt32(exitCode)
 	params := queries.ReportTaskResultParams{
-		TenantID:     tid,
-		DagRunID:     rid,
-		TaskID:       id.TaskID,
-		Column3:      queries.TaskState(state), // sqlc names the $3::task_state cast param Column3.
-		ExitCode:     &code,
-		TryNumber:    toInt32(id.TryNumber),
-		AttemptEpoch: attemptEpochArg(id),
+		TenantID:       tid,
+		DagRunID:       rid,
+		TaskID:         id.TaskID,
+		Column3:        queries.TaskState(state), // sqlc names the $3::task_state cast param Column3.
+		ExitCode:       &code,
+		TryNumber:      toInt32(id.TryNumber),
+		AttemptEpoch:   attemptEpochArg(id),
+		BranchDecision: branch,
 	}
 	if errMsg != "" {
 		params.ErrorMessage = &errMsg
@@ -235,6 +274,18 @@ func (s *ExecutionStore) ReportState(ctx context.Context, id auth.AgentIdentity,
 		s.queueWait(row.TenantName, row.QueueWaitSeconds)
 	}
 	return nil
+}
+
+// ReportBranchSuccess records a branch task's success with its decision (ADR
+// 0064 D1), in the same attempt-guarded write as ReportState, so the decision
+// lands exactly when the success does. The caller has checked the decision
+// against the task's spec. It implements agentrpc.BranchReporter.
+func (s *ExecutionStore) ReportBranchSuccess(ctx context.Context, id auth.AgentIdentity, decision domain.BranchDecision) error {
+	raw, err := json.Marshal(decision)
+	if err != nil {
+		return fmt.Errorf("encoding branch decision: %w", err)
+	}
+	return s.reportState(ctx, id, domain.TaskStateSuccess, 0, "", raw)
 }
 
 // Reschedule parks an active task instance in up_for_reschedule with its next-poke
@@ -415,6 +466,31 @@ func (s *ExecutionStore) SucceedTaskIfActive(ctx context.Context, taskInstanceID
 		ID:           tid,
 		TryNumber:    toInt32(tryNumber),
 		AttemptEpoch: toInt32(attemptEpoch),
+	})
+	if err != nil {
+		return false, err
+	}
+	return n > 0, nil
+}
+
+// SucceedBranchTaskIfActive settles a branch task succeeded from its durable
+// outcome record together with the decision the record carries (ADR 0064 D6),
+// guarded like SucceedTaskIfActive. It implements
+// executor.BranchOutcomeReporter.
+func (s *ExecutionStore) SucceedBranchTaskIfActive(ctx context.Context, taskInstanceID string, tryNumber, attemptEpoch int, decision domain.BranchDecision) (bool, error) {
+	tid, err := parseUUID(taskInstanceID)
+	if err != nil {
+		return false, err
+	}
+	raw, err := json.Marshal(decision)
+	if err != nil {
+		return false, fmt.Errorf("encoding branch decision: %w", err)
+	}
+	n, err := s.q.SucceedBranchTaskInstanceIfActive(ctx, queries.SucceedBranchTaskInstanceIfActiveParams{
+		ID:             tid,
+		TryNumber:      toInt32(tryNumber),
+		AttemptEpoch:   toInt32(attemptEpoch),
+		BranchDecision: raw,
 	})
 	if err != nil {
 		return false, err
@@ -685,3 +761,12 @@ func taskSDKRunType(trigger queries.DagRunTrigger) string {
 	}
 	return string(trigger)
 }
+
+// The agent RPC records a branch task's success through ReportBranchSuccess
+// and refuses it when the store cannot (ADR 0064 D1), so the production store
+// must implement it.
+var _ agentrpc.BranchReporter = (*ExecutionStore)(nil)
+
+// The reconciler settles a branch task's recovered success only through a
+// BranchOutcomeReporter (ADR 0064 D6).
+var _ executor.BranchOutcomeReporter = (*ExecutionStore)(nil)

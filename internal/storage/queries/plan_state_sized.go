@@ -38,6 +38,7 @@ func (q *Queries) ListTaskInstancePlanStateByRunsSized(ctx context.Context, dagR
 		&i.LastFailureKind,
 		&i.InfraConfirmedAt,
 		&i.InfraAttempts,
+		&i.BranchDecision,
 	}
 	for rows.Next() {
 		// Scan writes every column, NULLs included (a NULL leaves a
