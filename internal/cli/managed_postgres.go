@@ -178,8 +178,12 @@ func startManagedPostgres(ctx context.Context, cmd *cobra.Command) (started bool
 		return false, fmt.Errorf("resolving home dir: %w", herr)
 	}
 	root := stateDirIn(h)
+	libc, glibc := detectLibc(), ""
+	if runtime.GOOS == "linux" && libc != "musl" {
+		glibc = setup.HostGlibcVersion(ctx)
+	}
 	binDir, eerr := setup.EnsurePostgres(ctx, setup.EnsureOpts{
-		Home: root, GOOS: runtime.GOOS, GOARCH: runtime.GOARCH, Libc: detectLibc(),
+		Home: root, GOOS: runtime.GOOS, GOARCH: runtime.GOARCH, Libc: libc, Glibc: glibc,
 		Stat: os.Stat,
 		Logf: func(format string, a ...any) { devPrintf(out, "  "+format+"\n", a...) },
 	})
@@ -190,10 +194,10 @@ func startManagedPostgres(ctx context.Context, cmd *cobra.Command) (started bool
 	if serr := checkSocketPathLen(dataDir); serr != nil {
 		return false, serr
 	}
-	// Pre-flight: the relocatable Postgres dynamically links system libraries it
-	// does not bundle (libxml2, Kerberos, OpenSSL 3, zstd, lz4; ICU on musl). On
-	// a minimal host (a bare ubuntu:24.04 container, Alpine) some are absent and
-	// the server dies with a cryptic loader error. Probe the `postgres` binary
+	// Pre-flight: below glibc 2.36 and on musl the relocatable Postgres links
+	// system libraries it does not bundle (libxml2, Kerberos, OpenSSL 3, zstd,
+	// lz4; ICU on musl). On a minimal host (a bare ubuntu:22.04 container,
+	// Alpine) some are absent and the server dies with a cryptic loader error. Probe the `postgres` binary
 	// (it has the widest dependency set, wider than initdb) and fail naming the
 	// missing libraries and the packages that carry them (#279).
 	pgBin := filepath.Join(binDir, "postgres")

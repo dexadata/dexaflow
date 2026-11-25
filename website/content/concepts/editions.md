@@ -119,12 +119,16 @@ pins the install the same way, and later runs follow it until another explicit
 choice ([ADR 0094](/project/adrs/0094-lite-auto-follows-the-pinned-datastore/)).
 
 The managed Postgres has builds for Linux (glibc and musl) and macOS; Ubuntu
-22.04 and 24.04 are tested on bare containers. It links libxml2, Kerberos,
-OpenSSL 3, zstd and lz4 from the host, and the musl build also links ICU 74.
-Desktop installs have them; on a bare container or a minimal server Lite stops
-before starting Postgres, names each missing library and, on Debian, Ubuntu and
-Alpine, prints the command that installs them. The glibc build does not use ICU,
-so the host's ICU release does not matter.
+22.04, 24.04 and 26.04 are tested on bare containers. On glibc 2.36 and later
+(Debian 12, Ubuntu 24.04 and 26.04, current Fedora) Lite downloads a
+self-contained build (about 38 MB) that carries its own libraries and needs
+nothing from the host. On older glibc (Ubuntu 22.04, RHEL 9) and on musl the
+build links libxml2, Kerberos, OpenSSL 3, zstd and lz4 from the host, and the
+musl build also links ICU 74. Desktop installs have them; on a bare container
+or a minimal server Lite stops before starting Postgres, names each missing
+library and, on Debian, Ubuntu and Alpine, prints the command that installs
+them. The linked glibc build does not use ICU, so the host's ICU release does
+not matter.
 
 Lite **owns its database**: it runs only on the Postgres it starts, and it does
 not read `DEXAFLOW_DATABASE_URL` (or `LEOFLOW_DATABASE_URL`). One exported in

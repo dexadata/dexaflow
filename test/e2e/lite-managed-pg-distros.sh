@@ -1,22 +1,27 @@
 #!/usr/bin/env bash
 # Cold-start gate for the managed Postgres on bare distribution images (#279).
 #
-# `dexaflow lite --postgres managed` downloads a relocatable PostgreSQL that
-# links a few system libraries it does not bundle (libxml2, Kerberos, OpenSSL 3,
-# zstd, lz4). A bare container lacks some of them: ubuntu:22.04 has no libxml2,
-# ubuntu:24.04 has neither libxml2 nor Kerberos. The glibc build carries no ICU
-# of its own, so nothing here depends on the distribution's ICU release; the
-# libicuuc an `ldd` shows is the host libxml2's.
+# `dexaflow lite --postgres managed` downloads a relocatable PostgreSQL. On
+# glibc 2.36 and later (Debian 12, Ubuntu 24.04, Ubuntu 26.04) that is a
+# self-contained build that carries its own libraries, so a bare image must
+# become ready with no package installed. Below glibc 2.36 (Ubuntu 22.04) it is
+# a build that links a few system libraries it does not bundle (libxml2,
+# Kerberos, OpenSSL 3, zstd, lz4), and a bare ubuntu:22.04 has no libxml2. The
+# glibc build carries no ICU of its own, so nothing there depends on the
+# distribution's ICU release; the libicuuc an `ldd` shows is the host
+# libxml2's. Ubuntu 26.04 ships only libxml2.so.16, so the linked build cannot
+# run there at all (#2540).
 #
 # For each image this boots Lite in a fresh container as a non-root user:
 #   1. on the bare image, Lite either becomes ready or stops naming the missing
-#      libraries and the exact install command; any other failure fails;
+#      libraries and the exact install command; any other failure fails, and
+#      so does anything but ready on glibc 2.36 or later;
 #   2. that printed command is run as root, unedited but for sudo;
 #   3. Lite then downloads nothing new, initdb's, starts and answers /readyz.
 #
-# Needs Docker and network (the ~11 MB PostgreSQL download and apt; set
+# Needs Docker and network (the 11 to 38 MB PostgreSQL download and apt; set
 # E2E_APT_MIRROR to use another Ubuntu archive mirror). The images
-# default to Ubuntu 22.04 and 24.04; pass others as arguments. Behind a TLS
+# default to Ubuntu 22.04, 24.04 and 26.04; pass others as arguments. Behind a TLS
 # proxy, set E2E_CA_BUNDLE to its CA file and HTTPS_PROXY to the proxy:
 #   bash test/e2e/lite-managed-pg-distros.sh [image ...]
 # The host builds static binaries once (CGO_ENABLED=0) unless DEXAFLOW_E2E_BIN
@@ -28,7 +33,8 @@ TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 
 if [ "$#" -eq 0 ]; then
-  set -- mirror.gcr.io/library/ubuntu:22.04 mirror.gcr.io/library/ubuntu:24.04
+  set -- mirror.gcr.io/library/ubuntu:22.04 mirror.gcr.io/library/ubuntu:24.04 \
+    mirror.gcr.io/library/ubuntu:26.04
 fi
 
 BIN="${DEXAFLOW_E2E_BIN:-}"
@@ -111,6 +117,13 @@ as_dx "env HTTPS_PROXY='${HTTPS_PROXY:-}' /home/dx/lite.sh /home/dx/first.log" |
 if [ "$rc" -eq 0 ]; then
   echo "  PASS ready on the bare image (no library was missing)"
   exit 0
+fi
+# From glibc 2.36 on Lite downloads the self-contained build, which needs no
+# package: anything but ready on the bare image is a failure there.
+glibc=$(getconf GNU_LIBC_VERSION | awk '{print $2}')
+if [ "$(printf '%s\n2.36\n' "$glibc" | sort -V | head -1)" = 2.36 ]; then
+  echo "  FAIL glibc $glibc gets the self-contained build, but the bare image did not become ready (rc=$rc)"
+  tail -40 /home/dx/first.log; exit 1
 fi
 if [ "$rc" -ne 1 ]; then
   echo "  FAIL the first boot hung"; tail -40 /home/dx/first.log; exit 1

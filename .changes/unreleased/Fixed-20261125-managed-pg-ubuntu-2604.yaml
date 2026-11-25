@@ -1,0 +1,4 @@
+kind: Fixed
+body: |-
+  `dexaflow lite --postgres managed` starts on Ubuntu 26.04 ([#2540](https://github.com/dexadata/dexaflow/issues/2540)). Ubuntu 26.04 ships only the `libxml2.so.16` soname, so the managed PostgreSQL, which linked `libxml2.so.2` from the host, stopped with "system libraries are missing" and no package could fix it. On glibc 2.36 and later (Debian 12, Ubuntu 24.04 and 26.04) Lite now downloads a self-contained PostgreSQL 16.16 build that carries its own libxml2, Kerberos, OpenSSL and ICU, so a bare host or container needs no package. Older glibc (Ubuntu 22.04, RHEL 9), musl and macOS keep the PostgreSQL 16.13 build. Both are PostgreSQL 16, so an existing data directory carries over when the build changes.
+time: 2026-11-25T22:00:00.000000+00:00
