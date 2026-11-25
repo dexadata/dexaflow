@@ -110,7 +110,7 @@ and more), and needs no Dexaflow code.
    # values.yaml
    taskSecret:
      name: gcp-sa-key                   # the Secret from step 1
-     mountPath: /etc/leoflow/secrets    # read-only mount in every task pod
+     mountPath: /etc/dexaflow/secrets   # read-only mount in every task pod
    ```
 
 3. **Reference the mounted file from the Connection** with `key_path`
@@ -122,7 +122,7 @@ and more), and needs no Dexaflow code.
    ```bash
    curl -X POST "$DEXAFLOW_SERVER/api/v2/connections" -H "Authorization: Bearer $TOKEN" \
      -H 'Content-Type: application/json' \
-     -d '{"connection_id":"warehouse","conn_type":"google_cloud_platform","extra":"{\"key_path\":\"/etc/leoflow/secrets/key.json\"}"}'
+     -d '{"connection_id":"warehouse","conn_type":"google_cloud_platform","extra":"{\"key_path\":\"/etc/dexaflow/secrets/key.json\"}"}'
    ```
 
    Then declare it so a DAG's tasks can consume it:

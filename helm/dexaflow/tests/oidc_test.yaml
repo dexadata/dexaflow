@@ -58,12 +58,12 @@ tests:
           path: spec.template.spec.containers[0].env
           content:
             name: DEXAFLOW_CONFIG
-            value: /etc/leoflow/oidc/config.yaml
+            value: /etc/dexaflow/oidc/config.yaml
       - notContains:
           path: spec.template.spec.containers[0].volumeMounts
           content:
             name: oidc-config
-            mountPath: /etc/leoflow/oidc
+            mountPath: /etc/dexaflow/oidc
             readOnly: true
 
   # Property 2. DEXAFLOW_CONFIG has to resolve to the file the volume actually
@@ -89,12 +89,12 @@ tests:
           path: spec.template.spec.containers[0].env
           content:
             name: DEXAFLOW_CONFIG
-            value: /etc/leoflow/oidc/config.yaml
+            value: /etc/dexaflow/oidc/config.yaml
       - contains:
           path: spec.template.spec.containers[0].volumeMounts
           content:
             name: oidc-config
-            mountPath: /etc/leoflow/oidc
+            mountPath: /etc/dexaflow/oidc
             readOnly: true
       - contains:
           path: spec.template.spec.volumes

@@ -146,7 +146,7 @@ func connURL(dsn string) string {
 
 // caMountPath is where the chart mounts database.caConfigMap, in the Job and
 // in the control plane.
-const caMountPath = "/etc/leoflow/db-ca/ca.crt"
+const caMountPath = "/etc/dexaflow/db-ca/ca.crt"
 
 // PreflightCA checks, before any dial, that the sslrootcert file the DSN names
 // is present. Without it pgx fails with `unable to read CA file`, which says

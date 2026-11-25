@@ -84,6 +84,10 @@ taskServiceAccount:
   create: false
   # -- Name of the task ServiceAccount. With `create: true` it becomes the default
   # task-pod SA; you can also reference it explicitly as `execution.service_account`.
+  # It keeps the name from before the rename on purpose: DAGs name it in
+  # `execution.service_account` and cloud IAM bindings (GKE Workload Identity,
+  # EKS IRSA) name it too, so renaming the default would cut task pods off from
+  # both on upgrade.
   name: leoflow-task
   # -- Annotations. GKE Workload Identity: `iam.gke.io/gcp-service-account: GSA@PROJECT.iam.gserviceaccount.com`. EKS IRSA: `eks.amazonaws.com/role-arn: ...`.
   annotations: {}
@@ -94,7 +98,7 @@ taskServiceAccount:
   imagePullSecrets: []
 
 serviceAccount:
-  # -- Create a dedicated ServiceAccount for the leoflow-server. Set `false` only if you bring your own via `name`.
+  # -- Create a dedicated ServiceAccount for the Dexaflow server. Set `false` only if you bring your own via `name`.
   create: true
   # -- Override the ServiceAccount name. Defaults to the chart fullname when empty.
   name: ""
@@ -205,7 +209,7 @@ executor:
   # server deletes the pods one by one.
   collectSettledRunPods: false
 
-# -- Ports the leoflow-server listens on. http: API + UI, metrics: Prometheus
+# -- Ports the Dexaflow server listens on. http: API + UI, metrics: Prometheus
 # /metrics, grpc: agent ↔ control plane channel (task pods dial back here).
 ports:
   http: 8080
@@ -236,7 +240,7 @@ ui:
 
 config:
   # -- Directory inside the pod where task logs are written. Mounted from `logs.persistence` (a PVC by default) so logs survive pod restarts. Set `logs.persistence.enabled: false` to fall back to an ephemeral emptyDir (dev only).
-  logsDir: /var/log/leoflow
+  logsDir: /var/log/dexaflow
   scheduler:
     # -- Run the scheduler loop. Disable only for read-only API-only replicas (rare).
     enabled: true
@@ -334,11 +338,11 @@ logs:
 
 # Database (Postgres). Provide an external URL, or a pre-existing secret.
 database:
-  # -- External Postgres DSN. Required for Cluster (the embedded datastore is Lite-only); the chart `fail`s the install if neither this nor `existingSecret` is set. Example: `postgres://user:pass@host:5432/leoflow?sslmode=disable`.
+  # -- External Postgres DSN. Required for Cluster (the embedded datastore is Lite-only); the chart `fail`s the install if neither this nor `existingSecret` is set. Example: `postgres://user:pass@host:5432/dexaflow?sslmode=disable`.
   url: ""
   # -- Name of a Secret with key `databaseUrl` (takes precedence over `url`).
   existingSecret: ""
-  # -- Name of a ConfigMap with key `ca.crt` holding the managed-Postgres CA bundle (#315). When set, the chart mounts it at `/etc/leoflow/db-ca/ca.crt` — in the control plane **and in the pre-install migration Job** (#1052), which reads the same DSN — so the operator can pin `sslmode=verify-full&sslrootcert=/etc/leoflow/db-ca/ca.crt` in the DSN. Empty (default) means TLS still works via `sslmode=require`, but the server cert is NOT verified — the connection is encrypted but MITM-vulnerable, the standard managed-DB posture before this knob.
+  # -- Name of a ConfigMap with key `ca.crt` holding the managed-Postgres CA bundle (#315). When set, the chart mounts it at `/etc/dexaflow/db-ca/ca.crt`, in the control plane **and in the pre-install migration Job** (#1052), which reads the same DSN, so the operator can pin `sslmode=verify-full&sslrootcert=/etc/dexaflow/db-ca/ca.crt` in the DSN. It is also mounted at `/etc/leoflow/db-ca/ca.crt`, the path from before the rename, so a DSN that pins it there keeps verifying. Empty (default) means TLS still works via `sslmode=require`, but the server cert is NOT verified: the connection is encrypted but MITM-vulnerable, the standard managed-DB posture before this knob.
   caConfigMap: ""
   # -- Max concurrent open DB connections per control-plane pod (Postgres-side load gate): the ceiling the pool grows to under load. Increase for high-throughput Cluster deployments. Each pod also opens up to 3 more (2 for health checks, 1 for the scheduler's leader lock), so the cluster-wide ceiling is `(maxOpenConns + 3)` times the most pods that can run at once (`autoscaling.maxReplicas` with the HPA on, plus the surge pods of a rolling update, 25% of the replicas rounded up), plus 1 for the migration Job. With the HPA on at `maxReplicas` 6 that is 6 + 2 surge = 8 pods, and the defaults reach `8 * 23 = 184`, above stock Postgres' `max_connections` of 100: lower this, raise `max_connections`, or cap `maxReplicas`. With more than one pod the install notes print the peak total when it exceeds 20. A server that runs out answers SQLSTATE 53300, which the boot error names (#1088). See the "Postgres connection budget" section of the control-plane HA guide.
   maxOpenConns: 20
@@ -359,7 +363,7 @@ redis:
   url: ""
   # -- Name of a Secret with key `redisUrl` (takes precedence over `url`).
   existingSecret: ""
-  # -- Name of a ConfigMap with a `ca.crt` key containing the PEM CA bundle the client trusts when negotiating TLS to a `rediss://` URL (#312). Required when the managed-Redis server cert is signed by a provider / per-instance CA that is not in the system roots: Memorystore SERVER_AUTHENTICATION, ElastiCache in-transit encryption, Azure Cache for Redis. Mounted read-only at `/etc/leoflow/redis-ca` and exposed to the server via `DEXAFLOW_REDIS_CA_FILE`. Leave empty when Redis uses a public CA or no TLS.
+  # -- Name of a ConfigMap with a `ca.crt` key containing the PEM CA bundle the client trusts when negotiating TLS to a `rediss://` URL (#312). Required when the managed-Redis server cert is signed by a provider / per-instance CA that is not in the system roots: Memorystore SERVER_AUTHENTICATION, ElastiCache in-transit encryption, Azure Cache for Redis. Mounted read-only at `/etc/dexaflow/redis-ca` and exposed to the server via `DEXAFLOW_REDIS_CA_FILE`. Leave empty when Redis uses a public CA or no TLS.
   caConfigMap: ""
   # -- Refuse to boot unless Redis runs `maxmemory-policy noeviction`, or when the policy cannot be read (#2354). XCom values carry a TTL, so a `volatile-*` policy, the default of several managed services, evicts them first under memory pressure and the downstream task fails with "not found". Off, an unsafe policy logs a warning at boot, sets `dexaflow_redis_eviction_policy_safe` to 0 and fires `DexaflowRedisEvictionPolicyUnsafe`.
   requireNoEviction: false
@@ -457,7 +461,7 @@ auth:
   # fail boot closed on the missing tenant pin (#1143).
   #
   # So the two maps (and ONLY the two maps) travel in a ConfigMap that the chart
-  # mounts read-only at /etc/leoflow/oidc and points `DEXAFLOW_CONFIG` at. Every
+  # mounts read-only at /etc/dexaflow/oidc and points `DEXAFLOW_CONFIG` at. Every
   # other key travels as an env var, the way the rest of this chart delivers server
   # settings. That the file is PARTIAL is the point, not an omission: viper ranks
   # env above file, and a key absent from a config file keeps the value it already
@@ -556,9 +560,9 @@ execution:
     webhook:
       # -- Endpoint the control plane POSTs each attempt to. `https`, unless the host is loopback; the chart fails the render otherwise, as the server refuses to start. Empty (the default) installs no hook. Rendered as `DEXAFLOW_EXECUTION_ADMISSION_WEBHOOK_URL` only when set.
       url: ""
-      # -- Name of a ConfigMap with key `ca.crt` holding the PEM bundle the endpoint's certificate must chain to, mounted at `/etc/leoflow/admission-ca/ca.crt` on the roles that dispatch. Read at boot, so a changed bundle takes a restart. Empty uses the system roots. Ignored while `url` is empty.
+      # -- Name of a ConfigMap with key `ca.crt` holding the PEM bundle the endpoint's certificate must chain to, mounted at `/etc/dexaflow/admission-ca/ca.crt` on the roles that dispatch. Read at boot, so a changed bundle takes a restart. Empty uses the system roots. Ignored while `url` is empty.
       caConfigMap: ""
-      # -- Name of a Secret with key `token` holding a bearer token sent as `Authorization: Bearer`, mounted at `/etc/leoflow/admission-token/token` on the roles that dispatch. The server reads it on every call, so a rotated Secret is picked up without a restart. Empty sends none. Ignored while `url` is empty.
+      # -- Name of a Secret with key `token` holding a bearer token sent as `Authorization: Bearer`, mounted at `/etc/dexaflow/admission-token/token` on the roles that dispatch. The server reads it on every call, so a rotated Secret is picked up without a restart. Empty sends none. Ignored while `url` is empty.
       tokenSecret: ""
     # -- How long the control plane waits for the endpoint, in `ms` or whole `s`, from `1ms` to `5s`; the chart refuses anything else, as the server does at boot. Empty keeps the server default, `500ms`. Rendered as `DEXAFLOW_EXECUTION_ADMISSION_TIMEOUT` only with a `url`.
     timeout: ""
@@ -644,7 +648,7 @@ migrations:
   # -- Let the control plane apply the embedded migrations itself at boot when the schema is absent or behind (ADR 0090 decision 4), never when it is ahead or dirty or the database is reported as replaced. Rendered on the `all` role, and in split mode on the scheduler only: the api role never migrates. The server's `database.url` must then be allowed to run DDL. The hook Job above stays the default path and keeps the ordering an upgrade needs; this covers what the hook cannot see, such as `migrations.enabled=false` installs and a `database.url` repointed between upgrades. golang-migrate's advisory lock serializes the two.
   onBoot: false
   image:
-    # -- leoflow-migrate image: the golang-migrate CLI compiled from the version in our `go.mod`, plus the Dexaflow SQL migrations, on distroless static. Published per release by `release.yaml`, signed with cosign, multi-arch (amd64 + arm64).
+    # -- dexaflow-migrate image: the golang-migrate CLI compiled from the version in our `go.mod`, plus the Dexaflow SQL migrations, on distroless static. Published per release by `release.yaml`, signed with cosign, multi-arch (amd64 + arm64).
     repository: ghcr.io/dexadata/dexaflow-migrate
     # -- Migration image tag. Defaults to `.Chart.appVersion` when empty. Pin to the same tag as `image.tag` (both server and migrate publish both `v`-prefix and no-`v` forms; use whichever convention you prefer, they resolve to the same digest): `--set migrations.image.tag=vX.Y.Z`.
     tag: ""
@@ -687,7 +691,7 @@ migrations:
     # FS read-only — tightest restricted-PSA posture. Verified against the
     # image this chart defaults to by applying all 26 migrations with
     # `docker run --rm --read-only -u 65532:65532 --cap-drop ALL
-    # leoflow-migrate -path=/migrations -database=<dsn> up`.
+    # dexaflow-migrate -path=/migrations -database=<dsn> up`.
     readOnlyRootFilesystem: true
     runAsNonRoot: true
     runAsUser: 65532
@@ -740,8 +744,8 @@ httpTLS:
 taskSecret:
   # -- Name of an existing Kubernetes Secret to mount into task pods. Empty = none.
   name: ""
-  # -- Read-only mount path in the task pod. A connection references files here, e.g. `/etc/leoflow/secrets/key.json`.
-  mountPath: /etc/leoflow/secrets
+  # -- Read-only mount path in the task pod. A connection references files here, e.g. `/etc/dexaflow/secrets/key.json`. At this default the server also mounts the Secret at `/etc/leoflow/secrets`, the path from before the rename, so a DAG that reads it there keeps working; a path of your own is mounted once.
+  mountPath: /etc/dexaflow/secrets
 
 # External secrets backend (ADR 0060): resolve a declared Connection/Variable
 # pod-side from a provider store (AWS Secrets Manager, …) under the pod's own
@@ -764,7 +768,7 @@ observability:
   # -- Log level: `debug`, `info`, `warn`, `error`. Production default is `info`.
   logLevel: info
 
-# -- Resource requests + limits for the leoflow-server container. `250m`/`256Mi` requests are a floor for a small Cluster install (50–500 DAGs); bump CPU+memory for larger deployments. The request guarantees the control plane its CPU shares under node contention (so a task-pod burst can't starve it); the actual probe-timeout fix is `probes.liveness.timeoutSeconds` below (CFS throttling is bounded by the CPU *limit*, not the request). See #860.
+# -- Resource requests + limits for the Dexaflow server container. `250m`/`256Mi` requests are a floor for a small Cluster install (50–500 DAGs); bump CPU+memory for larger deployments. The request guarantees the control plane its CPU shares under node contention (so a task-pod burst can't starve it); the actual probe-timeout fix is `probes.liveness.timeoutSeconds` below (CFS throttling is bounded by the CPU *limit*, not the request). See #860.
 resources:
   requests:
     cpu: 250m
@@ -781,7 +785,7 @@ goMemLimit:
   # -- Share of `resources.limits.memory` given to `GOMEMLIMIT`, from 1 to 100. The rest is headroom for memory the Go runtime does not track but the container is charged for, such as cgo allocations and kernel page cache.
   percent: 80
 
-# -- Liveness/readiness probes for the leoflow-server container. Exposed so an operator can loosen the timeout under load: a busy scheduler can miss a 1s `/healthz` during a task-pod burst and be kubelet-killed mid-run, which cascades in-flight tasks to agent_lost (#860). Defaults are deliberately forgiving (5s liveness / 3s readiness timeout, 3 failures) rather than Kubernetes' 1s/3. /readyz bounds its own work at `readiness.timeoutSeconds` minus one second (rendered as `DEXAFLOW_SERVER_PROBE_BUDGET`, #1050), so it answers before the kubelet gives up; raise the timeout to give a slow metadatabase more room. `readiness.timeoutSeconds` has a **floor of 3** and the render fails below it: a shorter kubelet timeout leaves the server under its 2s minimum and you get a bare timeout instead of a 503 naming the failing dependency (#1041). To react faster, lower `readiness.periodSeconds` or `failureThreshold` instead.
+# -- Liveness/readiness probes for the Dexaflow server container. Exposed so an operator can loosen the timeout under load: a busy scheduler can miss a 1s `/healthz` during a task-pod burst and be kubelet-killed mid-run, which cascades in-flight tasks to agent_lost (#860). Defaults are deliberately forgiving (5s liveness / 3s readiness timeout, 3 failures) rather than Kubernetes' 1s/3. /readyz bounds its own work at `readiness.timeoutSeconds` minus one second (rendered as `DEXAFLOW_SERVER_PROBE_BUDGET`, #1050), so it answers before the kubelet gives up; raise the timeout to give a slow metadatabase more room. `readiness.timeoutSeconds` has a **floor of 3** and the render fails below it: a shorter kubelet timeout leaves the server under its 2s minimum and you get a bare timeout instead of a 503 naming the failing dependency (#1041). To react faster, lower `readiness.periodSeconds` or `failureThreshold` instead.
 probes:
   # -- Startup gate for the control-plane boot. Kubernetes runs neither the liveness nor the readiness probe until this one succeeds, so a slow boot reads as "not ready yet" instead of being killed and restarted. Without it liveness points at the same API listener the boot has not bound yet, and any boot-path dependency that is slow or stuck becomes a restart loop whose every cycle is recorded as `Completed exit=0`, because SIGTERM is handled cleanly (#1083). The budget is `periodSeconds * failureThreshold` = 180s, and it is sized from the server's own boot bounds rather than picked: the Postgres connect retry is 30s and runs TWICE (the request pool and the dedicated probe pool), the pod-informer warm-up is bounded at 10s (#1141), and on top of those sit credential detection for an object-store log sink and OIDC discovery, neither of which carries a bound of its own. That is 70s of code-defined budget before anything cloud-shaped, and a gate tighter than the boot would kill a pod that was about to come up, which is the loop again. Generous on purpose, because the two directions are not symmetric: a boot that FAILS returns an error and the process exits 1, so CrashLoopBackOff reports it promptly no matter what this says, and the gate only bounds a boot that HANGS, where a restart is a lottery ticket rather than a fix. The render refuses a budget at or below the liveness budget it replaces (10 + 3*20 = 70s), since that only moves the kill from one probe to the other. It probes `/healthz`, never `/readyz`: a failing startup probe RESTARTS the container, so gating it on dependency health would turn a database outage into a crash loop, which is the exact thing `/healthz` is deliberately static to avoid. Nothing is lost by that, because readiness still gates endpoint membership on `/readyz` once the gate opens. Set `enabled: false` to go back to liveness policing the boot.
   startup:
@@ -804,7 +808,7 @@ probes:
 # exactly one scheduler stays active. Disabled by default; flip `enabled: true`
 # in production after sizing replicas.
 autoscaling:
-  # -- Enable HPA for the leoflow-server Deployment. Requires metrics-server.
+  # -- Enable HPA for the Dexaflow server Deployment. Requires metrics-server.
   enabled: false
   # -- Minimum replicas. HPA never scales below this. Must be at least 1: the apiserver rejects a lower minimum unless the HPAScaleToZero feature gate is on, which this chart does not assume.
   minReplicas: 2
@@ -989,9 +993,9 @@ ingress:
   className: ""
   # -- Ingress annotations (controller-specific: rewrites, TLS, auth, etc.).
   annotations: {}
-  # -- Host + path rules. Each host maps to one or more path entries routed to the leoflow-server's `http` port.
+  # -- Host + path rules. Each host maps to one or more path entries routed to the Dexaflow server's `http` port.
   hosts:
-    - host: leoflow.local
+    - host: dexaflow.local
       paths:
         - path: /
           pathType: Prefix

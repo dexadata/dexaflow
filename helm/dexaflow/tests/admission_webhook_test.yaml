@@ -48,12 +48,12 @@ tests:
           path: spec.template.spec.containers[0].env
           content:
             name: DEXAFLOW_EXECUTION_ADMISSION_WEBHOOK_CA_FILE
-            value: /etc/leoflow/admission-ca/ca.crt
+            value: /etc/dexaflow/admission-ca/ca.crt
       - contains:
           path: spec.template.spec.containers[0].env
           content:
             name: DEXAFLOW_EXECUTION_ADMISSION_WEBHOOK_TOKEN_FILE
-            value: /etc/leoflow/admission-token/token
+            value: /etc/dexaflow/admission-token/token
       - contains:
           path: spec.template.spec.containers[0].env
           content:

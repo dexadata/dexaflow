@@ -140,6 +140,12 @@ tests:
           path: spec.template.spec.containers[0].volumeMounts
           content:
             name: db-ca
+            mountPath: /etc/dexaflow/db-ca
+            readOnly: true
+      - contains:
+          path: spec.template.spec.containers[0].volumeMounts
+          content:
+            name: db-ca
             mountPath: /etc/leoflow/db-ca
             readOnly: true
       # The mount has to be on the migrate container specifically — index 0 is

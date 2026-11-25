@@ -172,12 +172,12 @@ tests:
           path: spec.template.spec.containers[0].env
           content:
             name: DEXAFLOW_SERVER_GRPC_TLS_CERT
-            value: /etc/leoflow/grpc-tls/tls.crt
+            value: /etc/dexaflow/grpc-tls/tls.crt
       - contains:
           path: spec.template.spec.containers[0].env
           content:
             name: DEXAFLOW_SERVER_GRPC_TLS_KEY
-            value: /etc/leoflow/grpc-tls/tls.key
+            value: /etc/dexaflow/grpc-tls/tls.key
       # …but the private key never reaches this pod: no grpc-tls volume or mount.
       - notContains:
           path: spec.template.spec.containers[0].volumeMounts
@@ -204,7 +204,7 @@ tests:
           path: spec.template.spec.containers[0].volumeMounts
           content:
             name: grpc-tls
-            mountPath: /etc/leoflow/grpc-tls
+            mountPath: /etc/dexaflow/grpc-tls
             readOnly: true
       # The scheduler mounts the whole cert Secret (tls.crt + tls.key) — it runs
       # the agent gRPC server and needs the private key.

@@ -1,0 +1,3 @@
+kind: Changed
+body: '**Chart defaults use the dexaflow paths** (#1580): `config.logsDir` defaults to `/var/log/dexaflow`, `taskSecret.mountPath` to `/etc/dexaflow/secrets` and the example ingress host to `dexaflow.local`, and the files the chart mounts into the control plane live under `/etc/dexaflow/`. The database CA bundle is also mounted at `/etc/leoflow/db-ca` and the task Secret at `/etc/leoflow/secrets`, so a DSN or connection pinned to the old path keeps working. `taskServiceAccount.name` keeps `leoflow-task`. See [Upgrading to 0.6.0: chart defaults use the dexaflow paths](https://dexaflow.dexadata.ai/operate/upgrades/version-notes/#upgrading-to-060-chart-defaults-use-the-dexaflow-paths).'
+time: 2026-11-25T23:40:00.000000+00:00

@@ -136,13 +136,17 @@ spec:
           {{- if .Values.database.caConfigMap }}
           # The same CA bundle the control plane gets (#1052). Both consume the
           # SAME databaseUrl secret, so a DSN carrying
-          # `sslmode=verify-full&sslrootcert=/etc/leoflow/db-ca/ca.crt` — which is
-          # the recipe values.yaml documents for managed Postgres — needs the file
+          # `sslmode=verify-full&sslrootcert=/etc/dexaflow/db-ca/ca.crt` (or the
+          # /etc/leoflow/db-ca path from before the rename, mounted too), which is
+          # the recipe values.yaml documents for managed Postgres, needs the file
           # here too. Without it the server came up and this Job failed, and only
           # against a real managed database: with no sslrootcert lib/pq falls back
           # to the system trust store, which is why every in-cluster CI Postgres
           # passed.
           volumeMounts:
+            - name: db-ca
+              mountPath: /etc/dexaflow/db-ca
+              readOnly: true
             - name: db-ca
               mountPath: /etc/leoflow/db-ca
               readOnly: true

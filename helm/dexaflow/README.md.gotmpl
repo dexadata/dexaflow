@@ -192,12 +192,13 @@ Without the CA bundle mounted, the strongest TLS posture you can pin is
    ```bash
    helm upgrade --install dexaflow ./helm/dexaflow -n dexaflow \
      --set database.caConfigMap=managed-pg-ca \
-     --set database.url='postgres://user:pass@cloudsql-private-ip:5432/dexaflow?sslmode=verify-full&sslrootcert=/etc/leoflow/db-ca/ca.crt'
+     --set database.url='postgres://user:pass@cloudsql-private-ip:5432/dexaflow?sslmode=verify-full&sslrootcert=/etc/dexaflow/db-ca/ca.crt'
    ```
 
-The chart mounts the ConfigMap readonly at `/etc/leoflow/db-ca/ca.crt`. pgx
-reads `sslrootcert` from the DSN natively, so no extra Go-side configuration
-is required.
+The chart mounts the ConfigMap readonly at `/etc/dexaflow/db-ca/ca.crt`, and
+also at `/etc/leoflow/db-ca/ca.crt`, the path from before the rename, so a DSN
+pinned there keeps verifying. pgx reads `sslrootcert` from the DSN natively, so
+no extra Go-side configuration is required.
 
 > **Rotation note.** Kubernetes auto-updates the mounted file when the
 > ConfigMap changes, but the pgx pool keeps its existing connections until
@@ -283,8 +284,8 @@ redis:
 
 The chart then:
 
-1. Mounts the ConfigMap read-only at `/etc/leoflow/redis-ca/ca.crt`.
-2. Sets `DEXAFLOW_REDIS_CA_FILE=/etc/leoflow/redis-ca/ca.crt` so the
+1. Mounts the ConfigMap read-only at `/etc/dexaflow/redis-ca/ca.crt`.
+2. Sets `DEXAFLOW_REDIS_CA_FILE=/etc/dexaflow/redis-ca/ca.crt` so the
    server overrides `tls.Config.RootCAs` instead of falling back to
    system roots.
 3. Refuses to boot if the file is missing or malformed (clear error
@@ -401,7 +402,7 @@ So the chart splits the delivery:
 | What | How |
 |---|---|
 | `issuer`, `clientId`, `redirectUrl`, `tenantClaim`, `scopes`, `groupsClaim`, `defaultRole`, `allowedEmailDomains`, `breakGlassEmails`, `jitProvisioning`, `clockSkewSeconds` | `DEXAFLOW_AUTH_OIDC_*` env vars, the way the rest of this chart delivers server settings |
-| `tenantClaims`, `roleMappings` | a ConfigMap mounted read-only at `/etc/leoflow/oidc`, with `DEXAFLOW_CONFIG` pointing at it |
+| `tenantClaims`, `roleMappings` | a ConfigMap mounted read-only at `/etc/dexaflow/oidc`, with `DEXAFLOW_CONFIG` pointing at it |
 | `clientSecret` | the chart-managed Secret (or `auth.oidc.existingSecret`), by `secretKeyRef`: never the ConfigMap |
 
 The mounted file is **partial on purpose**. Viper ranks env above a config file,
