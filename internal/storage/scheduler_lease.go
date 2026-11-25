@@ -2,10 +2,13 @@ package storage
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"sync/atomic"
 
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/dexadata/dexaflow/internal/config"
@@ -26,7 +29,20 @@ type SchedulerLease struct {
 	holder  string
 	fencing bool
 	term    atomic.Int64
+	// reader serves Current. It is never the leader pool: a term read that
+	// times out closes its connection, and on the leader pool that is the
+	// session holding the lock, so a slow read would end the leadership.
+	reader termReader
 }
+
+// termReader is the query side of a pool Current reads the lease on.
+type termReader interface {
+	QueryRow(ctx context.Context, sql string, args ...any) pgx.Row
+}
+
+// SetTermReader gives Current a pool other than the leader pool to read the
+// lease term on: the scheduler pool, or the server's own.
+func (l *SchedulerLease) SetTermReader(pool *pgxpool.Pool) { l.reader = pool }
 
 // NewSchedulerLease builds a SchedulerLease over a dedicated (single-connection) pool.
 func NewSchedulerLease(pool *pgxpool.Pool) *SchedulerLease {
@@ -62,6 +78,15 @@ func (l *SchedulerLease) TryAcquire(ctx context.Context) (bool, error) {
 		  WHERE id = 1
 		RETURNING term`, l.holder).Scan(&term)
 	if err != nil {
+		if !l.fencing && leaseMissing(err) {
+			// The schema has no lease yet (a server started before migration
+			// 060, or after its rollback). With fencing off the advisory lock
+			// alone guards leadership, as before 0.6.0, so lead without a term
+			// instead of letting no replica lead.
+			slog.WarnContext(ctx, "the scheduler lease table is missing; leading on the advisory lock alone", "error", err)
+			l.term.Store(0)
+			return true, nil
+		}
 		if _, uerr := l.pool.Exec(ctx, "SELECT pg_advisory_unlock($1)", SchedulerLockID); uerr != nil {
 			slog.WarnContext(ctx, "giving back the scheduler lock after a failed term increment", "error", uerr)
 		}
@@ -89,8 +114,9 @@ func (l *SchedulerLease) endOlderTerms(ctx context.Context, term int64) {
 		  WHERE datname = current_database()
 		    AND usename = current_user
 		    AND pid <> pg_backend_pid()
-		    AND application_name ~ '^dexaflow-leader/[0-9]+$'
-		    AND split_part(application_name, '/', 2)::bigint < $1`, term).Scan(&ended)
+		    AND CASE WHEN application_name ~ '^dexaflow-leader/[0-9]{1,18}$'
+		             THEN split_part(application_name, '/', 2)::bigint < $1
+		             ELSE false END`, term).Scan(&ended)
 	if err != nil {
 		slog.WarnContext(ctx, "ending the sessions of older scheduler terms", "term", term, "error", err)
 		return
@@ -183,11 +209,25 @@ func (l *SchedulerLease) Current(ctx context.Context) (bool, error) {
 	if term == 0 {
 		return false, nil
 	}
+	reader := l.reader
+	if reader == nil {
+		reader = l.pool
+	}
 	var current bool
-	if err := l.pool.QueryRow(ctx, `SELECT term = $1 FROM scheduler_lease WHERE id = 1`, term).Scan(&current); err != nil {
+	if err := reader.QueryRow(ctx, `SELECT term = $1 FROM scheduler_lease WHERE id = 1`, term).Scan(&current); err != nil {
 		return false, fmt.Errorf("reading the scheduler lease term: %w", err)
 	}
 	return current, nil
+}
+
+// leaseMissing reports whether err says the lease table or its row is not
+// there: the schema predates migration 060.
+func leaseMissing(err error) bool {
+	if errors.Is(err, pgx.ErrNoRows) {
+		return true
+	}
+	var pgErr *pgconn.PgError
+	return errors.As(err, &pgErr) && pgErr.Code == "42P01" // undefined_table
 }
 
 var _ scheduler.LeaseTerms = (*SchedulerLease)(nil)

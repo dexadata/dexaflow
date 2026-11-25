@@ -278,6 +278,11 @@ func openSchedulerStorage(ctx context.Context, pg *storage.Postgres, cfg *config
 	if err != nil {
 		return nil, nil, nil, nil, err
 	}
+	if lease != nil {
+		// The term gate reads on the server's pool, never on the leader
+		// pool's lock session (ADR 0106).
+		lease.SetTermReader(pg.Pool)
+	}
 	schedPG, release, err = schedulerPool(ctx, pg, cfg, lease, metrics)
 	if err != nil {
 		closeLease()

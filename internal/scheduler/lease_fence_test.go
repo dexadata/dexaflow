@@ -73,3 +73,77 @@ func TestLeaseGateOpensOnAnUnreadableLease(t *testing.T) {
 		t.Fatal("an unreadable lease closed the gate")
 	}
 }
+
+// blockingTerms is a LeaseTerms whose read waits until released.
+type blockingTerms struct {
+	fakeTerms
+	started chan struct{}
+	release chan struct{}
+}
+
+func (b *blockingTerms) Current(ctx context.Context) (bool, error) {
+	b.started <- struct{}{}
+	<-b.release
+	return b.fakeTerms.Current(ctx)
+}
+
+// TestLeaseGateReadsOnceWhileOthersAnswerFromTheCache: while one caller reads
+// the lease, the others answer at once from the last answer instead of
+// queuing on a slow database, and a failed read is cached like an answer.
+func TestLeaseGateReadsOnceWhileOthersAnswerFromTheCache(t *testing.T) {
+	b := &blockingTerms{started: make(chan struct{}, 1), release: make(chan struct{})}
+	b.term.Store(3)
+	b.current.Store(false)
+	s := &Scheduler{}
+	s.SetLeaseTerms(b)
+	s.termCacheTTL = time.Hour
+
+	done := make(chan bool)
+	go func() { done <- s.TermCurrent(context.Background()) }()
+	<-b.started
+	for range 5 {
+		if !s.TermCurrent(context.Background()) {
+			t.Fatal("a caller with no answer yet should get the open gate, not wait")
+		}
+	}
+	close(b.release)
+	if <-done {
+		t.Fatal("the reader should return the lease's answer: not current")
+	}
+	if s.TermCurrent(context.Background()) || b.reads.Load() != 1 {
+		t.Fatalf("after the read, the cache answers: reads %d, want 1", b.reads.Load())
+	}
+
+	f := &fakeTerms{err: errors.New("database down")}
+	f.term.Store(1)
+	s2 := &Scheduler{}
+	s2.SetLeaseTerms(f)
+	s2.termCacheTTL = time.Hour
+	for range 3 {
+		if !s2.TermCurrent(context.Background()) {
+			t.Fatal("an unreadable lease keeps the gate open")
+		}
+	}
+	if f.reads.Load() != 1 {
+		t.Fatalf("a failed read was retried %d times within one interval, want once", f.reads.Load())
+	}
+}
+
+// TestLeaseGateRereadsOnANewTerm: a re-elected leader does not answer from
+// its previous term's reading.
+func TestLeaseGateRereadsOnANewTerm(t *testing.T) {
+	f := &fakeTerms{}
+	f.term.Store(5)
+	f.current.Store(false)
+	s := &Scheduler{}
+	s.SetLeaseTerms(f)
+	s.termCacheTTL = time.Hour
+	if s.TermCurrent(context.Background()) {
+		t.Fatal("term 5 is not current")
+	}
+	f.term.Store(7)
+	f.current.Store(true)
+	if !s.TermCurrent(context.Background()) {
+		t.Fatal("the new term 7 answered from term 5's cached reading")
+	}
+}

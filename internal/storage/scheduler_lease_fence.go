@@ -49,7 +49,7 @@ func IsStaleLeaderTerm(err error) bool {
 // session that was ended is replaced without failing the caller.
 func tagLeaderTerm(lease *SchedulerLease) func(context.Context, *pgx.Conn) (bool, error) {
 	return func(ctx context.Context, conn *pgx.Conn) (bool, error) {
-		want := strconv.FormatInt(lease.Term(), 10)
+		want := sessionTermTag(lease.Term())
 		data := conn.PgConn().CustomData()
 		if have, ok := data[leaderTermData].(string); ok && have == want {
 			return true, nil
@@ -68,6 +68,18 @@ func tagLeaderTerm(lease *SchedulerLease) func(context.Context, *pgx.Conn) (bool
 		data[leaderTermData] = want
 		return true, nil
 	}
+}
+
+// sessionTermTag is the tag of a session of a replica whose latest term is
+// term. A replica that never led tags -1, which no lease term equals, so its
+// writes are refused even on a database whose term is still 0. The
+// application_name it gives is not one a newer leader ends, which is right:
+// such a session never carried a term.
+func sessionTermTag(term int64) string {
+	if term == 0 {
+		return "-1"
+	}
+	return strconv.FormatInt(term, 10)
 }
 
 // fenceTracer counts the writes the fence refused, through onFenced.
