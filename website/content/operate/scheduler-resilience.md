@@ -766,6 +766,32 @@ default) is the cluster-level floor under it. A reconciler stuck for longer
 than that shows up first as `reap_settling_valve_open`, which is the label to
 alert on.
 
+### Stopping the pod of an attempt a verdict ended
+
+A reaper is not the only thing that ends an attempt: a run or a task instance
+marked `failed` or `success` through the API, and a tenant stopped by its
+suspension, end it too. Those write the row only. The attempt stops when its
+agent's next heartbeat is answered with `should_terminate`, and an agent that
+cannot reach the control plane never hears it. Since 0.6.0 the leader closes
+that gap ([#2430](https://github.com/dexadata/dexaflow/issues/2430)): after each
+reconciler sweep it reads, for the task pods still running user code, the
+attempt their task instance is on, and stops a pod whose attempt is not the
+live one (the row ended, moved to a later try or epoch, or was deleted with its
+run) once it has stayed so for the agent-lost threshold (90 seconds). The stop
+is the reapers' own: a started pod is stopped in place and keeps its outcome
+record, a pod that never started is deleted, and the destructive gate applies.
+An agent that hears the control plane stops on its next heartbeat, well inside
+the grace, so the leader only stops the ones that cannot.
+
+The agent has a backstop of its own for a pod the leader cannot reach (a node
+cut off from the cluster): it stops its task after its heartbeats have gone
+unanswered for as long as the attempt's credential lives (40 heartbeats, 10
+minutes). By then the bearer has lapsed unrenewed and the attempt can never
+report again, while a control plane outage the settling grace forgives (a
+restart, a failover) stops nothing. The attempt's outcome record names the
+cause. Warm pool attempts have no task pod of their own and rely on this
+backstop.
+
 ## The load-bearing invariant
 
 Recovery is bounded by the slowest reaper that applies, not the fastest —
@@ -803,6 +829,8 @@ your Prometheus dashboard:
 | `orphan_reap_noop` | A listed orphan candidate was no longer orphaned when the reap re-checked it (a TI moved, fresh activity landed, or a TI was being written); nothing was written and no pod was torn down |
 | `reap_settling_skip` | The whole reaper pass was held because the leader has not settled yet (grace, informer sync, or a post-leadership reconciler sweep still pending) — expected for ~3 min after every (re-)election |
 | `reap_settling_valve_open` | The leader never settled within 2 × grace and the reapers ran anyway; the reconciler sweep or the pod informer is broken — **alert on this** |
+| `abandoned_pod_teardown` | The leader stopped the pod of an attempt a verdict ended (a run or task instance marked through the API, a stopped tenant) because its agent did not stop it within 90 seconds: the agent cannot reach the control plane ([#2430](https://github.com/dexadata/dexaflow/issues/2430)). A steady rate means task pods cannot reach the control plane |
+| `abandoned_pod_teardown_error`, `abandoned_pod_read_error` | That stop was refused, or the attempts of the live pods could not be read; the next sweep retries |
 | `reap_teardown_delete_fallback` | A reap could not stop a started pod in place (the `patch` was refused) and deleted it instead, losing its outcome record; grant `patch` on pods to the executor Role |
 | `dexaflow_reconcile_infra_override_total{mark}` (its own counter) | A durable SUCCESS record was settled over a provisional infra mark: the task finished while the control plane lost track of it, and was recovered instead of re-run. Expected after a control plane outage; a steady rate means the reapers fire on healthy tasks |
 | `infra_confirm_valve_open` | The planner acted on a provisional infra mark that the reconciler did not confirm within 2 min; the reconciler is not sweeping or cannot read pods. **Alert on this** |
