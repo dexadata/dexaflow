@@ -17,7 +17,7 @@ const ReleaseVersionEnv = "DEXAFLOW_RELEASE_VERSION"
 
 // rcVersion matches a release candidate version, with or without the leading
 // "v" (GoReleaser's .Version has none), and captures its release.
-var rcVersion = regexp.MustCompile(`^v?([0-9]+\.[0-9]+\.[0-9]+)-rc\.[0-9]+$`)
+var rcVersion = regexp.MustCompile(`^v?(\d+\.\d+\.\d+)-rc\.\d+$`)
 
 // modulePath is this module's path, looked up in the build info of a program
 // that imports it (pkg/server) and so sets no ldflags of its own.
