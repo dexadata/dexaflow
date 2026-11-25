@@ -147,7 +147,7 @@ func (l *SchedulerLease) Release(ctx context.Context) error {
 // The advisory lock check follows.
 // The lock is session-scoped, so if the dedicated connection dropped (network
 // blip, idle reap, lifetime recycle) and was replaced, the new session does not
-// hold it and another replica may have taken over — this returns false, letting
+// hold it and another replica may have taken over: this returns false, letting
 // the caller step down instead of running on as a stale leader (the split-brain
 // guard). A query error (connection down) is surfaced so the caller treats it as
 // lost leadership too.
