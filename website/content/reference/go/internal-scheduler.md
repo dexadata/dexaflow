@@ -641,7 +641,7 @@ func (s *Scheduler) EnablePools()
 EnablePools turns on the cross\-DAG named\-pool admission gate \(ADR 0053 Stage 3\). main calls it when scheduler.pools.enabled is on, which unset means the cluster edition. Left unset, the pool gate stays a no\-op and the tick never queries pool budgets, so planning is byte\-identical. Call once before the scheduler starts ticking.
 
 <a name="Scheduler.FencedLeading"></a>
-### func \(\*Scheduler\) [FencedLeading](<https://github.com/dexadata/dexaflow/blob/main/internal/scheduler/lease_fence.go#L78>)
+### func \(\*Scheduler\) [FencedLeading](<https://github.com/dexadata/dexaflow/blob/main/internal/scheduler/lease_fence.go#L119>)
 
 ```go
 func (s *Scheduler) FencedLeading() bool
@@ -677,7 +677,7 @@ func (s *Scheduler) LeaderSince() time.Time
 LeaderSince reports when this instance last acquired scheduler leadership, or the zero time if it is not currently leading. The agent\-lost reaper uses it to suppress reaping within a grace window after a \(re\-\)election \(\#858\).
 
 <a name="Scheduler.LeaderTerm"></a>
-### func \(\*Scheduler\) [LeaderTerm](<https://github.com/dexadata/dexaflow/blob/main/internal/scheduler/lease_fence.go#L44>)
+### func \(\*Scheduler\) [LeaderTerm](<https://github.com/dexadata/dexaflow/blob/main/internal/scheduler/lease_fence.go#L75>)
 
 ```go
 func (s *Scheduler) LeaderTerm() int64
@@ -769,7 +769,7 @@ func (s *Scheduler) SetLeading(on bool)
 SetLeading marks whether this instance currently holds scheduler leadership. The leadership manager sets it true while the loop runs and false when it steps down \(lost lock\) or stops. Becoming leader resets the tick clock so the startup grace applies afresh and a stale pre\-step\-down heartbeat is not mistaken for a stall. It governs Heartbeat: only a leader is expected to tick.
 
 <a name="Scheduler.SetLeaseTerms"></a>
-### func \(\*Scheduler\) [SetLeaseTerms](<https://github.com/dexadata/dexaflow/blob/main/internal/scheduler/lease_fence.go#L35>)
+### func \(\*Scheduler\) [SetLeaseTerms](<https://github.com/dexadata/dexaflow/blob/main/internal/scheduler/lease_fence.go#L66>)
 
 ```go
 func (s *Scheduler) SetLeaseTerms(t LeaseTerms)
@@ -832,7 +832,7 @@ func (s *Scheduler) SteppingDown() bool
 SteppingDown exposes the current step\-down state for tests and callers that want to classify an error themselves: the scheduler's own log sites pass it to logSchedulerError, and the execution reaper receives it \(as the inStepDown callback\) so an expected step\-down cancel logs at WARN, not ERROR \(\#311\).
 
 <a name="Scheduler.TermCurrent"></a>
-### func \(\*Scheduler\) [TermCurrent](<https://github.com/dexadata/dexaflow/blob/main/internal/scheduler/lease_fence.go#L57>)
+### func \(\*Scheduler\) [TermCurrent](<https://github.com/dexadata/dexaflow/blob/main/internal/scheduler/lease_fence.go#L88>)
 
 ```go
 func (s *Scheduler) TermCurrent(ctx context.Context) bool

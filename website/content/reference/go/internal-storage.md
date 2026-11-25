@@ -235,6 +235,7 @@ Package storage wraps the Postgres and Redis connections used by the control pla
   - [func \(l \*SchedulerLease\) HoldsLock\(ctx context.Context\) \(bool, error\)](<#SchedulerLease.HoldsLock>)
   - [func \(l \*SchedulerLease\) Release\(ctx context.Context\) error](<#SchedulerLease.Release>)
   - [func \(l \*SchedulerLease\) SetHolder\(holder string\)](<#SchedulerLease.SetHolder>)
+  - [func \(l \*SchedulerLease\) SetTermReader\(pool \*pgxpool.Pool\)](<#SchedulerLease.SetTermReader>)
   - [func \(l \*SchedulerLease\) Term\(\) int64](<#SchedulerLease.Term>)
   - [func \(l \*SchedulerLease\) TryAcquire\(ctx context.Context\) \(bool, error\)](<#SchedulerLease.TryAcquire>)
 - [type SchedulerStore](<#SchedulerStore>)
@@ -762,9 +763,9 @@ Clean reports whether the pass left nothing behind: no value skipped and none un
 <a name="LeaderHealthReader"></a>
 ## type [LeaderHealthReader](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/scheduler_leader_health.go#L24-L29>)
 
-LeaderHealthReader answers "is a live scheduler leading?" from shared DB state, for a process that does NOT run the scheduler itself — the split api role \(ADR 0049\), whose /api/v2/monitor/health must not report a fake\-healthy scheduler from a nil in\-process handle \(finding F1\). A live scheduler leader holds the leadership advisory lock \(ADR 0009\) on its own session; when its process dies the session drops and the lock releases, so lock presence is a real cross\-process liveness signal with no extra heartbeat table.
+LeaderHealthReader answers "is a live scheduler leading?" from shared DB state, for a process that does NOT run the scheduler itself: the split api role \(ADR 0049\), whose /api/v2/monitor/health must not report a fake\-healthy scheduler from a nil in\-process handle \(finding F1\). A live scheduler leader holds the leadership advisory lock \(ADR 0009\) on its own session; when its process dies the session drops and the lock releases, so lock presence is a real cross\-process liveness signal with no extra heartbeat table.
 
-It intentionally does NOT filter by pg\_backend\_pid \(that is SchedulerLease.HoldsLock's job, confirming THIS session's own hold\) — here any live holder means a scheduler is up. Limitation: it detects a dead/absent leader, not a leader that is alive but stalled \(lock held, loop wedged\); the in\-process Heartbeat still covers stalls in the all/scheduler role. Tick\-accurate cross\-process health would need a persisted heartbeat \(future work\).
+It intentionally does NOT filter by pg\_backend\_pid \(that is SchedulerLease.HoldsLock's job, confirming THIS session's own hold\); here any live holder means a scheduler is up. Limitation: it detects a dead/absent leader, not a leader that is alive but stalled \(lock held, loop wedged\); the in\-process Heartbeat still covers stalls in the all/scheduler role. Tick\-accurate cross\-process health would need a persisted heartbeat \(future work\).
 
 ```go
 type LeaderHealthReader struct {
@@ -976,7 +977,7 @@ ForAgents returns the handle the agent gRPC handlers should use, and a func that
 With database.agent\_max\_conns unset it is p itself and the release func does nothing: heartbeats and state reports share the main pool with the API, as they always have. With it set, it is a dedicated pool of that size, without the API statement timeout, so API traffic that holds every main pool connection cannot block a heartbeat write while the reapers, on the scheduler pool, read last\_heartbeat\_at and judge the agent silent. The dedicated handle shares p's spec cache.
 
 <a name="Postgres.ForFencedScheduler"></a>
-### func \(\*Postgres\) [ForFencedScheduler](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/scheduler_lease_fence.go#L115>)
+### func \(\*Postgres\) [ForFencedScheduler](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/scheduler_lease_fence.go#L127>)
 
 ```go
 func (p *Postgres) ForFencedScheduler(ctx context.Context, cfg config.DatabaseSection, lease *SchedulerLease, onFenced func()) (*Postgres, func(), error)
@@ -2478,7 +2479,7 @@ func (s RowSecurityStatus) On() bool
 On reports whether the table is protected: enabled, forced \(so the table owner, which is usually the server's own role, is held to it too\) and with its policy.
 
 <a name="SchedulerLease"></a>
-## type [SchedulerLease](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/scheduler_lease.go#L24-L29>)
+## type [SchedulerLease](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/scheduler_lease.go#L27-L36>)
 
 SchedulerLease acquires and releases the advisory lock that restricts the scheduler loop to a single replica. It is the store side of the scheduler.Lease port: the scheduler decides when to campaign and when to step down, and never talks SQL itself \(\#2329, layering rule of \#1948\). It must run on a dedicated single\-connection pool so the session holding the lock is stable.
 
@@ -2489,7 +2490,7 @@ type SchedulerLease struct {
 ```
 
 <a name="NewSchedulerLease"></a>
-### func [NewSchedulerLease](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/scheduler_lease.go#L32>)
+### func [NewSchedulerLease](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/scheduler_lease.go#L48>)
 
 ```go
 func NewSchedulerLease(pool *pgxpool.Pool) *SchedulerLease
@@ -2498,7 +2499,7 @@ func NewSchedulerLease(pool *pgxpool.Pool) *SchedulerLease
 NewSchedulerLease builds a SchedulerLease over a dedicated \(single\-connection\) pool.
 
 <a name="OpenSchedulerLease"></a>
-### func [OpenSchedulerLease](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/scheduler_lease.go#L171>)
+### func [OpenSchedulerLease](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/scheduler_lease.go#L197>)
 
 ```go
 func OpenSchedulerLease(ctx context.Context, cfg config.DatabaseSection) (*SchedulerLease, func(), error)
@@ -2507,7 +2508,7 @@ func OpenSchedulerLease(ctx context.Context, cfg config.DatabaseSection) (*Sched
 OpenSchedulerLease opens the leader pool \(NewLeaderPool\) and the lease over it. The func it returns closes the pool, which ends the session and gives the advisory lock back.
 
 <a name="SchedulerLease.Current"></a>
-### func \(\*SchedulerLease\) [Current](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/scheduler_lease.go#L181>)
+### func \(\*SchedulerLease\) [Current](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/scheduler_lease.go#L207>)
 
 ```go
 func (l *SchedulerLease) Current(ctx context.Context) (bool, error)
@@ -2516,7 +2517,7 @@ func (l *SchedulerLease) Current(ctx context.Context) (bool, error)
 Current reads whether this replica's term is still the lease's current one \(scheduler.LeaseTerms\). A replica that never led holds no current term.
 
 <a name="SchedulerLease.EnableFencing"></a>
-### func \(\*SchedulerLease\) [EnableFencing](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/scheduler_lease.go#L43>)
+### func \(\*SchedulerLease\) [EnableFencing](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/scheduler_lease.go#L59>)
 
 ```go
 func (l *SchedulerLease) EnableFencing()
@@ -2525,7 +2526,7 @@ func (l *SchedulerLease) EnableFencing()
 EnableFencing makes each acquisition end the sessions of older terms \(scheduler.lease\_fencing, ADR 0106\). Call it before the first TryAcquire, together with FencedSchedulerPool for the scheduler's writes.
 
 <a name="SchedulerLease.HoldsLock"></a>
-### func \(\*SchedulerLease\) [HoldsLock](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/scheduler_lease.go#L128>)
+### func \(\*SchedulerLease\) [HoldsLock](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/scheduler_lease.go#L154>)
 
 ```go
 func (l *SchedulerLease) HoldsLock(ctx context.Context) (bool, error)
@@ -2533,10 +2534,10 @@ func (l *SchedulerLease) HoldsLock(ctx context.Context) (bool, error)
 
 HoldsLock renews the lease by term and reports whether this leader's session still holds the advisory lock. A renewal that matches no row means another replica took a newer term: it returns scheduler.ErrLeaseSuperseded, and the leader steps down at once whatever its own session says \(ADR 0106, point 2\).
 
-The advisory lock check follows. The lock is session\-scoped, so if the dedicated connection dropped \(network blip, idle reap, lifetime recycle\) and was replaced, the new session does not hold it and another replica may have taken over — this returns false, letting the caller step down instead of running on as a stale leader \(the split\-brain guard\). A query error \(connection down\) is surfaced so the caller treats it as lost leadership too.
+The advisory lock check follows. The lock is session\-scoped, so if the dedicated connection dropped \(network blip, idle reap, lifetime recycle\) and was replaced, the new session does not hold it and another replica may have taken over: this returns false, letting the caller step down instead of running on as a stale leader \(the split\-brain guard\). A query error \(connection down\) is surfaced so the caller treats it as lost leadership too.
 
 <a name="SchedulerLease.Release"></a>
-### func \(\*SchedulerLease\) [Release](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/scheduler_lease.go#L109>)
+### func \(\*SchedulerLease\) [Release](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/scheduler_lease.go#L135>)
 
 ```go
 func (l *SchedulerLease) Release(ctx context.Context) error
@@ -2545,7 +2546,7 @@ func (l *SchedulerLease) Release(ctx context.Context) error
 Release frees the scheduler advisory lock. The term is kept: see Term.
 
 <a name="SchedulerLease.SetHolder"></a>
-### func \(\*SchedulerLease\) [SetHolder](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/scheduler_lease.go#L38>)
+### func \(\*SchedulerLease\) [SetHolder](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/scheduler_lease.go#L54>)
 
 ```go
 func (l *SchedulerLease) SetHolder(holder string)
@@ -2553,8 +2554,17 @@ func (l *SchedulerLease) SetHolder(holder string)
 
 SetHolder names this replica in the lease row \(the pod name\), for an operator reading who leads.
 
+<a name="SchedulerLease.SetTermReader"></a>
+### func \(\*SchedulerLease\) [SetTermReader](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/scheduler_lease.go#L45>)
+
+```go
+func (l *SchedulerLease) SetTermReader(pool *pgxpool.Pool)
+```
+
+SetTermReader gives Current a pool other than the leader pool to read the lease term on: the scheduler pool, or the server's own.
+
 <a name="SchedulerLease.Term"></a>
-### func \(\*SchedulerLease\) [Term](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/scheduler_lease.go#L106>)
+### func \(\*SchedulerLease\) [Term](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/scheduler_lease.go#L132>)
 
 ```go
 func (l *SchedulerLease) Term() int64
@@ -2563,7 +2573,7 @@ func (l *SchedulerLease) Term() int64
 Term is the lease term of this replica's latest leadership, 0 before the first one. It stays at the last term after a step\-down, so the sessions a deposed leader tagged keep a tag the fence refuses.
 
 <a name="SchedulerLease.TryAcquire"></a>
-### func \(\*SchedulerLease\) [TryAcquire](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/scheduler_lease.go#L50>)
+### func \(\*SchedulerLease\) [TryAcquire](<https://github.com/dexadata/dexaflow/blob/main/internal/storage/scheduler_lease.go#L66>)
 
 ```go
 func (l *SchedulerLease) TryAcquire(ctx context.Context) (bool, error)

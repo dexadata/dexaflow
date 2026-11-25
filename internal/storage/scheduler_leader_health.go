@@ -8,7 +8,7 @@ import (
 )
 
 // LeaderHealthReader answers "is a live scheduler leading?" from shared DB state,
-// for a process that does NOT run the scheduler itself — the split api role (ADR
+// for a process that does NOT run the scheduler itself: the split api role (ADR
 // 0049), whose /api/v2/monitor/health must not report a fake-healthy scheduler
 // from a nil in-process handle (finding F1). A live scheduler leader holds the
 // leadership advisory lock (ADR 0009) on its own session; when its process dies
@@ -16,7 +16,7 @@ import (
 // cross-process liveness signal with no extra heartbeat table.
 //
 // It intentionally does NOT filter by pg_backend_pid (that is SchedulerLease.HoldsLock's
-// job, confirming THIS session's own hold) — here any live holder means a
+// job, confirming THIS session's own hold); here any live holder means a
 // scheduler is up. Limitation: it detects a dead/absent leader, not a leader that
 // is alive but stalled (lock held, loop wedged); the in-process Heartbeat still
 // covers stalls in the all/scheduler role. Tick-accurate cross-process health
