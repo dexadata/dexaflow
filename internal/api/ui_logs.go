@@ -142,15 +142,19 @@ func tailNdjson(c *gin.Context, reader LogReader, try int, served storedTail) {
 
 // serveStructuredLogs emits the single-object {content:[...]} form (Accept:
 // application/json). continuation_token is null (logs are served whole).
-func serveStructuredLogs(c *gin.Context, rc io.Reader, try int) {
-	c.JSON(http.StatusOK, structuredLogResponse{Content: structuredLogContent(c, rc, try), ContinuationToken: nil})
+// header precedes the stored events (the recorded failure reason, #945).
+func serveStructuredLogs(c *gin.Context, rc io.Reader, try int, header []structuredLogEvent) {
+	content := append(append([]structuredLogEvent{}, header...), structuredLogContent(c, rc, try)...)
+	c.JSON(http.StatusOK, structuredLogResponse{Content: content, ContinuationToken: nil})
 }
 
 // serveNdjsonLogs streams one JSON event per line (Accept: application/x-ndjson),
 // the format the Airflow 3.2 SPA log viewer parses for its colored drill-down.
-func serveNdjsonLogs(c *gin.Context, rc io.Reader, try int) {
+// header precedes the stored events, as in serveStructuredLogs.
+func serveNdjsonLogs(c *gin.Context, rc io.Reader, try int, header []structuredLogEvent) {
 	c.Header("Content-Type", "application/x-ndjson")
 	c.Status(http.StatusOK)
+	writeNdjson(c, header)
 	writeNdjson(c, structuredLogContent(c, rc, try))
 }
 
